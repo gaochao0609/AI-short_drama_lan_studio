@@ -63,14 +63,16 @@
   - 仪表盘
 - `src/app/(workspace)/projects/[projectId]/page.tsx`
   - 项目详情页
-- `src/app/(workspace)/script/page.tsx`
+- `src/app/(workspace)/projects/[projectId]/script/page.tsx`
   - 剧本会话式生成页
-- `src/app/(workspace)/storyboard/page.tsx`
+- `src/app/(workspace)/projects/[projectId]/storyboard/page.tsx`
   - 剧本转分镜页
-- `src/app/(workspace)/images/page.tsx`
+- `src/app/(workspace)/projects/[projectId]/images/page.tsx`
   - 图片生成与编辑页
-- `src/app/(workspace)/videos/page.tsx`
+- `src/app/(workspace)/projects/[projectId]/videos/page.tsx`
   - 视频生成页
+- `src/app/admin/layout.tsx`
+  - 管理员页面统一权限守卫与导航框架
 - `src/app/admin/users/page.tsx`
   - 账号与注册申请管理页
 - `src/app/admin/providers/page.tsx`
@@ -183,7 +185,9 @@
 - `tests/integration/workers/video-worker.test.ts`
 - `tests/e2e/auth.spec.ts`
 - `tests/e2e/admin.spec.ts`
+- `tests/e2e/script-session.spec.ts`
 - `tests/e2e/workflow.spec.ts`
+- `tests/e2e/full-smoke.spec.ts`
 
 ## 实施任务
 
@@ -483,7 +487,7 @@ model Task {
 
 ```prisma
 enum UserRole { ADMIN USER }
-enum UserStatus { PENDING ACTIVE DISABLED FORCE_PASSWORD_CHANGE }
+enum UserStatus { PENDING ACTIVE DISABLED }
 enum TaskStatus { QUEUED RUNNING SUCCEEDED FAILED CANCELED }
 enum TaskType { SCRIPT_QUESTION SCRIPT_FINALIZE STORYBOARD IMAGE VIDEO }
 ```
@@ -629,6 +633,7 @@ Expected: 生成一个干净提交。
 - Create: `src/app/(auth)/login/page.tsx`
 - Create: `src/app/(auth)/register-request/page.tsx`
 - Create: `src/app/(auth)/force-password/page.tsx`
+- Create: `src/app/admin/layout.tsx`
 - Create: `src/app/api/auth/login/route.ts`
 - Create: `src/app/api/auth/logout/route.ts`
 - Create: `src/app/api/auth/register-request/route.ts`
@@ -729,9 +734,22 @@ Expected: PASS。
 Run: `pnpm playwright test tests/e2e/auth.spec.ts`
 Expected: PASS，至少覆盖“申请 -> 审批 -> 登录 -> 强制改密”的主流程。
 
-- [ ] **Step 5: 提交本任务**
+- [ ] **Step 5: 实现管理员布局守卫**
 
-Run: `git add src/app/(auth) src/app/admin/users src/app/api/auth src/app/api/admin src/lib/services tests/integration/api tests/e2e/auth.spec.ts`
+在 `src/app/admin/layout.tsx` 中统一执行页面层管理员鉴权：
+
+1. 未登录跳转登录页
+2. 非管理员返回 `403` 页面或跳转工作区首页
+3. 为 `/admin/users`、`/admin/providers`、`/admin/tasks`、`/admin/storage` 提供共用导航框架
+
+Run: `pnpm lint`
+
+Run: `pnpm typecheck`
+Expected: 通过，且管理员页面不再依赖各自页面单独做权限判断。
+
+- [ ] **Step 6: 提交本任务**
+
+Run: `git add src/app/(auth) src/app/admin/layout.tsx src/app/admin/users src/app/api/auth src/app/api/admin src/lib/services tests/integration/api tests/e2e/auth.spec.ts`
 
 Run: `git commit -m "feat: add auth pages and admin approval flow"`
 Expected: 生成一个干净提交。
@@ -1007,10 +1025,10 @@ Run: `git add src/lib/redis.ts src/lib/queues src/worker tests/integration/worke
 Run: `git commit -m "feat: add queue runtime and worker bootstrap"`
 Expected: 生成一个干净提交。
 
-### Task 9: 实现剧本会话式生成链路
+### Task 9: 实现项目内剧本会话式生成链路
 
 **Files:**
-- Create: `src/app/(workspace)/script/page.tsx`
+- Create: `src/app/(workspace)/projects/[projectId]/script/page.tsx`
 - Create: `src/app/api/script/sessions/route.ts`
 - Create: `src/app/api/script/sessions/[sessionId]/message/route.ts`
 - Create: `src/lib/services/script-sessions.ts`
@@ -1075,26 +1093,28 @@ Expected: PASS。
 
 页面要支持：
 
-1. 输入创意
-2. 显示问题列表
-3. 回答单轮问题
-4. 查看最终剧本
-5. 继续基于已有项目再次开启新会话
+1. 从路由参数读取 `projectId`
+2. 项目上下文标题与返回项目详情入口
+3. 输入创意
+4. 显示问题列表
+5. 回答单轮问题
+6. 查看最终剧本
+7. 继续基于当前项目再次开启新会话
 
 Run: `pnpm playwright test tests/e2e/script-session.spec.ts`
 Expected: PASS。
 
 - [ ] **Step 5: 提交本任务**
 
-Run: `git add src/app/(workspace)/script src/app/api/script src/lib/services/script-sessions.ts src/worker/processors/script.ts tests`
+Run: `git add src/app/(workspace)/projects/[projectId]/script src/app/api/script src/lib/services/script-sessions.ts src/worker/processors/script.ts tests`
 
 Run: `git commit -m "feat: add script session workflow"`
 Expected: 生成一个干净提交。
 
-### Task 10: 实现剧本转分镜链路
+### Task 10: 实现项目内剧本转分镜链路
 
 **Files:**
-- Create: `src/app/(workspace)/storyboard/page.tsx`
+- Create: `src/app/(workspace)/projects/[projectId]/storyboard/page.tsx`
 - Create: `src/app/api/storyboards/route.ts`
 - Create: `src/lib/services/storyboards.ts`
 - Modify: `src/worker/processors/storyboard.ts`
@@ -1145,10 +1165,11 @@ Expected: PASS。
 
 页面最少支持：
 
-1. 选择剧本版本
-2. 发起任务
-3. 查看结构化分镜结果
-4. 复制单段视频提示词
+1. 从路由参数读取 `projectId`
+2. 只展示当前项目的剧本版本
+3. 发起任务
+4. 查看结构化分镜结果
+5. 复制单段视频提示词
 
 Run: `pnpm lint`
 
@@ -1157,15 +1178,15 @@ Expected: 通过。
 
 - [ ] **Step 5: 提交本任务**
 
-Run: `git add src/app/(workspace)/storyboard src/app/api/storyboards src/lib/services/storyboards.ts src/worker/processors/storyboard.ts tests/integration/workers/storyboard-worker.test.ts`
+Run: `git add src/app/(workspace)/projects/[projectId]/storyboard src/app/api/storyboards src/lib/services/storyboards.ts src/worker/processors/storyboard.ts tests/integration/workers/storyboard-worker.test.ts`
 
 Run: `git commit -m "feat: add storyboard generation workflow"`
 Expected: 生成一个干净提交。
 
-### Task 11: 实现图片生成与编辑链路
+### Task 11: 实现项目内图片生成与编辑链路
 
 **Files:**
-- Create: `src/app/(workspace)/images/page.tsx`
+- Create: `src/app/(workspace)/projects/[projectId]/images/page.tsx`
 - Create: `src/app/api/images/route.ts`
 - Create: `src/lib/services/images.ts`
 - Modify: `src/worker/processors/image.ts`
@@ -1218,11 +1239,13 @@ Expected: PASS。
 
 页面最少支持：
 
-1. 文生图模式
-2. 图生图模式
-3. 图片预览
-4. 任务状态提示
-5. 结果落入项目详情
+1. 从路由参数读取 `projectId`
+2. 文生图模式
+3. 图生图模式
+4. 参考图只允许选择当前项目资产
+5. 图片预览
+6. 任务状态提示
+7. 结果落入当前项目详情
 
 Run: `pnpm lint`
 
@@ -1231,15 +1254,15 @@ Expected: 通过。
 
 - [ ] **Step 5: 提交本任务**
 
-Run: `git add src/app/(workspace)/images src/app/api/images src/lib/services/images.ts src/worker/processors/image.ts tests/integration/workers/image-worker.test.ts`
+Run: `git add src/app/(workspace)/projects/[projectId]/images src/app/api/images src/lib/services/images.ts src/worker/processors/image.ts tests/integration/workers/image-worker.test.ts`
 
 Run: `git commit -m "feat: add image generation and editing workflow"`
 Expected: 生成一个干净提交。
 
-### Task 12: 实现 AI 视频生成链路
+### Task 12: 实现项目内 AI 视频生成链路
 
 **Files:**
-- Create: `src/app/(workspace)/videos/page.tsx`
+- Create: `src/app/(workspace)/projects/[projectId]/videos/page.tsx`
 - Create: `src/app/api/videos/route.ts`
 - Create: `src/lib/services/videos.ts`
 - Modify: `src/worker/processors/video.ts`
@@ -1291,10 +1314,11 @@ Expected: PASS。
 
 页面最少支持：
 
-1. 输入提示词
-2. 选择参考图
-3. 查看任务进度
-4. 预览生成视频
+1. 从路由参数读取 `projectId`
+2. 输入提示词
+3. 选择当前项目下的参考图
+4. 查看任务进度
+5. 预览生成视频
 
 Run: `pnpm lint`
 
@@ -1303,7 +1327,7 @@ Expected: 通过。
 
 - [ ] **Step 5: 提交本任务**
 
-Run: `git add src/app/(workspace)/videos src/app/api/videos src/lib/services/videos.ts src/worker/processors/video.ts tests/integration/workers/video-worker.test.ts`
+Run: `git add src/app/(workspace)/projects/[projectId]/videos src/app/api/videos src/lib/services/videos.ts src/worker/processors/video.ts tests/integration/workers/video-worker.test.ts`
 
 Run: `git commit -m "feat: add video generation workflow"`
 Expected: 生成一个干净提交。
