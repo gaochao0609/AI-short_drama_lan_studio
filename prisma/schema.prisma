@@ -1,0 +1,233 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  ADMIN
+  USER
+}
+
+enum UserStatus {
+  PENDING
+  ACTIVE
+  DISABLED
+}
+
+enum TaskStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELED
+}
+
+enum TaskType {
+  SCRIPT_QUESTION
+  SCRIPT_FINALIZE
+  STORYBOARD
+  IMAGE
+  VIDEO
+}
+
+model User {
+  id                      String            @id @default(cuid())
+  username                String            @unique
+  passwordHash            String            @map("password_hash")
+  role                    UserRole          @default(USER)
+  status                  UserStatus        @default(PENDING)
+  forcePasswordChange     Boolean           @default(true) @map("force_password_change")
+  createdAt               DateTime          @default(now()) @map("created_at")
+  updatedAt               DateTime          @updatedAt @map("updated_at")
+  sessions                Session[]
+  accountRequestsApproved  AccountRequest[]  @relation("AccountRequestApprovedBy")
+  projects                Project[]         @relation("ProjectOwner")
+  scriptSessions          ScriptSession[]    @relation("ScriptSessionCreator")
+  scriptVersions          ScriptVersion[]    @relation("ScriptVersionCreator")
+  tasks                   Task[]            @relation("TaskCreator")
+
+  @@map("users")
+}
+
+model AccountRequest {
+  id           String    @id @default(cuid())
+  username     String    @unique
+  displayName   String    @map("display_name")
+  reason       String?
+  status       String
+  approvedById String?   @map("approved_by_id")
+  approvedAt   DateTime? @map("approved_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  approvedBy   User?     @relation("AccountRequestApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+
+  @@map("account_requests")
+}
+
+model Session {
+  id         String    @id @default(cuid())
+  userId     String    @map("user_id")
+  tokenHash  String    @unique @map("token_hash")
+  expiresAt  DateTime  @map("expires_at")
+  revokedAt  DateTime? @map("revoked_at")
+  lastSeenAt DateTime? @map("last_seen_at")
+  ipAddress  String?   @map("ip_address")
+  userAgent  String?   @map("user_agent")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model Project {
+  id                 String              @id @default(cuid())
+  ownerId            String              @map("owner_id")
+  title              String
+  idea               String?
+  status             String              @default("active")
+  createdAt          DateTime            @default(now()) @map("created_at")
+  updatedAt          DateTime            @updatedAt @map("updated_at")
+  owner              User                @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  scriptSessions     ScriptSession[]
+  scriptVersions     ScriptVersion[]
+  storyboardVersions StoryboardVersion[]
+  assets             Asset[]
+  tasks              Task[]
+
+  @@index([ownerId])
+  @@map("projects")
+}
+
+model ScriptSession {
+  id              String         @id @default(cuid())
+  projectId       String         @map("project_id")
+  creatorId       String         @map("creator_id")
+  idea            String
+  currentQuestion String?        @map("current_question")
+  currentTurn     Int            @default(0) @map("current_turn")
+  isComplete      Boolean        @default(false) @map("is_complete")
+  completedAt     DateTime?      @map("completed_at")
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+  project         Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  creator         User           @relation("ScriptSessionCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  scriptVersions  ScriptVersion[]
+
+  @@index([projectId])
+  @@index([creatorId])
+  @@map("script_sessions")
+}
+
+model ScriptVersion {
+  id                String             @id @default(cuid())
+  projectId         String             @map("project_id")
+  scriptSessionId   String?            @map("script_session_id")
+  creatorId         String             @map("creator_id")
+  versionNumber     Int                @default(1) @map("version_number")
+  title             String?
+  scriptJson        Json               @map("script_json")
+  summary           String?
+  createdAt         DateTime           @default(now()) @map("created_at")
+  project           Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  scriptSession     ScriptSession?     @relation(fields: [scriptSessionId], references: [id], onDelete: SetNull)
+  creator           User               @relation("ScriptVersionCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  storyboardVersions StoryboardVersion[]
+
+  @@index([projectId])
+  @@index([scriptSessionId])
+  @@index([creatorId])
+  @@map("script_versions")
+}
+
+model StoryboardVersion {
+  id              String   @id @default(cuid())
+  projectId       String   @map("project_id")
+  scriptVersionId String   @map("script_version_id")
+  taskId          String?  @unique @map("task_id")
+  framesJson      Json     @map("frames_json")
+  createdAt       DateTime @default(now()) @map("created_at")
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  scriptVersion   ScriptVersion @relation(fields: [scriptVersionId], references: [id], onDelete: Cascade)
+  task            Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+
+  @@index([projectId])
+  @@index([scriptVersionId])
+  @@map("storyboard_versions")
+}
+
+model Asset {
+  id           String   @id @default(cuid())
+  projectId    String   @map("project_id")
+  taskId       String?  @map("task_id")
+  kind         String
+  storagePath  String   @map("storage_path")
+  originalName String?  @map("original_name")
+  mimeType     String   @map("mime_type")
+  sizeBytes    Int      @map("size_bytes")
+  metadata     Json?
+  createdAt    DateTime @default(now()) @map("created_at")
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  task         Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+
+  @@index([projectId])
+  @@index([taskId])
+  @@map("assets")
+}
+
+model Task {
+  id                String      @id @default(cuid())
+  projectId         String      @map("project_id")
+  createdById       String      @map("created_by_id")
+  type              TaskType
+  status            TaskStatus  @default(QUEUED)
+  inputJson         Json        @map("input_json")
+  outputJson        Json?       @map("output_json")
+  errorText         String?     @map("error_text")
+  startedAt         DateTime?   @map("started_at")
+  finishedAt        DateTime?   @map("finished_at")
+  createdAt         DateTime    @default(now()) @map("created_at")
+  updatedAt         DateTime    @updatedAt @map("updated_at")
+  project           Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy         User        @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  steps             TaskStep[]
+  assets            Asset[]
+  storyboardVersion StoryboardVersion?
+
+  @@index([projectId])
+  @@index([createdById])
+  @@map("tasks")
+}
+
+model TaskStep {
+  id         String     @id @default(cuid())
+  taskId     String     @map("task_id")
+  stepKey    String     @map("step_key")
+  status     TaskStatus
+  inputJson  Json       @map("input_json")
+  outputJson Json?      @map("output_json")
+  errorText  String?    @map("error_text")
+  createdAt  DateTime   @default(now()) @map("created_at")
+  task       Task       @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+  @@map("task_steps")
+}
+
+model ModelProvider {
+  id           String   @id @default(cuid())
+  key          String   @unique
+  label        String
+  providerName String   @map("provider_name")
+  modelName    String?  @map("model_name")
+  baseUrl      String?  @map("base_url")
+  apiKey       String?  @map("api_key")
+  configJson   Json?    @map("config_json")
+  enabled      Boolean  @default(true)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("model_providers")
+}
