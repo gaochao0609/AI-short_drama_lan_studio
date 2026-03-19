@@ -1,5 +1,11 @@
 import { defineConfig, devices } from "@playwright/test";
 
+process.env.DATABASE_URL ??= "postgresql://postgres:postgres@localhost:5432/ai_short_drama";
+process.env.APP_URL ??= "http://localhost:3000";
+process.env.SESSION_SECRET ??= "12345678901234567890123456789012";
+process.env.DEFAULT_ADMIN_USERNAME ??= "admin";
+process.env.DEFAULT_ADMIN_PASSWORD ??= "replace-with-a-strong-password";
+
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: true,

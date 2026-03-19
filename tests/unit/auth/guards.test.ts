@@ -111,6 +111,18 @@ describe("auth guards", () => {
     await expect(requireAdmin()).rejects.toMatchObject({ status: 403 });
   });
 
+  it("throws 403 when an admin must still change the temporary password", async () => {
+    setSessionCookie("admin-force-change-token");
+    findUniqueMock.mockResolvedValue(
+      buildSession({
+        role: "ADMIN",
+        forcePasswordChange: true,
+      }),
+    );
+
+    await expect(requireAdmin()).rejects.toMatchObject({ status: 403 });
+  });
+
   it("allows force-password-change users through requireUser", async () => {
     setSessionCookie("force-change-token");
     findUniqueMock.mockResolvedValue(

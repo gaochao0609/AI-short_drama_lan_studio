@@ -70,7 +70,7 @@ export async function requireAdmin(): Promise<{
 }> {
   const user = await requireUser();
 
-  if (user.role !== "ADMIN") {
+  if (user.role !== "ADMIN" || user.forcePasswordChange) {
     throw new AuthGuardError(403, "Forbidden");
   }
 
