@@ -46,6 +46,7 @@ export default function useTaskPolling(taskId?: string | null) {
       return TERMINAL_STATUSES.has(task.status) ? 0 : POLL_INTERVAL_MS;
     },
     revalidateOnFocus: false,
+    revalidateOnReconnect: false,
     onSuccess: () => {
       if (consecutiveErrorCountRef.current === 0) {
         return;
@@ -70,11 +71,39 @@ export default function useTaskPolling(taskId?: string | null) {
     },
   });
 
+  const mutateTask = swr.mutate;
+  const isFinished = Boolean(swr.data && TERMINAL_STATUSES.has(swr.data.status));
+
+  useEffect(() => {
+    if (!taskId) {
+      return;
+    }
+
+    function tryRecoverFromCappedErrors() {
+      if (
+        consecutiveErrorCountRef.current < MAX_CONSECUTIVE_ERRORS ||
+        isFinished
+      ) {
+        return;
+      }
+
+      void mutateTask();
+    }
+
+    window.addEventListener("focus", tryRecoverFromCappedErrors);
+    window.addEventListener("online", tryRecoverFromCappedErrors);
+
+    return () => {
+      window.removeEventListener("focus", tryRecoverFromCappedErrors);
+      window.removeEventListener("online", tryRecoverFromCappedErrors);
+    };
+  }, [isFinished, mutateTask, taskId]);
+
   return {
     task: swr.data,
     error: swr.error,
     isLoading: swr.isLoading,
-    mutate: swr.mutate,
-    isFinished: Boolean(swr.data && TERMINAL_STATUSES.has(swr.data.status)),
+    mutate: mutateTask,
+    isFinished,
   };
 }
