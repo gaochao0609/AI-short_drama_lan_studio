@@ -26,6 +26,18 @@ export async function listProjects(ownerId: string) {
   });
 }
 
+export async function listRecentProjects(ownerId: string, limit = 5) {
+  return prisma.project.findMany({
+    where: {
+      ownerId,
+    },
+    orderBy: {
+      updatedAt: "desc",
+    },
+    take: limit,
+  });
+}
+
 export async function getProject(projectId: string, ownerId: string) {
   const project = await prisma.project.findFirst({
     where: {

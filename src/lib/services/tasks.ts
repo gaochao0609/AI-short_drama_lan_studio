@@ -38,6 +38,38 @@ export async function createTask(input: {
   });
 }
 
+export async function listRecentTasks(ownerId: string, limit = 5) {
+  return prisma.task.findMany({
+    where: {
+      project: {
+        ownerId,
+      },
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+    take: limit,
+    select: {
+      id: true,
+      projectId: true,
+      type: true,
+      status: true,
+      createdAt: true,
+    },
+  });
+}
+
+export async function countFailedTasks(ownerId: string) {
+  return prisma.task.count({
+    where: {
+      status: TaskStatus.FAILED,
+      project: {
+        ownerId,
+      },
+    },
+  });
+}
+
 export async function getTask(taskId: string, ownerId: string) {
   const task = await prisma.task.findFirst({
     where: {
