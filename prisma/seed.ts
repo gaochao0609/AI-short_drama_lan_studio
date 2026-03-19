@@ -14,12 +14,7 @@ async function main() {
 
   await prisma.user.upsert({
     where: { username: adminUsername },
-    update: {
-      passwordHash,
-      role: UserRole.ADMIN,
-      status: UserStatus.ACTIVE,
-      forcePasswordChange: true,
-    },
+    update: {},
     create: {
       username: adminUsername,
       passwordHash,
@@ -32,18 +27,14 @@ async function main() {
   for (const key of defaultModelKeys) {
     await prisma.modelProvider.upsert({
       where: { key },
-      update: {
-        label: key,
-        providerName: "placeholder",
-        modelName: key,
-        configJson: {},
-        enabled: true,
-      },
+      update: {},
       create: {
         key,
         label: key,
         providerName: "placeholder",
         modelName: key,
+        timeoutMs: 30000,
+        maxRetries: 2,
         configJson: {},
         enabled: true,
       },

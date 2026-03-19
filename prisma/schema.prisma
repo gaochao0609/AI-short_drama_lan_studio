@@ -33,21 +33,27 @@ enum TaskType {
   VIDEO
 }
 
+enum ScriptSessionStatus {
+  ACTIVE
+  COMPLETED
+  CANCELED
+}
+
 model User {
-  id                      String            @id @default(cuid())
-  username                String            @unique
-  passwordHash            String            @map("password_hash")
-  role                    UserRole          @default(USER)
-  status                  UserStatus        @default(PENDING)
-  forcePasswordChange     Boolean           @default(true) @map("force_password_change")
-  createdAt               DateTime          @default(now()) @map("created_at")
-  updatedAt               DateTime          @updatedAt @map("updated_at")
+  id                      String           @id @default(cuid())
+  username                String           @unique
+  passwordHash            String           @map("password_hash")
+  role                    UserRole         @default(USER)
+  status                  UserStatus       @default(PENDING)
+  forcePasswordChange     Boolean          @default(true) @map("force_password_change")
+  createdAt               DateTime         @default(now()) @map("created_at")
+  updatedAt               DateTime         @updatedAt @map("updated_at")
   sessions                Session[]
-  accountRequestsApproved  AccountRequest[]  @relation("AccountRequestApprovedBy")
-  projects                Project[]         @relation("ProjectOwner")
-  scriptSessions          ScriptSession[]    @relation("ScriptSessionCreator")
-  scriptVersions          ScriptVersion[]    @relation("ScriptVersionCreator")
-  tasks                   Task[]            @relation("TaskCreator")
+  accountRequestsApproved AccountRequest[] @relation("AccountRequestApprovedBy")
+  projects                Project[]        @relation("ProjectOwner")
+  scriptSessions          ScriptSession[]  @relation("ScriptSessionCreator")
+  scriptVersions          ScriptVersion[]  @relation("ScriptVersionCreator")
+  tasks                   Task[]           @relation("TaskCreator")
 
   @@map("users")
 }
@@ -55,7 +61,7 @@ model User {
 model AccountRequest {
   id           String    @id @default(cuid())
   username     String    @unique
-  displayName   String    @map("display_name")
+  displayName  String    @map("display_name")
   reason       String?
   status       String
   approvedById String?   @map("approved_by_id")
@@ -102,19 +108,22 @@ model Project {
 }
 
 model ScriptSession {
-  id              String         @id @default(cuid())
-  projectId       String         @map("project_id")
-  creatorId       String         @map("creator_id")
-  idea            String
-  currentQuestion String?        @map("current_question")
-  currentTurn     Int            @default(0) @map("current_turn")
-  isComplete      Boolean        @default(false) @map("is_complete")
-  completedAt     DateTime?      @map("completed_at")
-  createdAt       DateTime       @default(now()) @map("created_at")
-  updatedAt       DateTime       @updatedAt @map("updated_at")
-  project         Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  creator         User           @relation("ScriptSessionCreator", fields: [creatorId], references: [id], onDelete: Cascade)
-  scriptVersions  ScriptVersion[]
+  id                   String              @id @default(cuid())
+  projectId            String              @map("project_id")
+  creatorId            String              @map("creator_id")
+  idea                 String
+  status               ScriptSessionStatus @default(ACTIVE)
+  completedRounds      Int                 @default(0) @map("completed_rounds")
+  currentQuestion      String?             @map("current_question")
+  qaRecordsJson        Json?               @map("qa_records_json")
+  finalScriptVersionId String?             @unique @map("final_script_version_id")
+  completedAt          DateTime?           @map("completed_at")
+  createdAt            DateTime            @default(now()) @map("created_at")
+  updatedAt            DateTime            @updatedAt @map("updated_at")
+  project              Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  creator              User                @relation("ScriptSessionCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  scriptVersions       ScriptVersion[]     @relation("ScriptSessionVersions")
+  finalScriptVersion   ScriptVersion?      @relation("FinalScriptVersion", fields: [finalScriptVersionId], references: [id], onDelete: SetNull)
 
   @@index([projectId])
   @@index([creatorId])
@@ -122,19 +131,26 @@ model ScriptSession {
 }
 
 model ScriptVersion {
-  id                String             @id @default(cuid())
-  projectId         String             @map("project_id")
-  scriptSessionId   String?            @map("script_session_id")
-  creatorId         String             @map("creator_id")
-  versionNumber     Int                @default(1) @map("version_number")
-  title             String?
-  scriptJson        Json               @map("script_json")
-  summary           String?
-  createdAt         DateTime           @default(now()) @map("created_at")
-  project           Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  scriptSession     ScriptSession?     @relation(fields: [scriptSessionId], references: [id], onDelete: SetNull)
-  creator           User               @relation("ScriptVersionCreator", fields: [creatorId], references: [id], onDelete: Cascade)
-  storyboardVersions StoryboardVersion[]
+  id                  String              @id @default(cuid())
+  projectId           String              @map("project_id")
+  scriptSessionId     String?             @map("script_session_id")
+  creatorId           String              @map("creator_id")
+  versionNumber       Int                 @default(1) @map("version_number")
+  title               String?
+  sourceIdea          String?             @map("source_idea")
+  clarificationQaJson Json?               @map("clarification_qa_json")
+  body                String?
+  scriptJson          Json                @map("script_json")
+  summary             String?
+  modelProviderKey    String?             @map("model_provider_key")
+  modelName           String?             @map("model_name")
+  modelMetadataJson   Json?               @map("model_metadata_json")
+  createdAt           DateTime            @default(now()) @map("created_at")
+  project             Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  scriptSession       ScriptSession?      @relation("ScriptSessionVersions", fields: [scriptSessionId], references: [id], onDelete: SetNull)
+  finalizedBySession  ScriptSession?      @relation("FinalScriptVersion")
+  creator             User                @relation("ScriptVersionCreator", fields: [creatorId], references: [id], onDelete: Cascade)
+  storyboardVersions  StoryboardVersion[]
 
   @@index([projectId])
   @@index([scriptSessionId])
@@ -143,15 +159,18 @@ model ScriptVersion {
 }
 
 model StoryboardVersion {
-  id              String   @id @default(cuid())
-  projectId       String   @map("project_id")
-  scriptVersionId String   @map("script_version_id")
-  taskId          String?  @unique @map("task_id")
-  framesJson      Json     @map("frames_json")
-  createdAt       DateTime @default(now()) @map("created_at")
-  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  scriptVersion   ScriptVersion @relation(fields: [scriptVersionId], references: [id], onDelete: Cascade)
-  task            Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  id                String        @id @default(cuid())
+  projectId         String        @map("project_id")
+  scriptVersionId   String        @map("script_version_id")
+  taskId            String?       @unique @map("task_id")
+  framesJson        Json          @map("frames_json")
+  modelProviderKey  String?       @map("model_provider_key")
+  modelName         String?       @map("model_name")
+  modelMetadataJson Json?         @map("model_metadata_json")
+  createdAt         DateTime      @default(now()) @map("created_at")
+  project           Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  scriptVersion     ScriptVersion @relation(fields: [scriptVersionId], references: [id], onDelete: Cascade)
+  task              Task?         @relation(fields: [taskId], references: [id], onDelete: SetNull)
 
   @@index([projectId])
   @@index([scriptVersionId])
@@ -178,20 +197,20 @@ model Asset {
 }
 
 model Task {
-  id                String      @id @default(cuid())
-  projectId         String      @map("project_id")
-  createdById       String      @map("created_by_id")
+  id                String             @id @default(cuid())
+  projectId         String             @map("project_id")
+  createdById       String             @map("created_by_id")
   type              TaskType
-  status            TaskStatus  @default(QUEUED)
-  inputJson         Json        @map("input_json")
-  outputJson        Json?       @map("output_json")
-  errorText         String?     @map("error_text")
-  startedAt         DateTime?   @map("started_at")
-  finishedAt        DateTime?   @map("finished_at")
-  createdAt         DateTime    @default(now()) @map("created_at")
-  updatedAt         DateTime    @updatedAt @map("updated_at")
-  project           Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  createdBy         User        @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  status            TaskStatus         @default(QUEUED)
+  inputJson         Json               @map("input_json")
+  outputJson        Json?              @map("output_json")
+  errorText         String?            @map("error_text")
+  startedAt         DateTime?          @map("started_at")
+  finishedAt        DateTime?          @map("finished_at")
+  createdAt         DateTime           @default(now()) @map("created_at")
+  updatedAt         DateTime           @updatedAt @map("updated_at")
+  project           Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy         User               @relation("TaskCreator", fields: [createdById], references: [id], onDelete: Cascade)
   steps             TaskStep[]
   assets            Asset[]
   storyboardVersion StoryboardVersion?
@@ -202,15 +221,18 @@ model Task {
 }
 
 model TaskStep {
-  id         String     @id @default(cuid())
-  taskId     String     @map("task_id")
-  stepKey    String     @map("step_key")
-  status     TaskStatus
-  inputJson  Json       @map("input_json")
-  outputJson Json?      @map("output_json")
-  errorText  String?    @map("error_text")
-  createdAt  DateTime   @default(now()) @map("created_at")
-  task       Task       @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  id                 String     @id @default(cuid())
+  taskId             String     @map("task_id")
+  stepKey            String     @map("step_key")
+  retryCount         Int        @default(0) @map("retry_count")
+  status             TaskStatus
+  log                String?
+  inputJson          Json       @map("input_json")
+  outputJson         Json?      @map("output_json")
+  rawResponseSummary String?    @map("raw_response_summary")
+  errorText          String?    @map("error_text")
+  createdAt          DateTime   @default(now()) @map("created_at")
+  task               Task       @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
   @@index([taskId])
   @@map("task_steps")
@@ -224,6 +246,8 @@ model ModelProvider {
   modelName    String?  @map("model_name")
   baseUrl      String?  @map("base_url")
   apiKey       String?  @map("api_key")
+  timeoutMs    Int      @default(30000) @map("timeout_ms")
+  maxRetries   Int      @default(2) @map("max_retries")
   configJson   Json?    @map("config_json")
   enabled      Boolean  @default(true)
   createdAt    DateTime @default(now()) @map("created_at")
