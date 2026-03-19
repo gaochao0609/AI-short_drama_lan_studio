@@ -65,4 +65,27 @@ describe("useTaskPolling", () => {
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it("stops polling after repeated fetch errors", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockRejectedValue(new Error("network unavailable"));
+
+    vi.stubGlobal("fetch", fetchMock);
+    vi.useFakeTimers();
+
+    const { result } = renderHook(() => useTaskPolling("task-1"));
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(600_000);
+    });
+
+    expect(result.current.error).toBeInstanceOf(Error);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
 });
