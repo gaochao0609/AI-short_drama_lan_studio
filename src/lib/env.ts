@@ -14,11 +14,5 @@ export const EnvSchema = z.object({
 export type AppEnv = z.infer<typeof EnvSchema>;
 
 export function loadEnv(input: Record<string, string | undefined>): AppEnv {
-  return EnvSchema.parse({
-    STORAGE_ROOT: "./storage",
-    MAX_UPLOAD_MB: "25",
-    DEFAULT_ADMIN_USERNAME: "admin",
-    DEFAULT_ADMIN_PASSWORD: "change-me-please",
-    ...input,
-  });
+  return EnvSchema.parse(input);
 }

@@ -1,0 +1,8 @@
+.git
+.worktrees
+.env
+node_modules
+.next
+storage
+playwright-report
+test-results
