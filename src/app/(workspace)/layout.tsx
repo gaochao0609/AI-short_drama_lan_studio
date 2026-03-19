@@ -1,7 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { requireUser } from "@/lib/auth/guards";
+import { AuthGuardError, requireUser } from "@/lib/auth/guards";
 
 const navItems = [
   { href: "/workspace", label: "仪表盘" },
@@ -16,9 +16,13 @@ export default async function WorkspaceLayout({
 
   try {
     user = await requireUser();
-  } catch {
-    redirect("/login");
-    return null;
+  } catch (error) {
+    if (error instanceof AuthGuardError && error.status === 401) {
+      redirect("/login");
+      return null;
+    }
+
+    throw error;
   }
 
   if (user.forcePasswordChange) {

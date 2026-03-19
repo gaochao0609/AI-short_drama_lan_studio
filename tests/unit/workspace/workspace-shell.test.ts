@@ -8,16 +8,36 @@ const {
   listRecentTasksMock,
   countFailedTasksMock,
   redirectMock,
+  AuthGuardErrorMock,
+  RedirectSignal,
 } = vi.hoisted(() => ({
   requireUserMock: vi.fn(),
   listRecentProjectsMock: vi.fn(),
   listRecentTasksMock: vi.fn(),
   countFailedTasksMock: vi.fn(),
-  redirectMock: vi.fn(),
+  redirectMock: vi.fn((href: string) => {
+    throw new RedirectSignal(href);
+  }),
+  AuthGuardErrorMock: class AuthGuardError extends Error {
+    constructor(
+      public readonly status: 401 | 403,
+      message: string,
+    ) {
+      super(message);
+      this.name = "AuthGuardError";
+    }
+  },
+  RedirectSignal: class RedirectSignal extends Error {
+    constructor(public readonly href: string) {
+      super(`REDIRECT:${href}`);
+      this.name = "RedirectSignal";
+    }
+  },
 }));
 
 vi.mock("@/lib/auth/guards", () => ({
   requireUser: requireUserMock,
+  AuthGuardError: AuthGuardErrorMock,
 }));
 
 vi.mock("@/lib/services/projects", () => ({
@@ -85,15 +105,35 @@ describe("workspace shell", () => {
   });
 
   it("redirects unauthenticated users from the workspace layout", async () => {
-    requireUserMock.mockRejectedValueOnce(new Error("Unauthorized"));
+    requireUserMock.mockRejectedValueOnce(
+      new AuthGuardErrorMock(401, "Unauthorized"),
+    );
 
     const layoutModule = await import("@/app/(workspace)/layout");
 
-    await layoutModule.default({
-      children: createElement("div", undefined, "workspace"),
+    await expect(
+      layoutModule.default({
+        children: createElement("div", undefined, "workspace"),
+      }),
+    ).rejects.toMatchObject({
+      href: "/login",
     });
 
     expect(redirectMock).toHaveBeenCalledWith("/login");
+  });
+
+  it("rethrows non-auth errors from requireUser", async () => {
+    requireUserMock.mockRejectedValueOnce(new Error("database unavailable"));
+
+    const layoutModule = await import("@/app/(workspace)/layout");
+
+    await expect(
+      layoutModule.default({
+        children: createElement("div", undefined, "workspace"),
+      }),
+    ).rejects.toThrow("database unavailable");
+
+    expect(redirectMock).not.toHaveBeenCalled();
   });
 
   it("shows only reachable workspace navigation links", async () => {
