@@ -4,11 +4,6 @@ import { fileURLToPath } from "node:url";
 const root = fileURLToPath(new URL(".", import.meta.url));
 
 export default defineConfig({
-  oxc: false,
-  esbuild: {
-    jsx: "automatic",
-    jsxImportSource: "react",
-  },
   resolve: {
     alias: {
       "@": `${root}/src`,
