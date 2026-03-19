@@ -2,8 +2,12 @@ import { hash } from "bcryptjs";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient, UserRole, UserStatus } from "@prisma/client";
 
-const connectionString =
-  process.env.DATABASE_URL ?? "postgresql://postgres:postgres@localhost:5432/ai_short_drama";
+const connectionString = process.env.DATABASE_URL;
+
+if (!connectionString) {
+  throw new Error("DATABASE_URL is required");
+}
+
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
 const defaultModelKeys = ["script", "storyboard", "image", "video"] as const;
 

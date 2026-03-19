@@ -1,5 +1,5 @@
-import type { PrismaClient } from "@prisma/client";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
+import { withTestDatabase } from "./test-database";
 
 const requiredModels = [
   "users",
@@ -38,13 +38,7 @@ const requiredColumns = {
 
 describe("database schema", () => {
   it("exposes the required models", async () => {
-    const previousDatabaseUrl = process.env.DATABASE_URL;
-    process.env.DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/ai_short_drama";
-    vi.resetModules();
-    let prisma: PrismaClient | undefined;
-
-    try {
-      ({ prisma } = await import("@/lib/db"));
+    await withTestDatabase(async ({ prisma }) => {
       const rows = await prisma.$queryRaw<Array<{ tablename: string }>>`
         SELECT tablename
         FROM pg_catalog.pg_tables
@@ -53,27 +47,11 @@ describe("database schema", () => {
       const tableNames = rows.map((row) => row.tablename);
 
       expect(tableNames).toEqual(expect.arrayContaining(requiredModels));
-    } finally {
-      if (prisma) {
-        await prisma.$disconnect();
-      }
-
-      if (previousDatabaseUrl === undefined) {
-        delete process.env.DATABASE_URL;
-      } else {
-        process.env.DATABASE_URL = previousDatabaseUrl;
-      }
-    }
+    });
   });
 
   it("persists the Task 3 workflow columns and final-script relation", async () => {
-    const previousDatabaseUrl = process.env.DATABASE_URL;
-    process.env.DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/ai_short_drama";
-    vi.resetModules();
-    let prisma: PrismaClient | undefined;
-
-    try {
-      ({ prisma } = await import("@/lib/db"));
+    await withTestDatabase(async ({ prisma }) => {
       const columnRows = await prisma.$queryRaw<
         Array<{ table_name: string; column_name: string }>
       >`
@@ -128,16 +106,6 @@ describe("database schema", () => {
           }),
         ]),
       );
-    } finally {
-      if (prisma) {
-        await prisma.$disconnect();
-      }
-
-      if (previousDatabaseUrl === undefined) {
-        delete process.env.DATABASE_URL;
-      } else {
-        process.env.DATABASE_URL = previousDatabaseUrl;
-      }
-    }
+    });
   });
 });
