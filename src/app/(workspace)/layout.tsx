@@ -5,8 +5,6 @@ import { requireUser } from "@/lib/auth/guards";
 
 const navItems = [
   { href: "/workspace", label: "仪表盘" },
-  { href: "/workspace/projects", label: "项目" },
-  { href: "/workspace/tasks", label: "任务" },
 ];
 
 export default async function WorkspaceLayout({

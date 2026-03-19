@@ -95,4 +95,21 @@ describe("workspace shell", () => {
 
     expect(redirectMock).toHaveBeenCalledWith("/login");
   });
+
+  it("shows only reachable workspace navigation links", async () => {
+    const layoutModule = await import("@/app/(workspace)/layout");
+
+    render(
+      await layoutModule.default({
+        children: createElement("div", undefined, "workspace"),
+      }),
+    );
+
+    expect(screen.getByRole("link", { name: "仪表盘" })).toHaveAttribute(
+      "href",
+      "/workspace",
+    );
+    expect(screen.queryByRole("link", { name: "项目" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "任务" })).not.toBeInTheDocument();
+  });
 });
