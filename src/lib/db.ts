@@ -1,33 +1,58 @@
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
 
-const connectionString = process.env.DATABASE_URL;
-
-if (!connectionString) {
-  throw new Error("DATABASE_URL is required");
-}
-
-const adapter = new PrismaPg({ connectionString });
-
 const globalForPrisma = globalThis as unknown as {
   prisma?: PrismaClient;
   prismaConnectionString?: string;
 };
 
-export const prisma =
-  globalForPrisma.prisma && globalForPrisma.prismaConnectionString === connectionString
-    ? globalForPrisma.prisma
-    : new PrismaClient({ adapter });
+function getConnectionString() {
+  const connectionString = process.env.DATABASE_URL;
 
-if (process.env.NODE_ENV !== "production") {
-  globalForPrisma.prisma = prisma;
-  globalForPrisma.prismaConnectionString = connectionString;
+  if (!connectionString) {
+    throw new Error("DATABASE_URL is required");
+  }
+
+  return connectionString;
 }
 
+function getPrismaClient() {
+  const connectionString = getConnectionString();
+
+  if (
+    globalForPrisma.prisma &&
+    globalForPrisma.prismaConnectionString === connectionString
+  ) {
+    return globalForPrisma.prisma;
+  }
+
+  const client = new PrismaClient({
+    adapter: new PrismaPg({ connectionString }),
+  });
+
+  if (process.env.NODE_ENV !== "production") {
+    globalForPrisma.prisma = client;
+    globalForPrisma.prismaConnectionString = connectionString;
+  }
+
+  return client;
+}
+
+export const prisma = new Proxy({} as PrismaClient, {
+  get(_target, property) {
+    const client = getPrismaClient();
+    const value = Reflect.get(client, property);
+
+    return typeof value === "function" ? value.bind(client) : value;
+  },
+});
+
 export async function waitForDatabase(maxAttempts = 10) {
+  const client = getPrismaClient();
+
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      await prisma.$queryRaw`SELECT 1`;
+      await client.$queryRaw`SELECT 1`;
       return;
     } catch (error) {
       if (attempt === maxAttempts) {

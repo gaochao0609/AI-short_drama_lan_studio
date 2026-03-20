@@ -124,7 +124,7 @@ test("main auth flow covers request approval login and forced password change", 
     await page.getByLabel("新密码", { exact: true }).fill(finalPassword);
     await page.getByLabel("确认新密码", { exact: true }).fill(finalPassword);
     await page.getByRole("button", { name: "保存新密码" }).click();
-    await expect(page).toHaveURL("http://localhost:3000/");
+    await expect(page).toHaveURL("http://localhost:3000/workspace");
 
     await expect(
       prisma.user.findUniqueOrThrow({

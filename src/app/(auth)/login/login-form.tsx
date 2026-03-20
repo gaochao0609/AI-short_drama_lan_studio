@@ -4,49 +4,68 @@ import type { CSSProperties, FormEvent } from "react";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
-export default function ForcePasswordPage() {
+type LoginResponse = {
+  userId: string;
+  role: "ADMIN" | "USER";
+  forcePasswordChange: boolean;
+};
+
+type LoginFormProps = {
+  nextPath?: string;
+};
+
+function isLoginResponse(payload: LoginResponse | { error?: string }): payload is LoginResponse {
+  return "role" in payload && "forcePasswordChange" in payload;
+}
+
+export default function LoginForm({ nextPath }: Readonly<LoginFormProps>) {
   const router = useRouter();
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-
-    if (!password) {
-      setError("请输入新密码。");
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      setError("两次输入的密码不一致。");
-      return;
-    }
-
     setError(null);
     setIsSubmitting(true);
 
     try {
-      const response = await fetch("/api/auth/force-password", {
+      const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: {
           "content-type": "application/json",
         },
         body: JSON.stringify({
+          username,
           password,
         }),
       });
-      const payload = (await response.json()) as { error?: string };
+      const payload = (await response.json()) as LoginResponse | { error?: string };
 
       if (!response.ok) {
-        setError(payload.error ?? "修改失败");
+        setError("error" in payload ? payload.error ?? "登录失败" : "登录失败");
+        return;
+      }
+
+      if (!isLoginResponse(payload)) {
+        setError("登录失败");
+        return;
+      }
+
+      if (payload.forcePasswordChange) {
+        router.push("/force-password");
+        return;
+      }
+
+      if (payload.role === "ADMIN") {
+        router.push(nextPath || "/admin/users");
         return;
       }
 
       router.push("/workspace");
     } catch {
-      setError("修改失败，请稍后再试。");
+      setError("登录失败，请稍后再试。");
     } finally {
       setIsSubmitting(false);
     }
@@ -56,36 +75,38 @@ export default function ForcePasswordPage() {
     <main style={shellStyle}>
       <section style={cardStyle}>
         <p style={eyebrowStyle}>Lan Studio</p>
-        <h1 style={titleStyle}>首次登录修改密码</h1>
-        <p style={copyStyle}>为保证账号安全，请先设置新密码。修改完成后会保留当前会话并失效其他会话。</p>
+        <h1 style={titleStyle}>账号登录</h1>
+        <p style={copyStyle}>管理员审批通过后，使用账号和密码进入工作区。</p>
         <form onSubmit={handleSubmit} style={formStyle}>
           <label style={fieldStyle}>
-            <span>新密码</span>
+            <span>用户名</span>
             <input
-              aria-label="新密码"
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              autoComplete="new-password"
+              aria-label="用户名"
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              autoComplete="username"
               style={inputStyle}
             />
           </label>
           <label style={fieldStyle}>
-            <span>确认新密码</span>
+            <span>密码</span>
             <input
-              aria-label="确认新密码"
+              aria-label="密码"
               type="password"
-              value={confirmPassword}
-              onChange={(event) => setConfirmPassword(event.target.value)}
-              autoComplete="new-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              autoComplete="current-password"
               style={inputStyle}
             />
           </label>
           {error ? <p style={errorStyle}>{error}</p> : null}
           <button type="submit" disabled={isSubmitting} style={buttonStyle}>
-            {isSubmitting ? "保存中..." : "保存新密码"}
+            {isSubmitting ? "登录中..." : "登录"}
           </button>
         </form>
+        <p style={footerStyle}>
+          没有账号？<a href="/register-request">提交注册申请</a>
+        </p>
       </section>
     </main>
   );
@@ -156,9 +177,14 @@ const buttonStyle = {
   font: "inherit",
   fontWeight: 700,
   cursor: "pointer",
-} satisfies React.CSSProperties;
+} satisfies CSSProperties;
 
 const errorStyle = {
   margin: 0,
   color: "#b42318",
+} satisfies React.CSSProperties;
+
+const footerStyle = {
+  margin: "18px 0 0",
+  color: "#665d52",
 } satisfies React.CSSProperties;
