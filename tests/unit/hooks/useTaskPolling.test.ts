@@ -168,4 +168,57 @@ describe("useTaskPolling", () => {
     expect(result.current.task?.status).toBe("SUCCEEDED");
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
+
+  it("does not start a new poll while the previous request is still in flight", async () => {
+    let resolveFetch: ((response: Response) => void) | undefined;
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        }),
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+    vi.useFakeTimers();
+
+    renderHook(() => useTaskPolling("task-1"), {
+      wrapper: createWrapper(),
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(9_000);
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveFetch?.(
+        new Response(
+          JSON.stringify({
+            id: "task-1",
+            status: "RUNNING",
+          }),
+          {
+            status: 200,
+            headers: {
+              "content-type": "application/json",
+            },
+          },
+        ),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_000);
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });

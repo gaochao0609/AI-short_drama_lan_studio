@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import useSWR from "swr";
 
 type PolledTask = {
@@ -22,11 +22,25 @@ async function fetchTask(url: string): Promise<PolledTask> {
 }
 
 export default function useTaskPolling(taskId?: string | null) {
-  const swr = useSWR(taskId ? `/api/tasks/${taskId}` : null, fetchTask, {
+  const isPollingRequestInFlightRef = useRef(false);
+
+  const swr = useSWR(
+    taskId ? `/api/tasks/${taskId}` : null,
+    async (url: string) => {
+      isPollingRequestInFlightRef.current = true;
+
+      try {
+        return await fetchTask(url);
+      } finally {
+        isPollingRequestInFlightRef.current = false;
+      }
+    },
+    {
     shouldRetryOnError: false,
     revalidateOnFocus: false,
     revalidateOnReconnect: false,
-  });
+    },
+  );
 
   const mutateTask = swr.mutate;
   const isFinished = Boolean(swr.data && TERMINAL_STATUSES.has(swr.data.status));
@@ -37,6 +51,10 @@ export default function useTaskPolling(taskId?: string | null) {
     }
 
     const timerId = window.setInterval(() => {
+      if (isPollingRequestInFlightRef.current) {
+        return;
+      }
+
       void mutateTask();
     }, POLL_INTERVAL_MS);
 

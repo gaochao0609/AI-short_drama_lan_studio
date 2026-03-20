@@ -23,6 +23,7 @@ async function writeTaskState(
     finishedAt?: Date;
     outputJson?: MinimalWorkerResult | Prisma.NullTypes.DbNull;
     errorText?: string | null;
+    retryCount?: number;
   },
 ) {
   await prisma.$transaction([
@@ -44,11 +45,21 @@ async function writeTaskState(
       },
       data: {
         status: input.status,
+        retryCount: input.retryCount,
         outputJson: input.outputJson,
         errorText: input.errorText,
       },
     }),
   ]);
+}
+
+function hasRetriesRemaining(
+  job: Job<MinimalWorkerJobData, MinimalWorkerResult, string>,
+) {
+  const attempts = job.opts.attempts ?? 1;
+  const retryCount = job.attemptsMade + 1;
+
+  return retryCount < attempts;
 }
 
 export async function runMinimalTask(
@@ -75,13 +86,16 @@ export async function runMinimalTask(
     return result;
   } catch (error) {
     const errorText = error instanceof Error ? error.message : "Worker task failed";
+    const retryCount = job.attemptsMade + 1;
+    const status = hasRetriesRemaining(job) ? TaskStatus.QUEUED : TaskStatus.FAILED;
 
     try {
       await writeTaskState(job.data, {
-        status: TaskStatus.FAILED,
-        finishedAt: new Date(),
-        outputJson: Prisma.DbNull,
+        status,
+        finishedAt: status === TaskStatus.FAILED ? new Date() : undefined,
+        outputJson: status === TaskStatus.FAILED ? Prisma.DbNull : undefined,
         errorText,
+        retryCount,
       });
     } catch {
       // Best-effort compensation. BullMQ will still mark the job failed.
