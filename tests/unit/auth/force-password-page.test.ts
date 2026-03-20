@@ -25,7 +25,7 @@ describe("force password page", () => {
     global.fetch = originalFetch;
   });
 
-  it("returns users to the workspace after completing the forced password change", async () => {
+  it("returns users to the shared homepage redirect after completing the forced password change", async () => {
     vi.mocked(global.fetch).mockResolvedValue({
       ok: true,
       json: async () => ({ ok: true }),
@@ -44,7 +44,7 @@ describe("force password page", () => {
     fireEvent.submit(screen.getByRole("button", { name: "保存新密码" }).closest("form")!);
 
     await waitFor(() => {
-      expect(routerPushMock).toHaveBeenCalledWith("/workspace");
+      expect(routerPushMock).toHaveBeenCalledWith("/");
     });
   });
 });

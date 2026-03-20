@@ -44,7 +44,7 @@ export default function ForcePasswordPage() {
         return;
       }
 
-      router.push("/workspace");
+      router.push("/");
     } catch {
       setError("修改失败，请稍后再试。");
     } finally {
