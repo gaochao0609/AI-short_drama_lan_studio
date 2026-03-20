@@ -22,23 +22,37 @@ async function fetchTask(url: string): Promise<PolledTask> {
 }
 
 export default function useTaskPolling(taskId?: string | null) {
-  const isPollingRequestInFlightRef = useRef(false);
+  const nextPollingRequestIdRef = useRef(0);
+  const activePollingRequestRef = useRef<{
+    key: string;
+    requestId: number;
+  } | null>(null);
 
   const swr = useSWR(
     taskId ? `/api/tasks/${taskId}` : null,
     async (url: string) => {
-      isPollingRequestInFlightRef.current = true;
+      const requestId = nextPollingRequestIdRef.current + 1;
+      nextPollingRequestIdRef.current = requestId;
+      activePollingRequestRef.current = {
+        key: url,
+        requestId,
+      };
 
       try {
         return await fetchTask(url);
       } finally {
-        isPollingRequestInFlightRef.current = false;
+        if (
+          activePollingRequestRef.current?.key === url &&
+          activePollingRequestRef.current.requestId === requestId
+        ) {
+          activePollingRequestRef.current = null;
+        }
       }
     },
     {
-    shouldRetryOnError: false,
-    revalidateOnFocus: false,
-    revalidateOnReconnect: false,
+      shouldRetryOnError: false,
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
     },
   );
 
@@ -51,7 +65,7 @@ export default function useTaskPolling(taskId?: string | null) {
     }
 
     const timerId = window.setInterval(() => {
-      if (isPollingRequestInFlightRef.current) {
+      if (activePollingRequestRef.current) {
         return;
       }
 

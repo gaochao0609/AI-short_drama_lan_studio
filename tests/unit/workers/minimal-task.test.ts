@@ -155,6 +155,52 @@ describe("runMinimalTask", () => {
     );
   });
 
+  it("clears retry error text when a retry re-enters running", async () => {
+    mocks.prisma.$transaction.mockResolvedValue([]);
+
+    const job = {
+      attemptsMade: 1,
+      opts: {
+        attempts: 3,
+      },
+      data: {
+        taskId: "task-2b",
+        taskStepId: "step-2b",
+        traceId: "trace-2b",
+      },
+    } as Parameters<typeof runMinimalTask>[0];
+
+    await expect(runMinimalTask(job)).resolves.toEqual({
+      ok: true,
+      traceId: "trace-2b",
+    });
+
+    expect(mocks.prisma.task.update).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        where: {
+          id: "task-2b",
+        },
+        data: expect.objectContaining({
+          status: TaskStatus.RUNNING,
+          errorText: null,
+        }),
+      }),
+    );
+    expect(mocks.prisma.taskStep.update).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        where: {
+          id: "step-2b",
+        },
+        data: expect.objectContaining({
+          status: TaskStatus.RUNNING,
+          errorText: null,
+        }),
+      }),
+    );
+  });
+
   it("marks the task failed only after the final retryable attempt is exhausted", async () => {
     mocks.prisma.$transaction
       .mockResolvedValueOnce([])

@@ -221,4 +221,86 @@ describe("useTaskPolling", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it("does not let a stale completion from the previous task clear the current in-flight guard", async () => {
+    const resolvers = new Map<string, (response: Response) => void>();
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(
+      (input) =>
+        new Promise((resolve) => {
+          resolvers.set(String(input), resolve);
+        }),
+    );
+
+    vi.stubGlobal("fetch", fetchMock);
+    vi.useFakeTimers();
+
+    const { rerender } = renderHook(({ taskId }) => useTaskPolling(taskId), {
+      initialProps: { taskId: "task-a" },
+      wrapper: createWrapper(),
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    rerender({ taskId: "task-b" });
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      resolvers.get("/api/tasks/task-a")?.(
+        new Response(
+          JSON.stringify({
+            id: "task-a",
+            status: "RUNNING",
+          }),
+          {
+            status: 200,
+            headers: {
+              "content-type": "application/json",
+            },
+          },
+        ),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_000);
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      resolvers.get("/api/tasks/task-b")?.(
+        new Response(
+          JSON.stringify({
+            id: "task-b",
+            status: "RUNNING",
+          }),
+          {
+            status: 200,
+            headers: {
+              "content-type": "application/json",
+            },
+          },
+        ),
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_000);
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
 });

@@ -74,6 +74,7 @@ export async function runMinimalTask(
     await writeTaskState(job.data, {
       status: TaskStatus.RUNNING,
       startedAt: new Date(),
+      errorText: null,
     });
 
     await writeTaskState(job.data, {
