@@ -1,4 +1,4 @@
-import { createElement } from "react";
+import { createElement, isValidElement } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -36,16 +36,16 @@ describe("login page", () => {
     } as Response);
 
     const pageModule = await import("@/app/(auth)/login/login-form");
+    const { container } = render(createElement(pageModule.default));
+    const inputs = container.querySelectorAll("input");
 
-    render(createElement(pageModule.default));
-
-    fireEvent.change(screen.getByLabelText("用户名"), {
+    fireEvent.change(inputs[0]!, {
       target: { value: "writer" },
     });
-    fireEvent.change(screen.getByLabelText("密码"), {
+    fireEvent.change(inputs[1]!, {
       target: { value: "password123" },
     });
-    fireEvent.submit(screen.getByRole("button", { name: "登录" }).closest("form")!);
+    fireEvent.submit(screen.getByRole("button").closest("form")!);
 
     await waitFor(() => {
       expect(routerPushMock).toHaveBeenCalledWith("/workspace");
@@ -63,19 +63,60 @@ describe("login page", () => {
     } as Response);
 
     const pageModule = await import("@/app/(auth)/login/login-form");
+    const { container } = render(createElement(pageModule.default));
+    const inputs = container.querySelectorAll("input");
 
-    render(createElement(pageModule.default));
-
-    fireEvent.change(screen.getByLabelText("用户名"), {
+    fireEvent.change(inputs[0]!, {
       target: { value: "admin" },
     });
-    fireEvent.change(screen.getByLabelText("密码"), {
+    fireEvent.change(inputs[1]!, {
       target: { value: "password123" },
     });
-    fireEvent.submit(screen.getByRole("button", { name: "登录" }).closest("form")!);
+    fireEvent.submit(screen.getByRole("button").closest("form")!);
 
     await waitFor(() => {
       expect(routerPushMock).toHaveBeenCalledWith("/admin/users");
     });
+  });
+
+  it("uses a sanitized internal next path for admins when one is provided", async () => {
+    vi.mocked(global.fetch).mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        userId: "admin-1",
+        role: "ADMIN",
+        forcePasswordChange: false,
+      }),
+    } as Response);
+
+    const pageModule = await import("@/app/(auth)/login/login-form");
+    const { container } = render(
+      createElement(pageModule.default, { nextPath: "/admin/providers" }),
+    );
+    const inputs = container.querySelectorAll("input");
+
+    fireEvent.change(inputs[0]!, {
+      target: { value: "admin" },
+    });
+    fireEvent.change(inputs[1]!, {
+      target: { value: "password123" },
+    });
+    fireEvent.submit(screen.getByRole("button").closest("form")!);
+
+    await waitFor(() => {
+      expect(routerPushMock).toHaveBeenCalledWith("/admin/providers");
+    });
+  });
+
+  it("strips unsafe next values before they reach the login form", async () => {
+    const pageModule = await import("@/app/(auth)/login/page");
+    const element = await pageModule.default({
+      searchParams: Promise.resolve({
+        next: "https://evil.example/steal",
+      }),
+    });
+
+    expect(isValidElement(element)).toBe(true);
+    expect(element.props.nextPath).toBeUndefined();
   });
 });

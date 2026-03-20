@@ -5,6 +5,8 @@ const globalForPrisma = globalThis as unknown as {
   prisma?: PrismaClient;
   prismaConnectionString?: string;
 };
+let prismaClient: PrismaClient | undefined;
+let prismaClientConnectionString: string | undefined;
 
 function getConnectionString() {
   const connectionString = process.env.DATABASE_URL;
@@ -19,23 +21,30 @@ function getConnectionString() {
 function getPrismaClient() {
   const connectionString = getConnectionString();
 
-  if (
-    globalForPrisma.prisma &&
-    globalForPrisma.prismaConnectionString === connectionString
-  ) {
-    return globalForPrisma.prisma;
+  if (process.env.NODE_ENV !== "production") {
+    if (
+      globalForPrisma.prisma &&
+      globalForPrisma.prismaConnectionString === connectionString
+    ) {
+      return globalForPrisma.prisma;
+    }
   }
 
-  const client = new PrismaClient({
+  if (prismaClient && prismaClientConnectionString === connectionString) {
+    return prismaClient;
+  }
+
+  prismaClient = new PrismaClient({
     adapter: new PrismaPg({ connectionString }),
   });
+  prismaClientConnectionString = connectionString;
 
   if (process.env.NODE_ENV !== "production") {
-    globalForPrisma.prisma = client;
+    globalForPrisma.prisma = prismaClient;
     globalForPrisma.prismaConnectionString = connectionString;
   }
 
-  return client;
+  return prismaClient;
 }
 
 export const prisma = new Proxy({} as PrismaClient, {
