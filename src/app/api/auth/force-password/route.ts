@@ -3,26 +3,19 @@ import { requireUser } from "@/lib/auth/guards";
 import { hashPassword } from "@/lib/auth/password";
 import { hashSessionToken, SESSION_COOKIE_NAME } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
+import { createJsonObjectSchema, JsonStringSchema, parseJsonBody } from "@/lib/http/validation";
 import { toErrorResponse } from "@/lib/services/errors";
+
+const ForcePasswordBodySchema = createJsonObjectSchema({
+  password: JsonStringSchema,
+}).refine((body) => Boolean(body.password), {
+  message: "password is required",
+});
 
 export async function POST(request: Request) {
   try {
     const user = await requireUser();
-    const body = (await request.json()) as {
-      password?: unknown;
-    };
-    const password = typeof body.password === "string" ? body.password : "";
-
-    if (!password) {
-      return Response.json(
-        {
-          error: "password is required",
-        },
-        {
-          status: 400,
-        },
-      );
-    }
+    const body = await parseJsonBody(request, ForcePasswordBodySchema);
 
     const token = (await cookies()).get(SESSION_COOKIE_NAME)?.value;
     const currentSession = token
@@ -42,7 +35,7 @@ export async function POST(request: Request) {
           id: user.userId,
         },
         data: {
-          passwordHash: await hashPassword(password),
+          passwordHash: await hashPassword(body.password),
           forcePasswordChange: false,
         },
       }),

@@ -1,6 +1,14 @@
 import { requireUser } from "@/lib/auth/guards";
+import { createJsonObjectSchema, JsonOptionalTrimmedStringSchema, JsonTrimmedStringSchema, parseJsonBody } from "@/lib/http/validation";
 import { createProject, listProjects } from "@/lib/services/projects";
 import { toErrorResponse } from "@/lib/services/errors";
+
+const CreateProjectBodySchema = createJsonObjectSchema({
+  title: JsonTrimmedStringSchema,
+  idea: JsonOptionalTrimmedStringSchema,
+}).refine((body) => Boolean(body.title), {
+  message: "title is required",
+});
 
 export async function GET() {
   try {
@@ -16,29 +24,12 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const user = await requireUser();
-    const rawBody = (await request.json()) as unknown;
-    const body =
-      typeof rawBody === "object" && rawBody !== null
-        ? (rawBody as { title?: unknown; idea?: unknown })
-        : {};
-    const title = typeof body.title === "string" ? body.title.trim() : "";
-    const idea = typeof body.idea === "string" ? body.idea.trim() : undefined;
-
-    if (!title) {
-      return Response.json(
-        {
-          error: "title is required",
-        },
-        {
-          status: 400,
-        },
-      );
-    }
+    const body = await parseJsonBody(request, CreateProjectBodySchema);
 
     const project = await createProject({
       ownerId: user.userId,
-      title,
-      idea,
+      title: body.title,
+      idea: body.idea,
     });
 
     return Response.json(project, { status: 201 });

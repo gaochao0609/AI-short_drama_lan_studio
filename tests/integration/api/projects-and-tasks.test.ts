@@ -286,7 +286,7 @@ describe("projects and tasks api", () => {
     });
   });
 
-  it("updates task status for an owned task", async () => {
+  it("rejects client task status updates and leaves the task unchanged", async () => {
     await withTestDatabase(async ({ databaseUrl, prisma }) => {
       await withApiTestEnv(databaseUrl, async () => {
         const user = await createActiveUser(prisma, "task-owner-update");
@@ -318,27 +318,14 @@ describe("projects and tasks api", () => {
         });
 
         const response = await PATCH(
-          jsonRequest(
-            `http://localhost/api/tasks/${task.id}`,
-            {
-              status: TaskStatus.RUNNING,
-              outputJson: {
-                progress: 0.5,
-              },
-            },
-            { method: "PATCH" },
-          ),
+          jsonRequest(`http://localhost/api/tasks/${task.id}`, { status: TaskStatus.RUNNING }, { method: "PATCH" }),
           { params: { taskId: task.id } },
         );
 
-        expect(response.status).toBe(200);
+        expect(response.status).toBe(405);
         await expect(response.json()).resolves.toEqual(
           expect.objectContaining({
-            id: task.id,
-            status: TaskStatus.RUNNING,
-            outputJson: {
-              progress: 0.5,
-            },
+            error: expect.stringContaining("worker"),
           }),
         );
         await expect(
@@ -348,10 +335,8 @@ describe("projects and tasks api", () => {
         ).resolves.toEqual(
           expect.objectContaining({
             id: task.id,
-            status: TaskStatus.RUNNING,
-            outputJson: {
-              progress: 0.5,
-            },
+            status: TaskStatus.QUEUED,
+            outputJson: null,
           }),
         );
       });

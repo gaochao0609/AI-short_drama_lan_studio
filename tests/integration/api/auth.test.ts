@@ -54,6 +54,31 @@ describe("auth api", () => {
     });
   });
 
+  it("returns 400 when the register request body is malformed JSON", async () => {
+    await withTestDatabase(async ({ databaseUrl }) => {
+      await withApiTestEnv(databaseUrl, async () => {
+        const { POST } = await loadRouteModule<{
+          POST: (request: Request) => Promise<Response>;
+        }>("src/app/api/auth/register-request/route.ts");
+
+        const response = await POST(
+          new Request("http://localhost/api/auth/register-request", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+            },
+            body: "{",
+          }),
+        );
+
+        expect(response.status).toBe(400);
+        await expect(response.json()).resolves.toEqual({
+          error: "Invalid JSON body",
+        });
+      });
+    });
+  });
+
   it("rejects a register request when the username already exists on a user", async () => {
     await withTestDatabase(async ({ databaseUrl, prisma }) => {
       await withApiTestEnv(databaseUrl, async () => {

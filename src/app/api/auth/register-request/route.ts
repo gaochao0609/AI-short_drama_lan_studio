@@ -1,32 +1,23 @@
+import { createJsonObjectSchema, JsonOptionalTrimmedStringSchema, JsonTrimmedStringSchema, parseJsonBody } from "@/lib/http/validation";
 import { createAccountRequest } from "@/lib/services/account-requests";
 import { toErrorResponse } from "@/lib/services/errors";
 
+const RegisterRequestBodySchema = createJsonObjectSchema({
+  username: JsonTrimmedStringSchema,
+  displayName: JsonTrimmedStringSchema,
+  reason: JsonOptionalTrimmedStringSchema.transform((value) => (value && value.length > 0 ? value : undefined)),
+}).refine((body) => Boolean(body.username && body.displayName), {
+  message: "username and displayName are required",
+});
+
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as {
-      username?: unknown;
-      displayName?: unknown;
-      reason?: unknown;
-    };
-    const username = typeof body.username === "string" ? body.username.trim() : "";
-    const displayName = typeof body.displayName === "string" ? body.displayName.trim() : "";
-    const reason = typeof body.reason === "string" ? body.reason.trim() : undefined;
-
-    if (!username || !displayName) {
-      return Response.json(
-        {
-          error: "username and displayName are required",
-        },
-        {
-          status: 400,
-        },
-      );
-    }
+    const body = await parseJsonBody(request, RegisterRequestBodySchema);
 
     const result = await createAccountRequest({
-      username,
-      displayName,
-      reason,
+      username: body.username,
+      displayName: body.displayName,
+      reason: body.reason,
     });
 
     return Response.json(result, { status: 201 });

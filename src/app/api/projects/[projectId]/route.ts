@@ -1,10 +1,22 @@
 import { requireUser } from "@/lib/auth/guards";
+import { createJsonObjectSchema, JsonOptionalTrimmedStringSchema, parseJsonBody } from "@/lib/http/validation";
 import { getProject, updateProject } from "@/lib/services/projects";
 import { toErrorResponse } from "@/lib/services/errors";
 
 type ProjectRouteContext = {
   params: Promise<{ projectId: string }> | { projectId: string };
 };
+
+const UpdateProjectBodySchema = createJsonObjectSchema({
+  title: JsonOptionalTrimmedStringSchema,
+  idea: JsonOptionalTrimmedStringSchema,
+  status: JsonOptionalTrimmedStringSchema,
+}).refine(
+  (body) => body.title !== undefined || body.idea !== undefined || body.status !== undefined,
+  {
+    message: "title, idea, or status is required",
+  },
+);
 
 async function readProjectId(context: ProjectRouteContext) {
   const params = await context.params;
@@ -27,30 +39,12 @@ export async function PATCH(request: Request, context: ProjectRouteContext) {
   try {
     const user = await requireUser();
     const projectId = await readProjectId(context);
-    const rawBody = (await request.json()) as unknown;
-    const body =
-      typeof rawBody === "object" && rawBody !== null
-        ? (rawBody as { title?: unknown; idea?: unknown; status?: unknown })
-        : {};
-    const title = typeof body.title === "string" ? body.title.trim() : undefined;
-    const idea = typeof body.idea === "string" ? body.idea.trim() : undefined;
-    const status = typeof body.status === "string" ? body.status.trim() : undefined;
-
-    if (title === undefined && idea === undefined && status === undefined) {
-      return Response.json(
-        {
-          error: "title, idea, or status is required",
-        },
-        {
-          status: 400,
-        },
-      );
-    }
+    const body = await parseJsonBody(request, UpdateProjectBodySchema);
 
     const project = await updateProject(projectId, user.userId, {
-      title,
-      idea,
-      status,
+      title: body.title,
+      idea: body.idea,
+      status: body.status,
     });
 
     return Response.json(project, { status: 200 });

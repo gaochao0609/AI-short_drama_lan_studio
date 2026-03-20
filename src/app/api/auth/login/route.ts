@@ -1,9 +1,16 @@
 import { headers } from "next/headers";
 import { createSession, SESSION_COOKIE_NAME } from "@/lib/auth/session";
+import { createJsonObjectSchema, JsonStringSchema, JsonTrimmedStringSchema, parseJsonBody } from "@/lib/http/validation";
 import { toErrorResponse, shouldUseSecureCookies } from "@/lib/services/errors";
 import { authenticateUser } from "@/lib/services/users";
 
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const LoginBodySchema = createJsonObjectSchema({
+  username: JsonTrimmedStringSchema,
+  password: JsonStringSchema,
+}).refine((body) => Boolean(body.username && body.password), {
+  message: "username and password are required",
+});
 
 function buildSessionCookie(token: string, expiresAt: Date) {
   return [
@@ -18,25 +25,9 @@ function buildSessionCookie(token: string, expiresAt: Date) {
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as {
-      username?: unknown;
-      password?: unknown;
-    };
-    const username = typeof body.username === "string" ? body.username.trim() : "";
-    const password = typeof body.password === "string" ? body.password : "";
+    const body = await parseJsonBody(request, LoginBodySchema);
 
-    if (!username || !password) {
-      return Response.json(
-        {
-          error: "username and password are required",
-        },
-        {
-          status: 400,
-        },
-      );
-    }
-
-    const authenticatedUser = await authenticateUser(username, password);
+    const authenticatedUser = await authenticateUser(body.username, body.password);
     const requestHeaders = await headers();
     const forwardedFor = requestHeaders.get("x-forwarded-for");
     const expiresAt = new Date(Date.now() + SESSION_TTL_MS);

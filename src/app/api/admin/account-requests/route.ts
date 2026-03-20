@@ -1,7 +1,14 @@
 import { requireAdmin } from "@/lib/auth/guards";
 import { prisma } from "@/lib/db";
+import { createJsonObjectSchema, JsonStringSchema, parseJsonBody } from "@/lib/http/validation";
 import { approveAccountRequest } from "@/lib/services/account-requests";
 import { toErrorResponse } from "@/lib/services/errors";
+
+const ApproveAccountRequestBodySchema = createJsonObjectSchema({
+  requestId: JsonStringSchema,
+}).refine((body) => Boolean(body.requestId), {
+  message: "requestId is required",
+});
 
 export async function GET() {
   try {
@@ -25,23 +32,9 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const admin = await requireAdmin();
-    const body = (await request.json()) as {
-      requestId?: unknown;
-    };
-    const requestId = typeof body.requestId === "string" ? body.requestId : "";
+    const body = await parseJsonBody(request, ApproveAccountRequestBodySchema);
 
-    if (!requestId) {
-      return Response.json(
-        {
-          error: "requestId is required",
-        },
-        {
-          status: 400,
-        },
-      );
-    }
-
-    const result = await approveAccountRequest(requestId, admin.userId);
+    const result = await approveAccountRequest(body.requestId, admin.userId);
 
     return Response.json(result, { status: 200 });
   } catch (error) {

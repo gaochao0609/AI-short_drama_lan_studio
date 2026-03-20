@@ -86,35 +86,3 @@ export async function getTask(taskId: string, ownerId: string) {
 
   return task;
 }
-
-export async function updateTask(
-  taskId: string,
-  ownerId: string,
-  input: {
-    status?: TaskStatus;
-    outputJson?: Prisma.InputJsonValue;
-    errorText?: string | null;
-  },
-) {
-  const task = await getTask(taskId, ownerId);
-  const data: Prisma.TaskUpdateInput = {};
-
-  if (input.status !== undefined) {
-    data.status = input.status;
-  }
-
-  if (input.outputJson !== undefined) {
-    data.outputJson = input.outputJson;
-  }
-
-  if (input.errorText !== undefined) {
-    data.errorText = input.errorText;
-  }
-
-  return prisma.task.update({
-    where: {
-      id: task.id,
-    },
-    data,
-  });
-}

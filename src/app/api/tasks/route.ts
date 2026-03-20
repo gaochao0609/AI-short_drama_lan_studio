@@ -1,45 +1,40 @@
 import { TaskType, type Prisma } from "@prisma/client";
+import { z } from "zod";
 import { requireUser } from "@/lib/auth/guards";
+import { createJsonObjectSchema, JsonStringSchema, parseJsonBody } from "@/lib/http/validation";
 import { toErrorResponse } from "@/lib/services/errors";
 import { createTask } from "@/lib/services/tasks";
+
+const CreateTaskBodySchema = createJsonObjectSchema({
+  projectId: JsonStringSchema,
+  type: JsonStringSchema,
+  inputJson: z.unknown().optional(),
+}).superRefine((body, ctx) => {
+  if (!body.projectId || !body.type || body.inputJson === undefined) {
+    ctx.addIssue({
+      code: "custom",
+      message: "projectId, type, and inputJson are required",
+    });
+    return;
+  }
+
+  if (!Object.values(TaskType).includes(body.type as TaskType)) {
+    ctx.addIssue({
+      code: "custom",
+      message: "Invalid task type",
+    });
+  }
+});
 
 export async function POST(request: Request) {
   try {
     const user = await requireUser();
-    const rawBody = (await request.json()) as unknown;
-    const body =
-      typeof rawBody === "object" && rawBody !== null
-        ? (rawBody as { projectId?: unknown; type?: unknown; inputJson?: unknown })
-        : {};
-    const projectId = typeof body.projectId === "string" ? body.projectId : "";
-    const type = typeof body.type === "string" ? body.type : "";
-
-    if (!projectId || !type || body.inputJson === undefined) {
-      return Response.json(
-        {
-          error: "projectId, type, and inputJson are required",
-        },
-        {
-          status: 400,
-        },
-      );
-    }
-
-    if (!Object.values(TaskType).includes(type as TaskType)) {
-      return Response.json(
-        {
-          error: "Invalid task type",
-        },
-        {
-          status: 400,
-        },
-      );
-    }
+    const body = await parseJsonBody(request, CreateTaskBodySchema);
 
     const task = await createTask({
-      projectId,
+      projectId: body.projectId,
       createdById: user.userId,
-      type: type as TaskType,
+      type: body.type as TaskType,
       inputJson: body.inputJson as Prisma.InputJsonValue,
     });
 

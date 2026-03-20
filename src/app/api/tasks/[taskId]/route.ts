@@ -1,7 +1,6 @@
-import { TaskStatus, type Prisma } from "@prisma/client";
 import { requireUser } from "@/lib/auth/guards";
 import { toErrorResponse } from "@/lib/services/errors";
-import { getTask, updateTask } from "@/lib/services/tasks";
+import { getTask } from "@/lib/services/tasks";
 
 type TaskRouteContext = {
   params: Promise<{ taskId: string }> | { taskId: string };
@@ -26,45 +25,20 @@ export async function GET(_request: Request, context: TaskRouteContext) {
 
 export async function PATCH(request: Request, context: TaskRouteContext) {
   try {
-    const user = await requireUser();
-    const taskId = await readTaskId(context);
-    const rawBody = (await request.json()) as unknown;
-    const body =
-      typeof rawBody === "object" && rawBody !== null
-        ? (rawBody as { status?: unknown; outputJson?: unknown; errorText?: unknown })
-        : {};
-    const status = typeof body.status === "string" ? body.status : undefined;
-    const errorText = typeof body.errorText === "string" ? body.errorText : undefined;
+    void request;
+    void context;
 
-    if (status === undefined && body.outputJson === undefined && errorText === undefined) {
-      return Response.json(
-        {
-          error: "status, outputJson, or errorText is required",
+    return Response.json(
+      {
+        error: "Task status updates are managed by the worker",
+      },
+      {
+        status: 405,
+        headers: {
+          Allow: "GET",
         },
-        {
-          status: 400,
-        },
-      );
-    }
-
-    if (status !== undefined && !Object.values(TaskStatus).includes(status as TaskStatus)) {
-      return Response.json(
-        {
-          error: "Invalid task status",
-        },
-        {
-          status: 400,
-        },
-      );
-    }
-
-    const task = await updateTask(taskId, user.userId, {
-      status: status as TaskStatus | undefined,
-      outputJson: body.outputJson as Prisma.InputJsonValue | undefined,
-      errorText,
-    });
-
-    return Response.json(task, { status: 200 });
+      },
+    );
   } catch (error) {
     return toErrorResponse(error);
   }

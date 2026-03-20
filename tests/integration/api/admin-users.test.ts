@@ -141,6 +141,55 @@ describe("admin user api", () => {
     );
   });
 
+  it("returns 400 when the admin users body is malformed JSON", async () => {
+    await withTestDatabase(
+      async ({ databaseUrl, prisma }) => {
+        await withApiTestEnv(
+          databaseUrl,
+          async () => {
+            const admin = await prisma.user.update({
+              where: { username: "admin-auth-tests" },
+              data: { forcePasswordChange: false },
+            });
+            const adminSession = await insertSessionForUser(prisma, admin.id);
+            const { POST } = await loadRouteModule<{
+              POST: (request: Request) => Promise<Response>;
+            }>("src/app/api/admin/users/route.ts", {
+              sessionToken: adminSession.token,
+            });
+
+            const response = await POST(
+              new Request("http://localhost/api/admin/users", {
+                method: "POST",
+                headers: {
+                  "content-type": "application/json",
+                  cookie: `session=${adminSession.token}`,
+                },
+                body: "{",
+              }),
+            );
+
+            expect(response.status).toBe(400);
+            await expect(response.json()).resolves.toEqual({
+              error: "Invalid JSON body",
+            });
+          },
+          {
+            DEFAULT_ADMIN_PASSWORD: "AdminPass123!",
+            DEFAULT_ADMIN_USERNAME: "admin-auth-tests",
+          },
+        );
+      },
+      {
+        seed: true,
+        seedEnv: {
+          DEFAULT_ADMIN_PASSWORD: "AdminPass123!",
+          DEFAULT_ADMIN_USERNAME: "admin-auth-tests",
+        },
+      },
+    );
+  });
+
   it("rejects creating a user when the username is reserved by a pending account request", async () => {
     await withTestDatabase(
       async ({ databaseUrl, prisma }) => {

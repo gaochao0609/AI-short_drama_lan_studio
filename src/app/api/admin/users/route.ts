@@ -1,8 +1,49 @@
 import { UserRole, UserStatus } from "@prisma/client";
 import { requireAdmin } from "@/lib/auth/guards";
 import { prisma } from "@/lib/db";
+import { createJsonObjectSchema, JsonStringSchema, JsonTrimmedStringSchema, parseJsonBody } from "@/lib/http/validation";
 import { ServiceError, toErrorResponse } from "@/lib/services/errors";
 import { createUser, disableUser, invalidateUserSessions } from "@/lib/services/users";
+
+const CreateUserBodySchema = createJsonObjectSchema({
+  username: JsonTrimmedStringSchema,
+  role: JsonStringSchema,
+}).superRefine((body, ctx) => {
+  if (!body.username || !body.role) {
+    ctx.addIssue({
+      code: "custom",
+      message: "username and role are required",
+    });
+    return;
+  }
+
+  if (!Object.values(UserRole).includes(body.role as UserRole)) {
+    ctx.addIssue({
+      code: "custom",
+      message: "Invalid role",
+    });
+  }
+});
+
+const UpdateUserStatusBodySchema = createJsonObjectSchema({
+  userId: JsonStringSchema,
+  status: JsonStringSchema,
+}).superRefine((body, ctx) => {
+  if (!body.userId || !body.status) {
+    ctx.addIssue({
+      code: "custom",
+      message: "userId and status are required",
+    });
+    return;
+  }
+
+  if (!Object.values(UserStatus).includes(body.status as UserStatus)) {
+    ctx.addIssue({
+      code: "custom",
+      message: "Invalid status",
+    });
+  }
+});
 
 export async function GET() {
   try {
@@ -32,38 +73,11 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     await requireAdmin();
-    const body = (await request.json()) as {
-      username?: unknown;
-      role?: unknown;
-    };
-    const username = typeof body.username === "string" ? body.username.trim() : "";
-    const role = typeof body.role === "string" ? body.role : "";
-
-    if (!username || !role) {
-      return Response.json(
-        {
-          error: "username and role are required",
-        },
-        {
-          status: 400,
-        },
-      );
-    }
-
-    if (!Object.values(UserRole).includes(role as UserRole)) {
-      return Response.json(
-        {
-          error: "Invalid role",
-        },
-        {
-          status: 400,
-        },
-      );
-    }
+    const body = await parseJsonBody(request, CreateUserBodySchema);
 
     const result = await createUser({
-      username,
-      role: role as UserRole,
+      username: body.username,
+      role: body.role as UserRole,
     });
 
     return Response.json(result, { status: 201 });
@@ -75,44 +89,17 @@ export async function POST(request: Request) {
 export async function PATCH(request: Request) {
   try {
     const admin = await requireAdmin();
-    const body = (await request.json()) as {
-      userId?: unknown;
-      status?: unknown;
-    };
-    const userId = typeof body.userId === "string" ? body.userId : "";
-    const status = typeof body.status === "string" ? body.status : "";
+    const body = await parseJsonBody(request, UpdateUserStatusBodySchema);
 
-    if (!userId || !status) {
-      return Response.json(
-        {
-          error: "userId and status are required",
-        },
-        {
-          status: 400,
-        },
-      );
-    }
-
-    if (!Object.values(UserStatus).includes(status as UserStatus)) {
-      return Response.json(
-        {
-          error: "Invalid status",
-        },
-        {
-          status: 400,
-        },
-      );
-    }
-
-    if (status === UserStatus.DISABLED) {
-      await disableUser(userId, admin.userId);
+    if (body.status === UserStatus.DISABLED) {
+      await disableUser(body.userId, admin.userId);
     } else {
       const result = await prisma.user.updateMany({
         where: {
-          id: userId,
+          id: body.userId,
         },
         data: {
-          status: status as UserStatus,
+          status: body.status as UserStatus,
         },
       });
 
@@ -120,13 +107,13 @@ export async function PATCH(request: Request) {
         throw new ServiceError(404, "User not found");
       }
 
-      await invalidateUserSessions(userId);
+      await invalidateUserSessions(body.userId);
     }
 
     return Response.json(
       {
-        userId,
-        status,
+        userId: body.userId,
+        status: body.status,
       },
       {
         status: 200,
