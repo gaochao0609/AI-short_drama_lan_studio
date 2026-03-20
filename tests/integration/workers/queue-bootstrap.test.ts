@@ -117,12 +117,20 @@ describe("queue bootstrap", () => {
     });
   });
 
-  it("imports the worker entrypoint without module errors", async () => {
+  it("starts and closes the four worker runtimes", async () => {
     await withTestDatabase(async ({ databaseUrl }) => {
       await withQueueTestEnv(databaseUrl, async () => {
-        const workerModule = await import("@/worker/index");
+        const { startWorkerRuntime } = await import("@/worker/index");
+        const runtime = await startWorkerRuntime();
 
-        expect(workerModule).toHaveProperty("startWorkerRuntime");
+        expect(runtime.workers).toHaveLength(4);
+        expect(runtime.workers.map((worker) => worker.name)).toEqual([
+          "script-queue",
+          "storyboard-queue",
+          "image-queue",
+          "video-queue",
+        ]);
+        await runtime.close();
       });
     });
   });

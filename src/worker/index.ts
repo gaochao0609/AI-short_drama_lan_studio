@@ -1,8 +1,5 @@
 import process from "node:process";
-import { createImageWorker } from "@/worker/processors/image";
-import { createScriptWorker } from "@/worker/processors/script";
-import { createStoryboardWorker } from "@/worker/processors/storyboard";
-import { createVideoWorker } from "@/worker/processors/video";
+import { bootstrapWorkerEnv } from "@/worker/env";
 
 export type WorkerRuntime = {
   workers: Array<{
@@ -12,13 +9,22 @@ export type WorkerRuntime = {
   close: () => Promise<void>;
 };
 
-export function startWorkerRuntime(): WorkerRuntime {
-  const workers = [
-    createScriptWorker(),
-    createStoryboardWorker(),
-    createImageWorker(),
-    createVideoWorker(),
-  ];
+export async function startWorkerRuntime(): Promise<WorkerRuntime> {
+  bootstrapWorkerEnv();
+
+  const [
+    { createScriptWorker },
+    { createStoryboardWorker },
+    { createImageWorker },
+    { createVideoWorker },
+  ] = await Promise.all([
+    import("@/worker/processors/script"),
+    import("@/worker/processors/storyboard"),
+    import("@/worker/processors/image"),
+    import("@/worker/processors/video"),
+  ]);
+
+  const workers = [createScriptWorker(), createStoryboardWorker(), createImageWorker(), createVideoWorker()];
 
   console.log(`[worker] started ${workers[0].name}`);
   console.log(`[worker] started ${workers[1].name}`);
@@ -36,13 +42,18 @@ export function startWorkerRuntime(): WorkerRuntime {
 const shouldAutoStart = process.env.VITEST !== "true";
 
 if (shouldAutoStart) {
-  const runtime = startWorkerRuntime();
+  void (async () => {
+    const runtime = await startWorkerRuntime();
 
-  const shutdown = async () => {
-    await runtime.close();
-    process.exit(0);
-  };
+    const shutdown = async () => {
+      await runtime.close();
+      process.exit(0);
+    };
 
-  process.once("SIGINT", shutdown);
-  process.once("SIGTERM", shutdown);
+    process.once("SIGINT", shutdown);
+    process.once("SIGTERM", shutdown);
+  })().catch((error: unknown) => {
+    console.error(error);
+    process.exit(1);
+  });
 }
