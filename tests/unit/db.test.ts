@@ -1,14 +1,48 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const { prismaClientConstructor, prismaAdapterConstructor } = vi.hoisted(() => ({
+  prismaClientConstructor: vi.fn(),
+  prismaAdapterConstructor: vi.fn(),
+}));
+
+vi.mock("@prisma/client", () => ({
+  PrismaClient: prismaClientConstructor,
+}));
+
+vi.mock("@prisma/adapter-pg", () => ({
+  PrismaPg: prismaAdapterConstructor,
+}));
 
 const processEnv = process.env as Record<string, string | undefined>;
 const originalDatabaseUrl = process.env.DATABASE_URL;
 const originalNodeEnv = process.env.NODE_ENV;
+const globalForPrisma = globalThis as typeof globalThis & {
+  prisma?: unknown;
+  prismaConnectionString?: string;
+};
 
 describe("database bootstrap", () => {
+  beforeEach(() => {
+    prismaClientConstructor.mockReset();
+    prismaClientConstructor.mockImplementation(function PrismaClient() {
+      return {
+        user: { findMany: vi.fn() },
+        session: { findMany: vi.fn() },
+        $connect: vi.fn(),
+        $queryRaw: vi.fn(),
+      };
+    });
+
+    prismaAdapterConstructor.mockReset();
+    prismaAdapterConstructor.mockImplementation(function PrismaPg() {
+      return {};
+    });
+  });
+
   afterEach(() => {
     vi.resetModules();
-    vi.doUnmock("@prisma/client");
-    vi.doUnmock("@prisma/adapter-pg");
+    delete globalForPrisma.prisma;
+    delete globalForPrisma.prismaConnectionString;
 
     if (originalDatabaseUrl === undefined) {
       delete process.env.DATABASE_URL;
@@ -42,24 +76,6 @@ describe("database bootstrap", () => {
   it("reuses one prisma client instance across repeated property access in production", async () => {
     processEnv.NODE_ENV = "production";
     process.env.DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/ai_short_drama";
-
-    const prismaClientConstructor = vi.fn(function PrismaClient() {
-      return {
-        user: { findMany: vi.fn() },
-        session: { findMany: vi.fn() },
-        $queryRaw: vi.fn(),
-      };
-    });
-    const prismaAdapterConstructor = vi.fn(function PrismaPg() {
-      return {};
-    });
-
-    vi.doMock("@prisma/client", () => ({
-      PrismaClient: prismaClientConstructor,
-    }));
-    vi.doMock("@prisma/adapter-pg", () => ({
-      PrismaPg: prismaAdapterConstructor,
-    }));
 
     const mod = await import("@/lib/db");
 
