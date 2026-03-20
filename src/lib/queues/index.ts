@@ -1,10 +1,6 @@
 import { TaskType } from "@prisma/client";
 import { Queue } from "bullmq";
-import { connection } from "@/lib/redis";
-
-export { connection };
-
-const bullmqConnection = connection as any;
+import { bullmqConnection } from "@/lib/redis";
 
 export const queues = {
   script: new Queue("script-queue", { connection: bullmqConnection }),

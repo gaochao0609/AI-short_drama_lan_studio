@@ -1,7 +1,7 @@
 import { TaskStatus } from "@prisma/client";
 import { Worker } from "bullmq";
 import { prisma } from "@/lib/db";
-import { connection } from "@/lib/redis";
+import { bullmqConnection } from "@/lib/redis";
 
 type WorkerJobData = {
   taskId: string;
@@ -60,6 +60,6 @@ async function runMinimalTask(job: { data: WorkerJobData }) {
 
 export function createImageWorker() {
   return new Worker("image-queue", runMinimalTask, {
-    connection: connection as any,
+    connection: bullmqConnection,
   });
 }

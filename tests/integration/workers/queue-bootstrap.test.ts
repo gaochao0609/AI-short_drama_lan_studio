@@ -39,7 +39,8 @@ describe("queue bootstrap", () => {
   it("enqueues a job with the task type as the job name and records a task step", async () => {
     await withTestDatabase(async ({ databaseUrl, prisma }) => {
       await withQueueTestEnv(databaseUrl, async () => {
-        const { connection, queues } = await import("@/lib/queues");
+        const { connection } = await import("@/lib/redis");
+        const { queues } = await import("@/lib/queues");
         const { enqueueTask } = await import("@/lib/queues/enqueue");
 
         try {
