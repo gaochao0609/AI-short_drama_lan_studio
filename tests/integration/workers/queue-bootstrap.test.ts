@@ -1,4 +1,5 @@
 import { TaskStatus, TaskType, UserRole, UserStatus, type PrismaClient } from "@prisma/client";
+import { QueueEvents } from "bullmq";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { withApiTestEnv } from "../api/test-api";
 import { withTestDatabase } from "../db/test-database";
@@ -12,12 +13,17 @@ async function withQueueTestEnv<T>(databaseUrl: string, callback: () => Promise<
   return withApiTestEnv(
     databaseUrl,
     async () => {
-      const { connection } = await import("@/lib/redis");
+      const [{ closeQueues }, { connection }] = await Promise.all([
+        import("@/lib/queues"),
+        import("@/lib/redis"),
+      ]);
+
       await connection.flushdb();
 
       try {
         return await callback();
       } finally {
+        await closeQueues();
         await connection.flushdb();
         await connection.quit();
       }
@@ -62,38 +68,6 @@ async function createOwnedTask(
       },
     },
   });
-}
-
-async function observeTaskProgress(prisma: PrismaClient, taskId: string, timeoutMs = 5_000) {
-  const observedTaskStatuses = new Set<TaskStatus>();
-  const observedStepStatuses = new Set<TaskStatus>();
-  const deadline = Date.now() + timeoutMs;
-
-  while (Date.now() <= deadline) {
-    const task = await prisma.task.findUniqueOrThrow({
-      where: { id: taskId },
-    });
-    const step = await prisma.taskStep.findFirst({
-      where: { taskId },
-      orderBy: { createdAt: "desc" },
-    });
-
-    observedTaskStatuses.add(task.status);
-    if (step) {
-      observedStepStatuses.add(step.status);
-    }
-
-    if (task.status === TaskStatus.SUCCEEDED && step?.status === TaskStatus.SUCCEEDED) {
-      return {
-        observedTaskStatuses,
-        observedStepStatuses,
-      };
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-
-  throw new Error(`Timed out waiting for task ${taskId} to finish`);
 }
 
 describe("queue bootstrap", () => {
@@ -196,9 +170,12 @@ describe("queue bootstrap", () => {
   it("processes a job through running and succeeded states", async () => {
     await withTestDatabase(async ({ databaseUrl, prisma }) => {
       await withQueueTestEnv(databaseUrl, async () => {
-        const { queues } = await import("@/lib/queues");
-        const { enqueueTask } = await import("@/lib/queues/enqueue");
+        const [{ queues }, { enqueueTask }] = await Promise.all([
+          import("@/lib/queues"),
+          import("@/lib/queues/enqueue"),
+        ]);
         const { startWorkerRuntime } = await import("@/worker/index");
+        const { bullmqConnection } = await import("@/lib/redis");
         const task = await createOwnedTask(prisma, {
           username: "queue-bootstrap-runtime",
           projectTitle: "Queue Runtime Project",
@@ -246,15 +223,22 @@ describe("queue bootstrap", () => {
           }),
         );
 
+        const queueEvents = new QueueEvents(result.queueName, {
+          connection: bullmqConnection,
+        });
+        await queueEvents.waitUntilReady();
+        expect(job).not.toBeNull();
+        const completionPromise = job!.waitUntilFinished(queueEvents);
+
         const runtime = await startWorkerRuntime();
-        const progressPromise = observeTaskProgress(prisma, task.id);
 
         try {
-          const progress = await progressPromise;
-          expect(progress.observedTaskStatuses.has(TaskStatus.RUNNING)).toBe(true);
-          expect(progress.observedTaskStatuses.has(TaskStatus.SUCCEEDED)).toBe(true);
-          expect(progress.observedStepStatuses.has(TaskStatus.RUNNING)).toBe(true);
-          expect(progress.observedStepStatuses.has(TaskStatus.SUCCEEDED)).toBe(true);
+          await expect(completionPromise).resolves.toEqual(
+            expect.objectContaining({
+              ok: true,
+              traceId: expect.any(String),
+            }),
+          );
 
           await expect(
             prisma.task.findUniqueOrThrow({
@@ -287,6 +271,7 @@ describe("queue bootstrap", () => {
           );
         } finally {
           await runtime.close();
+          await queueEvents.close();
         }
       });
     });

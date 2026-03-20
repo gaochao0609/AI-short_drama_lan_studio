@@ -9,6 +9,10 @@ export const queues = {
   video: new Queue("video-queue", { connection: bullmqConnection }),
 } as const;
 
+export async function closeQueues() {
+  await Promise.all(Object.values(queues).map((queue) => queue.close()));
+}
+
 const queueByTaskType = {
   [TaskType.SCRIPT_QUESTION]: queues.script,
   [TaskType.SCRIPT_FINALIZE]: queues.script,

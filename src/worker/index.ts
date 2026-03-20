@@ -1,4 +1,4 @@
-import process from "node:process";
+import { Worker } from "bullmq";
 import { bootstrapWorkerEnv } from "@/worker/env";
 
 export type WorkerRuntime = {
@@ -26,6 +26,8 @@ export async function startWorkerRuntime(): Promise<WorkerRuntime> {
 
   const workers = [createScriptWorker(), createStoryboardWorker(), createImageWorker(), createVideoWorker()];
 
+  await waitForWorkerStartup(workers);
+
   console.log(`[worker] started ${workers[0].name}`);
   console.log(`[worker] started ${workers[1].name}`);
   console.log(`[worker] started ${workers[2].name}`);
@@ -39,21 +41,38 @@ export async function startWorkerRuntime(): Promise<WorkerRuntime> {
   };
 }
 
-const shouldAutoStart = process.env.VITEST !== "true";
+async function waitForWorkerStartup(workers: Worker[]) {
+  let onError: ((error: Error) => void) | undefined;
+  const readyPromise = Promise.all(workers.map((worker) => worker.waitUntilReady()));
+  const errorPromise = new Promise<never>((_, reject) => {
+    onError = (error: Error) => {
+      if (onError === undefined) {
+        return;
+      }
 
-if (shouldAutoStart) {
-  void (async () => {
-    const runtime = await startWorkerRuntime();
-
-    const shutdown = async () => {
-      await runtime.close();
-      process.exit(0);
+      const errorListener = onError;
+      onError = undefined;
+      for (const worker of workers) {
+        worker.off("error", errorListener);
+      }
+      reject(error);
     };
 
-    process.once("SIGINT", shutdown);
-    process.once("SIGTERM", shutdown);
-  })().catch((error: unknown) => {
-    console.error(error);
-    process.exit(1);
+    for (const worker of workers) {
+      worker.once("error", onError);
+    }
   });
+
+  try {
+    await Promise.race([readyPromise, errorPromise]);
+  } catch (error) {
+    await Promise.allSettled(workers.map((worker) => worker.close()));
+    throw error;
+  } finally {
+    if (onError) {
+      for (const worker of workers) {
+        worker.off("error", onError);
+      }
+    }
+  }
 }
