@@ -26,71 +26,41 @@ describe("database seed", () => {
     expect(readCommandFailure(failure)).toContain("DATABASE_URL");
   });
 
-  it("does not overwrite existing admin credentials or provider settings on rerun", async () => {
-    await withTestDatabase(async ({ databaseUrl, prisma }) => {
-      const adminUsername = `seed-admin-${Date.now()}`;
-      const originalProviders = await prisma.modelProvider.findMany({
-        where: { key: { in: [...defaultModelKeys] } },
-      });
-      const originalProvidersByKey = new Map(
-        originalProviders.map((provider) => [provider.key, provider]),
-      );
-
-      try {
-        runSeed(databaseUrl, {
-          DEFAULT_ADMIN_USERNAME: adminUsername,
-          DEFAULT_ADMIN_PASSWORD: "initial-password",
+  it(
+    "does not overwrite existing admin credentials or provider settings on rerun",
+    async () => {
+      await withTestDatabase(async ({ databaseUrl, prisma }) => {
+        const adminUsername = `seed-admin-${Date.now()}`;
+        const originalProviders = await prisma.modelProvider.findMany({
+          where: { key: { in: [...defaultModelKeys] } },
         });
+        const originalProvidersByKey = new Map(
+          originalProviders.map((provider) => [provider.key, provider]),
+        );
 
-        const admin = await prisma.user.findUniqueOrThrow({
-          where: { username: adminUsername },
-        });
-        await prisma.user.update({
-          where: { id: admin.id },
-          data: {
-            passwordHash: "custom-password-hash",
-            forcePasswordChange: false,
-            role: UserRole.ADMIN,
-            status: UserStatus.DISABLED,
-          },
-        });
+        try {
+          runSeed(databaseUrl, {
+            DEFAULT_ADMIN_USERNAME: adminUsername,
+            DEFAULT_ADMIN_PASSWORD: "initial-password",
+          });
 
-        for (const key of defaultModelKeys) {
-          await prisma.modelProvider.update({
-            where: { key },
+          const admin = await prisma.user.findUniqueOrThrow({
+            where: { username: adminUsername },
+          });
+          await prisma.user.update({
+            where: { id: admin.id },
             data: {
-              label: `${key}-custom-label`,
-              providerName: `${key}-provider`,
-              modelName: `${key}-model`,
-              baseUrl: `https://${key}.example.test`,
-              apiKey: `${key}-secret-ref`,
-              configJson: { key, preserved: true },
-              enabled: false,
+              passwordHash: "custom-password-hash",
+              forcePasswordChange: false,
+              role: UserRole.ADMIN,
+              status: UserStatus.DISABLED,
             },
           });
-        }
 
-        runSeed(databaseUrl, {
-          DEFAULT_ADMIN_USERNAME: adminUsername,
-          DEFAULT_ADMIN_PASSWORD: "changed-default-password",
-        });
-
-        const rerunAdmin = await prisma.user.findUniqueOrThrow({
-          where: { username: adminUsername },
-        });
-        expect(rerunAdmin.passwordHash).toBe("custom-password-hash");
-        expect(rerunAdmin.forcePasswordChange).toBe(false);
-        expect(rerunAdmin.status).toBe(UserStatus.DISABLED);
-
-        const rerunProviders = await prisma.modelProvider.findMany({
-          where: { key: { in: [...defaultModelKeys] } },
-          orderBy: { key: "asc" },
-        });
-        expect(rerunProviders).toEqual(
-          expect.arrayContaining(
-            defaultModelKeys.map((key) =>
-              expect.objectContaining({
-                key,
+          for (const key of defaultModelKeys) {
+            await prisma.modelProvider.update({
+              where: { key },
+              data: {
                 label: `${key}-custom-label`,
                 providerName: `${key}-provider`,
                 modelName: `${key}-model`,
@@ -98,40 +68,74 @@ describe("database seed", () => {
                 apiKey: `${key}-secret-ref`,
                 configJson: { key, preserved: true },
                 enabled: false,
-              }),
-            ),
-          ),
-        );
-      } finally {
-        await prisma.user.deleteMany({
-          where: { username: adminUsername },
-        });
-
-        for (const key of defaultModelKeys) {
-          const originalProvider = originalProvidersByKey.get(key);
-          if (originalProvider) {
-            await prisma.modelProvider.update({
-              where: { key },
-              data: {
-                label: originalProvider.label,
-                providerName: originalProvider.providerName,
-                modelName: originalProvider.modelName,
-                baseUrl: originalProvider.baseUrl,
-                apiKey: originalProvider.apiKey,
-                configJson:
-                  originalProvider.configJson === null
-                    ? Prisma.JsonNull
-                    : originalProvider.configJson,
-                enabled: originalProvider.enabled,
               },
             });
-          } else {
-            await prisma.modelProvider.deleteMany({
-              where: { key },
-            });
+          }
+
+          runSeed(databaseUrl, {
+            DEFAULT_ADMIN_USERNAME: adminUsername,
+            DEFAULT_ADMIN_PASSWORD: "changed-default-password",
+          });
+
+          const rerunAdmin = await prisma.user.findUniqueOrThrow({
+            where: { username: adminUsername },
+          });
+          expect(rerunAdmin.passwordHash).toBe("custom-password-hash");
+          expect(rerunAdmin.forcePasswordChange).toBe(false);
+          expect(rerunAdmin.status).toBe(UserStatus.DISABLED);
+
+          const rerunProviders = await prisma.modelProvider.findMany({
+            where: { key: { in: [...defaultModelKeys] } },
+            orderBy: { key: "asc" },
+          });
+          expect(rerunProviders).toEqual(
+            expect.arrayContaining(
+              defaultModelKeys.map((key) =>
+                expect.objectContaining({
+                  key,
+                  label: `${key}-custom-label`,
+                  providerName: `${key}-provider`,
+                  modelName: `${key}-model`,
+                  baseUrl: `https://${key}.example.test`,
+                  apiKey: `${key}-secret-ref`,
+                  configJson: { key, preserved: true },
+                  enabled: false,
+                }),
+              ),
+            ),
+          );
+        } finally {
+          await prisma.user.deleteMany({
+            where: { username: adminUsername },
+          });
+
+          for (const key of defaultModelKeys) {
+            const originalProvider = originalProvidersByKey.get(key);
+            if (originalProvider) {
+              await prisma.modelProvider.update({
+                where: { key },
+                data: {
+                  label: originalProvider.label,
+                  providerName: originalProvider.providerName,
+                  modelName: originalProvider.modelName,
+                  baseUrl: originalProvider.baseUrl,
+                  apiKey: originalProvider.apiKey,
+                  configJson:
+                    originalProvider.configJson === null
+                      ? Prisma.JsonNull
+                      : originalProvider.configJson,
+                  enabled: originalProvider.enabled,
+                },
+              });
+            } else {
+              await prisma.modelProvider.deleteMany({
+                where: { key },
+              });
+            }
           }
         }
-      }
-    });
-  });
+      });
+    },
+    15_000,
+  );
 });

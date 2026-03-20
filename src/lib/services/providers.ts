@@ -3,10 +3,16 @@ import { prisma } from "@/lib/db";
 import {
   CreateProviderInputSchema,
   type CreateProviderInput,
+  type ProviderConfig,
   UpdateProviderInputSchema,
   type UpdateProviderInput,
 } from "@/lib/models/contracts";
-import { toProviderRecord } from "@/lib/models/provider-registry";
+import {
+  getProviderTaskTypes,
+  hasExplicitDefaultTasks,
+  parseProviderConfig,
+  toProviderRecord,
+} from "@/lib/models/provider-registry";
 import { ServiceError } from "@/lib/services/errors";
 
 type ProviderMutationInput = CreateProviderInput | UpdateProviderInput;
@@ -24,6 +30,56 @@ function toOptionalUpdate<T>(
   }
 }
 
+function toStoredConfig(config: ProviderConfig) {
+  return config as Prisma.InputJsonValue;
+}
+
+function arrayShallowEqual(left: string[], right: string[]) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+async function removeClaimedTaskTypesFromOtherProviders(
+  tx: Prisma.TransactionClient,
+  ownerKey: string,
+  claimedTaskTypes: string[],
+) {
+  if (claimedTaskTypes.length === 0) {
+    return;
+  }
+
+  const otherProviders = await tx.modelProvider.findMany({
+    where: {
+      key: {
+        not: ownerKey,
+      },
+    },
+  });
+
+  for (const provider of otherProviders) {
+    const effectiveTaskTypes = getProviderTaskTypes(provider);
+    const remainingTaskTypes = effectiveTaskTypes.filter((taskType) => !claimedTaskTypes.includes(taskType));
+
+    if (arrayShallowEqual(effectiveTaskTypes, remainingTaskTypes)) {
+      continue;
+    }
+
+    const currentConfig = parseProviderConfig(provider.configJson);
+    const nextConfig: ProviderConfig = {
+      ...currentConfig,
+      defaultForTasks: remainingTaskTypes,
+    };
+
+    await tx.modelProvider.update({
+      where: {
+        id: provider.id,
+      },
+      data: {
+        configJson: toStoredConfig(nextConfig),
+      },
+    });
+  }
+}
+
 export async function listProviders() {
   const providers = await prisma.modelProvider.findMany({
     orderBy: [{ enabled: "desc" }, { updatedAt: "desc" }, { key: "asc" }],
@@ -36,22 +92,38 @@ export async function createProvider(rawInput: unknown) {
   const input = CreateProviderInputSchema.parse(rawInput);
 
   try {
-    const provider = await prisma.modelProvider.create({
-      data: {
-        key: input.key,
-        label: input.label,
-        providerName: input.providerName,
-        modelName: input.modelName,
-        baseUrl: input.baseUrl,
-        apiKey: input.apiKey,
-        timeoutMs: input.timeoutMs,
-        maxRetries: input.maxRetries,
-        enabled: input.enabled,
-        configJson: toConfigJson(input.configJson),
-      },
-    });
+    return await prisma.$transaction(async (tx) => {
+      const provider = await tx.modelProvider.create({
+        data: {
+          key: input.key,
+          label: input.label,
+          providerName: input.providerName,
+          modelName: input.modelName,
+          baseUrl: input.baseUrl,
+          apiKey: input.apiKey,
+          timeoutMs: input.timeoutMs,
+          maxRetries: input.maxRetries,
+          enabled: input.enabled,
+          configJson: toConfigJson(input.configJson),
+        },
+      });
 
-    return toProviderRecord(provider);
+      if (hasExplicitDefaultTasks(input.configJson)) {
+        await removeClaimedTaskTypesFromOtherProviders(
+          tx,
+          provider.key,
+          input.configJson.defaultForTasks ?? [],
+        );
+      }
+
+      const refreshedProvider = await tx.modelProvider.findUniqueOrThrow({
+        where: {
+          id: provider.id,
+        },
+      });
+
+      return toProviderRecord(refreshedProvider);
+    });
   } catch (error) {
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
@@ -66,54 +138,72 @@ export async function createProvider(rawInput: unknown) {
 
 export async function updateProvider(rawInput: unknown) {
   const input = UpdateProviderInputSchema.parse(rawInput);
-  const data: Prisma.ModelProviderUpdateInput = {};
 
-  if (input.label !== undefined) {
-    data.label = input.label;
-  }
+  return prisma.$transaction(async (tx) => {
+    const existingProvider = await tx.modelProvider.findUnique({
+      where: {
+        key: input.key,
+      },
+    });
 
-  if (input.providerName !== undefined) {
-    data.providerName = input.providerName;
-  }
+    if (!existingProvider) {
+      throw new ServiceError(404, `Provider "${input.key}" not found`);
+    }
 
-  toOptionalUpdate(input.modelName, (value) => {
-    data.modelName = value;
-  });
-  toOptionalUpdate(input.baseUrl, (value) => {
-    data.baseUrl = value;
-  });
-  toOptionalUpdate(input.apiKey, (value) => {
-    data.apiKey = value;
-  });
-  toOptionalUpdate(input.timeoutMs, (value) => {
-    data.timeoutMs = value;
-  });
-  toOptionalUpdate(input.maxRetries, (value) => {
-    data.maxRetries = value;
-  });
-  toOptionalUpdate(input.enabled, (value) => {
-    data.enabled = value;
-  });
+    const data: Prisma.ModelProviderUpdateInput = {};
 
-  if (input.configJson !== undefined) {
-    data.configJson = toConfigJson(input.configJson);
-  }
+    if (input.label !== undefined) {
+      data.label = input.label;
+    }
 
-  try {
-    const provider = await prisma.modelProvider.update({
+    if (input.providerName !== undefined) {
+      data.providerName = input.providerName;
+    }
+
+    toOptionalUpdate(input.modelName, (value) => {
+      data.modelName = value;
+    });
+    toOptionalUpdate(input.baseUrl, (value) => {
+      data.baseUrl = value;
+    });
+    toOptionalUpdate(input.apiKey, (value) => {
+      data.apiKey = value;
+    });
+    toOptionalUpdate(input.timeoutMs, (value) => {
+      data.timeoutMs = value;
+    });
+    toOptionalUpdate(input.maxRetries, (value) => {
+      data.maxRetries = value;
+    });
+    toOptionalUpdate(input.enabled, (value) => {
+      data.enabled = value;
+    });
+
+    const nextConfig = input.configJson ?? parseProviderConfig(existingProvider.configJson);
+
+    if (input.configJson !== undefined) {
+      data.configJson = toConfigJson(input.configJson);
+    }
+
+    const provider = await tx.modelProvider.update({
       where: { key: input.key },
       data,
     });
 
-    return toProviderRecord(provider);
-  } catch (error) {
-    if (
-      error instanceof Prisma.PrismaClientKnownRequestError &&
-      error.code === "P2025"
-    ) {
-      throw new ServiceError(404, `Provider "${input.key}" not found`);
+    if (hasExplicitDefaultTasks(nextConfig)) {
+      await removeClaimedTaskTypesFromOtherProviders(
+        tx,
+        provider.key,
+        nextConfig.defaultForTasks ?? [],
+      );
     }
 
-    throw error;
-  }
+    const refreshedProvider = await tx.modelProvider.findUniqueOrThrow({
+      where: {
+        id: provider.id,
+      },
+    });
+
+    return toProviderRecord(refreshedProvider);
+  });
 }

@@ -44,4 +44,27 @@ describe("model contracts", () => {
       }),
     ).toThrowError();
   });
+
+  it("preserves apiKey and default task ownership semantics in provider schemas", async () => {
+    const { ProviderConfigSchema, UpdateProviderInputSchema } = await import("@/lib/models/contracts");
+
+    const omittedDefaults = ProviderConfigSchema.parse({});
+    const explicitEmptyDefaults = ProviderConfigSchema.parse({
+      defaultForTasks: [],
+    });
+    const omittedApiKey = UpdateProviderInputSchema.parse({
+      key: "script",
+      label: "Script",
+    });
+    const clearedApiKey = UpdateProviderInputSchema.parse({
+      key: "script",
+      apiKey: null,
+    });
+
+    expect(Object.prototype.hasOwnProperty.call(omittedDefaults, "defaultForTasks")).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(explicitEmptyDefaults, "defaultForTasks")).toBe(true);
+    expect(explicitEmptyDefaults.defaultForTasks).toEqual([]);
+    expect(omittedApiKey.apiKey).toBeUndefined();
+    expect(clearedApiKey.apiKey).toBeNull();
+  });
 });

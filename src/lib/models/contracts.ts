@@ -27,13 +27,17 @@ export type ModelRequest = z.infer<typeof ModelRequestSchema>;
 
 export const ProviderConfigSchema = z
   .object({
-    defaultForTasks: z.array(ModelTaskTypeSchema).default([]),
+    defaultForTasks: z.array(ModelTaskTypeSchema).optional(),
   })
   .catchall(z.unknown())
-  .transform((value) => ({
-    ...value,
-    defaultForTasks: [...new Set(value.defaultForTasks)],
-  }));
+  .transform((value) =>
+    value.defaultForTasks === undefined
+      ? value
+      : {
+          ...value,
+          defaultForTasks: [...new Set(value.defaultForTasks)],
+        },
+  );
 
 export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
 
@@ -75,7 +79,7 @@ const CreateProviderBaseSchema = z.object({
   timeoutMs: z.coerce.number().int().min(1000).max(300000).default(30000),
   maxRetries: z.coerce.number().int().min(0).max(10).default(2),
   enabled: z.boolean().default(true),
-  configJson: ProviderConfigSchema.default({ defaultForTasks: [] }),
+  configJson: ProviderConfigSchema.default({}),
 });
 
 export const CreateProviderInputSchema = CreateProviderBaseSchema.extend({

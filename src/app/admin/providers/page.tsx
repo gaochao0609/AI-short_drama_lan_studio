@@ -11,7 +11,7 @@ type ProviderItem = {
   providerName: string;
   modelName: string | null;
   baseUrl: string | null;
-  apiKey: string | null;
+  hasApiKey: boolean;
   timeoutMs: number;
   maxRetries: number;
   enabled: boolean;
@@ -41,6 +41,8 @@ type ProviderFormState = {
   modelName: string;
   baseUrl: string;
   apiKey: string;
+  hasStoredApiKey: boolean;
+  clearStoredApiKey: boolean;
   timeoutMs: string;
   maxRetries: string;
   enabled: boolean;
@@ -64,6 +66,8 @@ function createEmptyFormState(): ProviderFormState {
     modelName: "",
     baseUrl: "",
     apiKey: "",
+    hasStoredApiKey: false,
+    clearStoredApiKey: false,
     timeoutMs: "30000",
     maxRetries: "2",
     enabled: true,
@@ -78,7 +82,9 @@ function toFormState(provider: ProviderItem): ProviderFormState {
     providerName: provider.providerName,
     modelName: provider.modelName ?? "",
     baseUrl: provider.baseUrl ?? "",
-    apiKey: provider.apiKey ?? "",
+    apiKey: "",
+    hasStoredApiKey: provider.hasApiKey,
+    clearStoredApiKey: false,
     timeoutMs: String(provider.timeoutMs),
     maxRetries: String(provider.maxRetries),
     enabled: provider.enabled,
@@ -204,13 +210,19 @@ export default function AdminProvidersPage() {
         providerName: form.providerName,
         modelName: form.modelName,
         baseUrl: form.baseUrl,
-        apiKey: form.apiKey,
         timeoutMs: Number(form.timeoutMs),
         maxRetries: Number(form.maxRetries),
         enabled: form.enabled,
         configJson: {
           defaultForTasks: form.defaultForTasks,
         },
+        ...(mode === "create"
+          ? { apiKey: form.apiKey }
+          : form.clearStoredApiKey
+            ? { apiKey: null }
+            : form.apiKey.trim().length > 0
+              ? { apiKey: form.apiKey }
+              : {}),
       }),
     });
     const payload = (await response.json().catch(() => null)) as { error?: string } | null;
@@ -317,12 +329,31 @@ export default function AdminProvidersPage() {
             </label>
             <label style={fieldStyle}>
               <span>API Key</span>
+              {mode === "edit" ? (
+                <span style={hintStyle}>
+                  {form.hasStoredApiKey
+                    ? "A secret is already stored. Leave blank to keep it, or enter a new key to replace it."
+                    : "No secret stored. Enter a key to add one."}
+                </span>
+              ) : null}
               <input
                 value={form.apiKey}
                 onChange={(event) => updateForm("apiKey", event.target.value)}
                 style={inputStyle}
+                placeholder={mode === "edit" && form.hasStoredApiKey ? "Enter a new API key to replace the stored secret" : "Enter API key"}
+                disabled={mode === "edit" && form.clearStoredApiKey}
               />
             </label>
+            {mode === "edit" && form.hasStoredApiKey ? (
+              <label style={checkboxLabelStyle}>
+                <input
+                  type="checkbox"
+                  checked={form.clearStoredApiKey}
+                  onChange={(event) => updateForm("clearStoredApiKey", event.target.checked)}
+                />
+                <span>Clear stored API key</span>
+              </label>
+            ) : null}
             <div style={compactGridStyle}>
               <label style={fieldStyle}>
                 <span>Timeout (ms)</span>
@@ -487,6 +518,13 @@ const inputStyle = {
   padding: "12px 14px",
   font: "inherit",
   background: "#fff",
+} satisfies CSSProperties;
+
+const hintStyle = {
+  color: "#665d52",
+  fontWeight: 400,
+  fontSize: "0.92rem",
+  lineHeight: 1.5,
 } satisfies CSSProperties;
 
 const checkboxLabelStyle = {

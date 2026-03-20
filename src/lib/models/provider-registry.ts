@@ -24,13 +24,17 @@ export type ProviderRecord = {
   providerName: string;
   modelName: string | null;
   baseUrl: string | null;
-  apiKey: string | null;
+  hasApiKey: boolean;
   timeoutMs: number;
   maxRetries: number;
   enabled: boolean;
   configJson: ProviderConfig;
   createdAt: string;
   updatedAt: string;
+};
+
+export type ProviderRuntimeRecord = ProviderRecord & {
+  apiKey: string | null;
 };
 
 export type DefaultModelSummary = {
@@ -41,7 +45,7 @@ export type DefaultModelSummary = {
   model: string | null;
 };
 
-function parseProviderConfig(configJson: Prisma.JsonValue | null): ProviderConfig {
+export function parseProviderConfig(configJson: Prisma.JsonValue | null): ProviderConfig {
   const parsed = ProviderConfigSchema.safeParse(configJson ?? {});
 
   if (parsed.success) {
@@ -51,26 +55,38 @@ function parseProviderConfig(configJson: Prisma.JsonValue | null): ProviderConfi
   return ProviderConfigSchema.parse({});
 }
 
+export function hasExplicitDefaultTasks(config: ProviderConfig) {
+  return Object.prototype.hasOwnProperty.call(config, "defaultForTasks");
+}
+
 function getExplicitDefaultTasks(config: ProviderConfig) {
-  return config.defaultForTasks;
+  return config.defaultForTasks ?? [];
 }
 
 function getFallbackDefaultTasks(providerKey: string) {
   return MODEL_TASK_TYPES.filter((taskType) => FALLBACK_PROVIDER_KEYS[taskType] === providerKey);
 }
 
+function canUseFallbackForTask(provider: Pick<ModelProvider, "key" | "configJson">, taskType: ModelTaskType) {
+  const config = parseProviderConfig(provider.configJson);
+
+  return !hasExplicitDefaultTasks(config) && FALLBACK_PROVIDER_KEYS[taskType] === provider.key;
+}
+
 export function getProviderTaskTypes(provider: Pick<ModelProvider, "key" | "configJson">) {
   const config = parseProviderConfig(provider.configJson);
-  const explicitTasks = getExplicitDefaultTasks(config);
 
-  if (explicitTasks.length > 0) {
-    return explicitTasks;
+  if (hasExplicitDefaultTasks(config)) {
+    return getExplicitDefaultTasks(config);
   }
 
   return getFallbackDefaultTasks(provider.key);
 }
 
 export function toProviderRecord(provider: ModelProvider): ProviderRecord {
+  const config = parseProviderConfig(provider.configJson);
+  const effectiveDefaultForTasks = getProviderTaskTypes(provider);
+
   return {
     id: provider.id,
     key: provider.key,
@@ -78,13 +94,23 @@ export function toProviderRecord(provider: ModelProvider): ProviderRecord {
     providerName: provider.providerName,
     modelName: provider.modelName,
     baseUrl: provider.baseUrl,
-    apiKey: provider.apiKey,
+    hasApiKey: provider.apiKey !== null,
     timeoutMs: provider.timeoutMs,
     maxRetries: provider.maxRetries,
     enabled: provider.enabled,
-    configJson: parseProviderConfig(provider.configJson),
+    configJson: {
+      ...config,
+      defaultForTasks: effectiveDefaultForTasks,
+    },
     createdAt: provider.createdAt.toISOString(),
     updatedAt: provider.updatedAt.toISOString(),
+  };
+}
+
+function toProviderRuntimeRecord(provider: ModelProvider): ProviderRuntimeRecord {
+  return {
+    ...toProviderRecord(provider),
+    apiKey: provider.apiKey,
   };
 }
 
@@ -109,7 +135,7 @@ export async function getProviderByKey(key: string, options: { enabledOnly?: boo
     throw new ServiceError(409, `Provider "${key}" is disabled`);
   }
 
-  return toProviderRecord(provider);
+  return toProviderRuntimeRecord(provider);
 }
 
 export async function getDefaultModelSummary(taskType: ModelTaskType): Promise<DefaultModelSummary | null> {
@@ -122,11 +148,16 @@ export async function getDefaultModelSummary(taskType: ModelTaskType): Promise<D
 
   const configuredProvider = providers.find((provider) => {
     const config = parseProviderConfig(provider.configJson);
+
+    if (!hasExplicitDefaultTasks(config)) {
+      return false;
+    }
+
     return getExplicitDefaultTasks(config).includes(taskType);
   });
   const provider =
     configuredProvider ??
-    providers.find((candidate) => candidate.key === FALLBACK_PROVIDER_KEYS[taskType]) ??
+    providers.find((candidate) => canUseFallbackForTask(candidate, taskType)) ??
     null;
 
   if (!provider) {
