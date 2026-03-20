@@ -1,17 +1,14 @@
 import { TaskStatus, TaskType, UserRole, UserStatus, type PrismaClient } from "@prisma/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { withTestDatabase } from "../db/test-database";
 import { withApiTestEnv } from "../api/test-api";
+import { withTestDatabase } from "../db/test-database";
 
 afterEach(() => {
   vi.doUnmock("next/headers");
   vi.resetModules();
 });
 
-async function withQueueTestEnv<T>(
-  databaseUrl: string,
-  callback: () => Promise<T>,
-) {
+async function withQueueTestEnv<T>(databaseUrl: string, callback: () => Promise<T>) {
   return withApiTestEnv(
     databaseUrl,
     async () => {
@@ -67,11 +64,7 @@ async function createOwnedTask(
   });
 }
 
-async function observeTaskProgress(
-  prisma: PrismaClient,
-  taskId: string,
-  timeoutMs = 5_000,
-) {
+async function observeTaskProgress(prisma: PrismaClient, taskId: string, timeoutMs = 5_000) {
   const observedTaskStatuses = new Set<TaskStatus>();
   const observedStepStatuses = new Set<TaskStatus>();
   const deadline = Date.now() + timeoutMs;
@@ -92,8 +85,6 @@ async function observeTaskProgress(
 
     if (task.status === TaskStatus.SUCCEEDED && step?.status === TaskStatus.SUCCEEDED) {
       return {
-        task,
-        step,
         observedTaskStatuses,
         observedStepStatuses,
       };
@@ -213,51 +204,52 @@ describe("queue bootstrap", () => {
           projectTitle: "Queue Runtime Project",
           taskType: TaskType.IMAGE,
         });
+
+        const result = await enqueueTask(task.id, TaskType.IMAGE, {
+          prompt: "Generate key art",
+        });
+
+        expect(result.queueName).toBe("image-queue");
+        expect(result.jobId).toEqual(expect.any(String));
+
+        const job = await queues.image.getJob(result.jobId);
+        expect(job).not.toBeNull();
+        expect(job?.name).toBe(TaskType.IMAGE);
+        expect(job?.data).toEqual(
+          expect.objectContaining({
+            taskId: task.id,
+            type: TaskType.IMAGE,
+            traceId: expect.any(String),
+          }),
+        );
+
+        const queuedStep = await prisma.taskStep.findFirstOrThrow({
+          where: {
+            taskId: task.id,
+          },
+          orderBy: {
+            createdAt: "desc",
+          },
+        });
+
+        expect(queuedStep).toEqual(
+          expect.objectContaining({
+            taskId: task.id,
+            stepKey: TaskType.IMAGE,
+            status: TaskStatus.QUEUED,
+            inputJson: expect.objectContaining({
+              payload: {
+                prompt: "Generate key art",
+              },
+              traceId: expect.any(String),
+            }),
+          }),
+        );
+
         const runtime = await startWorkerRuntime();
         const progressPromise = observeTaskProgress(prisma, task.id);
 
         try {
-          const result = await enqueueTask(task.id, TaskType.IMAGE, {
-            prompt: "Generate key art",
-          });
-
-          expect(result.queueName).toBe("image-queue");
-          expect(result.jobId).toEqual(expect.any(String));
-
-          const job = await queues.image.getJob(result.jobId);
-          expect(job).not.toBeNull();
-          expect(job?.name).toBe(TaskType.IMAGE);
-          expect(job?.data).toEqual(
-            expect.objectContaining({
-              taskId: task.id,
-              type: TaskType.IMAGE,
-              traceId: expect.any(String),
-            }),
-          );
-
-          const step = await prisma.taskStep.findFirstOrThrow({
-            where: {
-              taskId: task.id,
-            },
-            orderBy: {
-              createdAt: "desc",
-            },
-          });
-
-          expect(step).toEqual(
-            expect.objectContaining({
-              taskId: task.id,
-              stepKey: TaskType.IMAGE,
-              status: TaskStatus.QUEUED,
-              inputJson: expect.objectContaining({
-                payload: {
-                  prompt: "Generate key art",
-                },
-                traceId: expect.any(String),
-              }),
-            }),
-          );
-
           const progress = await progressPromise;
           expect(progress.observedTaskStatuses.has(TaskStatus.RUNNING)).toBe(true);
           expect(progress.observedTaskStatuses.has(TaskStatus.SUCCEEDED)).toBe(true);
