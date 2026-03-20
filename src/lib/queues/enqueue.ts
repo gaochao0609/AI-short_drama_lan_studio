@@ -23,6 +23,7 @@ export async function enqueueTask(
     },
     select: {
       id: true,
+      type: true,
     },
   });
 
@@ -30,16 +31,20 @@ export async function enqueueTask(
     throw new ServiceError(404, "Task not found");
   }
 
+  if (task.type !== type) {
+    throw new ServiceError(409, "Task type mismatch");
+  }
+
   const traceId = randomUUID();
   const step = await prisma.taskStep.create({
     data: {
       taskId,
-      stepKey: type,
+      stepKey: task.type,
       status: TaskStatus.QUEUED,
       inputJson: {
         payload,
         traceId,
-        type,
+        type: task.type,
       } as Prisma.InputJsonValue,
     },
     select: {
@@ -47,23 +52,47 @@ export async function enqueueTask(
     },
   });
 
-  const queue = getQueueForTaskType(type);
+  const queue = getQueueForTaskType(task.type);
   const jobData: QueuePayload = {
     taskId,
     taskStepId: step.id,
-    type,
+    type: task.type,
     traceId,
     payload,
   };
 
-  const job = await queue.add(type, jobData, {
-    jobId: step.id,
-    removeOnComplete: true,
-    removeOnFail: false,
-  });
+  try {
+    const job = await queue.add(task.type, jobData, {
+      jobId: step.id,
+      removeOnComplete: true,
+      removeOnFail: false,
+    });
 
-  return {
-    jobId: job.id ?? step.id,
-    queueName: queue.name,
-  };
+    return {
+      jobId: job.id ?? step.id,
+      queueName: queue.name,
+    };
+  } catch (error) {
+    const errorText = error instanceof Error ? error.message : "Failed to enqueue task";
+
+    await prisma.$transaction([
+      prisma.taskStep.deleteMany({
+        where: {
+          id: step.id,
+        },
+      }),
+      prisma.task.update({
+        where: {
+          id: task.id,
+        },
+        data: {
+          status: TaskStatus.FAILED,
+          finishedAt: new Date(),
+          errorText,
+        },
+      }),
+    ]);
+
+    throw error;
+  }
 }

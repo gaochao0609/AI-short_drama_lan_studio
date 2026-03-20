@@ -1,14 +1,17 @@
 import IORedis from "ioredis";
 import type { ConnectionOptions } from "bullmq";
-import { loadEnv } from "@/lib/env";
 
-const { REDIS_URL } = loadEnv(process.env);
+const DEFAULT_REDIS_URL = "redis://127.0.0.1:6379";
 
-export const connection = new IORedis(REDIS_URL, {
+export function getRedisUrl() {
+  return process.env.REDIS_URL ?? DEFAULT_REDIS_URL;
+}
+
+export const connection = new IORedis(getRedisUrl(), {
   maxRetriesPerRequest: null,
 });
 
 export const bullmqConnection = {
-  url: REDIS_URL,
+  url: getRedisUrl(),
   maxRetriesPerRequest: null,
 } satisfies ConnectionOptions;
