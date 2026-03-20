@@ -71,6 +71,80 @@ async function createOwnedTask(
 }
 
 describe("queue bootstrap", () => {
+  it.each([
+    {
+      taskType: TaskType.SCRIPT_QUESTION,
+      expectedQueueName: "script-queue",
+      expectedAttempts: 3,
+    },
+    {
+      taskType: TaskType.SCRIPT_FINALIZE,
+      expectedQueueName: "script-queue",
+      expectedAttempts: 3,
+    },
+    {
+      taskType: TaskType.STORYBOARD,
+      expectedQueueName: "storyboard-queue",
+      expectedAttempts: 3,
+    },
+    {
+      taskType: TaskType.IMAGE,
+      expectedQueueName: "image-queue",
+      expectedAttempts: 2,
+    },
+    {
+      taskType: TaskType.VIDEO,
+      expectedQueueName: "video-queue",
+      expectedAttempts: 2,
+    },
+  ])(
+    "configures BullMQ attempts for $taskType jobs",
+    async ({ taskType, expectedQueueName, expectedAttempts }) => {
+      await withTestDatabase(async ({ databaseUrl, prisma }) => {
+        await withQueueTestEnv(databaseUrl, async () => {
+          const [{ queues }, { enqueueTask }] = await Promise.all([
+            import("@/lib/queues"),
+            import("@/lib/queues/enqueue"),
+          ]);
+          const task = await createOwnedTask(prisma, {
+            username: `queue-bootstrap-attempts-${taskType.toLowerCase()}`,
+            projectTitle: `Attempts ${taskType}`,
+            taskType,
+          });
+          const queue = Object.values(queues).find(
+            (candidateQueue) => candidateQueue.name === expectedQueueName,
+          );
+
+          expect(queue).toBeDefined();
+
+          const addSpy = vi.spyOn(queue!, "add");
+
+          try {
+            await enqueueTask(task.id, taskType, {
+              prompt: "Generate asset",
+            });
+
+            expect(addSpy).toHaveBeenCalledWith(
+              taskType,
+              expect.objectContaining({
+                taskId: task.id,
+                type: taskType,
+              }),
+              expect.objectContaining({
+                attempts: expectedAttempts,
+                jobId: expect.any(String),
+                removeOnComplete: true,
+                removeOnFail: false,
+              }),
+            );
+          } finally {
+            addSpy.mockRestore();
+          }
+        });
+      });
+    },
+  );
+
   it("exposes the four task queues", async () => {
     await withTestDatabase(async ({ databaseUrl }) => {
       await withQueueTestEnv(databaseUrl, async () => {

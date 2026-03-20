@@ -85,7 +85,7 @@ describe("useTaskPolling", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("stops polling after repeated fetch errors", async () => {
+  it("keeps polling every 3 seconds after repeated fetch errors", async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockRejectedValue(new Error("network unavailable"));
@@ -103,17 +103,16 @@ describe("useTaskPolling", () => {
     });
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(600_000);
+      await vi.advanceTimersByTimeAsync(12_000);
     });
 
     expect(result.current.error).toBeInstanceOf(Error);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
-  it("can recover from capped errors on reconnect", async () => {
+  it("keeps polling after transient errors until the task reaches a terminal state", async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
-      .mockRejectedValueOnce(new Error("network unavailable"))
       .mockRejectedValueOnce(new Error("network unavailable"))
       .mockRejectedValueOnce(new Error("network unavailable"))
       .mockResolvedValueOnce(
@@ -161,27 +160,12 @@ describe("useTaskPolling", () => {
       await vi.advanceTimersByTimeAsync(9_000);
     });
 
-    expect(result.current.error).toBeInstanceOf(Error);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-
-    await act(async () => {
-      window.dispatchEvent(new Event("online"));
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(result.current.task?.status).toBe("RUNNING");
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(3_000);
-    });
-
     await act(async () => {
       await Promise.resolve();
       await Promise.resolve();
     });
 
     expect(result.current.task?.status).toBe("SUCCEEDED");
-    expect(fetchMock).toHaveBeenCalledTimes(5);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 });

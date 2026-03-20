@@ -12,6 +12,14 @@ type QueuePayload = {
   payload: unknown;
 };
 
+const AUTO_RETRY_ATTEMPTS: Record<TaskType, number> = {
+  [TaskType.SCRIPT_QUESTION]: 3,
+  [TaskType.SCRIPT_FINALIZE]: 3,
+  [TaskType.STORYBOARD]: 3,
+  [TaskType.IMAGE]: 2,
+  [TaskType.VIDEO]: 2,
+};
+
 export async function enqueueTask(
   taskId: string,
   type: TaskType,
@@ -63,6 +71,7 @@ export async function enqueueTask(
 
   try {
     const job = await queue.add(task.type, jobData, {
+      attempts: AUTO_RETRY_ATTEMPTS[task.type],
       jobId: step.id,
       removeOnComplete: true,
       removeOnFail: false,
