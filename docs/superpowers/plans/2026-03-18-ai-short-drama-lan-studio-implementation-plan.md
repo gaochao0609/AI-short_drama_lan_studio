@@ -12,9 +12,10 @@
 
 ## 计划说明
 
-- 本计划对应规格文档：[2026-03-18-ai-short-drama-lan-studio-design.md](/d:/AI短剧创作/docs/superpowers/specs/2026-03-18-ai-short-drama-lan-studio-design.md)
+- 本计划对应规格文档：[2026-03-18-ai-short-drama-lan-studio-design.md](/d:/AI短剧创作/.worktrees/lan-studio-v1/docs/superpowers/specs/2026-03-18-ai-short-drama-lan-studio-design.md)
 - 当前仓库基本为空，因此本计划同时定义项目骨架、目录边界和实现顺序。
 - 该规格虽然覆盖多个功能域，但它们共享同一套认证、项目、任务、队列和存储底座，不适合拆成彼此独立的多个实现计划；因此保留为一份主实施计划，按阶段递进交付。
+- 剧本链路必须区分两类交互：单轮提问生成/重新生成当前问题走 `text/event-stream` SSE 同步流式响应；只有剧本定稿 `script_finalize` 进入 BullMQ 异步队列。
 - 执行时建议每个任务都配合 `@superpowers/test-driven-development` 和 `@superpowers/verification-before-completion`。
 
 ## 文件结构先行
@@ -94,6 +95,7 @@
 - `src/app/api/admin/providers/route.ts`
 - `src/app/api/admin/tasks/route.ts`
 - `src/app/api/admin/tasks/[taskId]/retry/route.ts`
+- `src/app/api/admin/tasks/[taskId]/cancel/route.ts`
 - `src/app/api/admin/storage/route.ts`
 - `src/app/api/admin/storage/cleanup/route.ts`
 - `src/app/api/projects/route.ts`
@@ -103,6 +105,7 @@
 - `src/app/api/script/sessions/route.ts`
 - `src/app/api/script/sessions/[sessionId]/message/route.ts`
 - `src/app/api/script/sessions/[sessionId]/regenerate/route.ts`
+- `src/app/api/script/sessions/[sessionId]/finalize/route.ts`
 - `src/app/api/storyboards/route.ts`
 - `src/app/api/images/route.ts`
 - `src/app/api/videos/route.ts`
@@ -124,10 +127,14 @@
   - 会话签发、读取、销毁
 - `src/lib/auth/guards.ts`
   - `requireUser`、`requireAdmin`
+- `src/lib/security/secrets.ts`
+  - API Key 加密、解密与掩码处理
 - `src/lib/storage/paths.ts`
   - 文件目录命名规则
 - `src/lib/storage/fs-storage.ts`
   - 文件写入、移动、删除、下载
+- `src/lib/streaming/sse.ts`
+  - SSE 响应封装与事件写入
 - `src/lib/models/contracts.ts`
   - 模型适配层输入输出契约
 - `src/lib/models/provider-registry.ts`
@@ -162,7 +169,7 @@
 - `src/worker/index.ts`
   - 启动所有 worker
 - `src/worker/processors/script.ts`
-  - 单轮提问与剧本定稿处理
+  - 仅处理剧本定稿异步任务
 - `src/worker/processors/storyboard.ts`
   - 剧本拆分分镜处理
 - `src/worker/processors/image.ts`
@@ -178,12 +185,14 @@
 - `tests/unit/auth/password.test.ts`
 - `tests/unit/auth/session.test.ts`
 - `tests/unit/models/contracts.test.ts`
+- `tests/unit/models/provider-secrets.test.ts`
 - `tests/unit/storage/fs-storage.test.ts`
 - `tests/integration/db/schema.test.ts`
 - `tests/integration/api/auth.test.ts`
 - `tests/integration/api/admin-users.test.ts`
 - `tests/integration/api/projects-and-tasks.test.ts`
 - `tests/integration/api/providers.test.ts`
+- `tests/integration/workers/queue-concurrency.test.ts`
 - `tests/integration/workers/storyboard-worker.test.ts`
 - `tests/integration/workers/image-worker.test.ts`
 - `tests/integration/workers/video-worker.test.ts`
@@ -514,6 +523,7 @@ model Task {
   inputJson   Json
   outputJson  Json?
   errorText   String?
+  cancelRequestedAt DateTime?
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
 }
@@ -527,8 +537,14 @@ model Task {
 enum UserRole { ADMIN USER }
 enum UserStatus { PENDING ACTIVE DISABLED }
 enum TaskStatus { QUEUED RUNNING SUCCEEDED FAILED CANCELED }
-enum TaskType { SCRIPT_QUESTION SCRIPT_FINALIZE STORYBOARD IMAGE VIDEO }
+enum TaskType { SCRIPT_FINALIZE STORYBOARD IMAGE VIDEO }
 ```
+
+并补充以下约束：
+
+1. `script_question_generate` 与 `regenerate` 属于 SSE 同步交互，不进入 `tasks` 异步队列表；它们的问答与模型日志落在 `script_sessions` / `script_versions` 相关记录中。
+2. `Task.cancelRequestedAt` 用于管理员取消已运行任务时向 worker 传达取消意图。
+3. `ModelProvider` 需要为 API Key 预留 `apiKeyCiphertext`、`apiKeyIv`、`apiKeyAuthTag`、`apiKeyMaskedTail` 等字段，不得明文存储。
 
 - [ ] **Step 3: 生成迁移、客户端和默认种子**
 
@@ -597,6 +613,8 @@ expect(await verifyPassword("P@ssw0rd!", hash)).toBe(true);
 const token = createSessionToken();
 expect(token.length).toBeGreaterThan(20);
 expect(hashSessionToken(token)).not.toBe(token);
+expect(getSessionCookieOptions("https://lan.example").secure).toBe(true);
+expect(getSessionCookieOptions("http://192.168.1.20:3000").secure).toBe(false);
 ```
 
 Run: `pnpm vitest run tests/unit/auth/password.test.ts tests/unit/auth/session.test.ts`
@@ -638,6 +656,22 @@ export async function invalidateUserSessions(userId: string): Promise<void> {}
 ```
 
 Cookie 中只保存随机 `session token`，服务端通过 `sessions` 表查找、失效和审计，不使用自包含 JWT 作为权限真相来源。
+
+另提供：
+
+```ts
+export function getSessionCookieOptions(appUrl: string): {
+  httpOnly: true;
+  sameSite: "lax";
+  secure: boolean;
+  path: "/";
+} {}
+```
+
+要求：
+
+1. 当 `APP_URL` 为 `https://` 时自动设置 `Secure: true`
+2. 当 `APP_URL` 为 `http://` 时允许 `Secure: false`
 
 - [ ] **Step 4: 实现路由守卫**
 
@@ -711,6 +745,7 @@ Expected: 生成一个干净提交。
 5. 禁用账号后无法登录
 6. 登出后当前会话失效
 7. 管理员禁用账号后该用户现有会话全部失效
+8. 审批或重置密码时只有管理员能看到返回的临时密码
 
 Run: `pnpm vitest run tests/integration/api/auth.test.ts tests/integration/api/admin-users.test.ts`
 Expected: FAIL。
@@ -770,11 +805,12 @@ export async function logoutBySession(sessionId: string): Promise<void> {}
 1. 登录成功时创建数据库 `sessions` 记录
 2. 登出时失效当前会话
 3. 用户被禁用或重置密码时，主动失效该用户现有会话
+4. 审批和重置密码接口只向管理员返回一次性 `tempPassword`
 
 Run: `pnpm vitest run tests/integration/api/auth.test.ts tests/integration/api/admin-users.test.ts`
 Expected: PASS。
 
-- [ ] **Step 4: 实现登录、注册申请、首次改密页面**
+- [ ] **Step 4: 实现登录、注册申请、首次改密和管理员审批页面**
 
 页面最少具备：
 
@@ -782,6 +818,7 @@ Expected: PASS。
 2. 错误提示
 3. 成功跳转
 4. 待审批提示
+5. 管理员审批/重置密码后展示一次性临时密码确认，不回显历史密码
 
 Run: `pnpm playwright test tests/e2e/auth.spec.ts`
 Expected: PASS，至少覆盖“申请 -> 审批 -> 登录 -> 强制改密”的主流程。
@@ -793,6 +830,7 @@ Expected: PASS，至少覆盖“申请 -> 审批 -> 登录 -> 强制改密”的
 1. 未登录跳转登录页
 2. 非管理员返回 `403` 页面或跳转工作区首页
 3. 为 `/admin/users`、`/admin/providers`、`/admin/tasks`、`/admin/storage` 提供共用导航框架
+4. 当 `APP_URL` 为 `http://` 时，在管理员后台顶部显示“当前为非 HTTPS 部署，密码和 API Key 传输存在风险”的提示横幅
 
 Run: `pnpm lint`
 
@@ -880,7 +918,8 @@ Expected: PASS。
 
 1. 基于 `SWR` 每 3 秒请求一次 `/api/tasks/[taskId]`
 2. 任务结束后自动停止轮询
-3. V1 不实现 SSE
+3. 该 Hook 只用于后台异步任务（定稿、分镜、图片、视频）
+4. 剧本单轮问答和重新生成当前问题的 SSE 流式交互在 Task 9 中单独实现，不复用该 Hook
 
 Run: `pnpm lint`
 
@@ -902,8 +941,10 @@ Expected: 生成一个干净提交。
 - Create: `src/lib/models/contracts.ts`
 - Create: `src/lib/models/provider-registry.ts`
 - Create: `src/lib/models/proxy-client.ts`
+- Create: `src/lib/security/secrets.ts`
 - Create: `src/lib/services/providers.ts`
 - Test: `tests/unit/models/contracts.test.ts`
+- Test: `tests/unit/models/provider-secrets.test.ts`
 - Test: `tests/integration/api/providers.test.ts`
 
 - [ ] **Step 1: 写模型契约和模型配置测试**
@@ -926,8 +967,15 @@ taskType in [
 1. 管理员可创建/修改提供方配置
 2. 普通用户无权访问
 3. 能获取每条链路默认模型
+4. API Key 入库后为 AES-256-GCM 密文，列表接口只返回掩码后的后 4 位
 
-Run: `pnpm vitest run tests/unit/models/contracts.test.ts tests/integration/api/providers.test.ts`
+在 `tests/unit/models/provider-secrets.test.ts` 中验证：
+
+1. 从 `SESSION_SECRET` 通过 HKDF 派生 `"api-key-encryption"` 用途密钥
+2. `encryptApiKey` / `decryptApiKey` 能正确往返
+3. `maskApiKeyTail("sk-test-1234")` 只返回后 4 位可见形式
+
+Run: `pnpm vitest run tests/unit/models/contracts.test.ts tests/unit/models/provider-secrets.test.ts tests/integration/api/providers.test.ts`
 Expected: FAIL。
 
 - [ ] **Step 2: 实现模型契约**
@@ -960,8 +1008,15 @@ export const ModelRequestSchema = z.object({
 1. `GET/POST/PATCH /api/admin/providers`
 2. `src/lib/services/providers.ts`
 3. `src/lib/models/provider-registry.ts`
+4. `src/lib/security/secrets.ts`
 
-Run: `pnpm vitest run tests/unit/models/contracts.test.ts tests/integration/api/providers.test.ts`
+要求：
+
+1. 保存 API Key 时使用 AES-256-GCM 加密，密钥通过 `SESSION_SECRET` + HKDF 派生
+2. 查询配置列表时只返回 `apiKeyMaskedTail`，不回显完整明文
+3. 默认模型映射要覆盖 `script`、`storyboard`、`image`、`video` 四条业务链路
+
+Run: `pnpm vitest run tests/unit/models/contracts.test.ts tests/unit/models/provider-secrets.test.ts tests/integration/api/providers.test.ts`
 Expected: PASS。
 
 - [ ] **Step 4: 实现代理客户端**
@@ -979,6 +1034,10 @@ export async function callProxyModel(
   errorCode?: string;
   errorMessage?: string;
 }> {}
+
+export async function streamProxyModel(
+  input: ModelRequest
+): Promise<ReadableStream<Uint8Array>> {}
 ```
 
 要求：
@@ -986,17 +1045,19 @@ export async function callProxyModel(
 1. 统一设置超时
 2. 注入鉴权头
 3. 把失败转换为统一错误码
+4. `streamProxyModel` 用于剧本单轮问答/重生问题的流式代理调用
+5. 仅在调用当下解密 API Key，用完不缓存明文
 
 - [ ] **Step 5: 实现模型配置页面并验证**
 
 Run: `pnpm lint`
 
 Run: `pnpm typecheck`
-Expected: 通过。
+Expected: 通过，且管理后台只显示 API Key 掩码尾号，不回显完整值。
 
 - [ ] **Step 6: 提交本任务**
 
-Run: `git add src/app/admin/providers src/app/api/admin/providers src/lib/models src/lib/services/providers.ts tests`
+Run: `git add src/app/admin/providers src/app/api/admin/providers src/lib/models src/lib/security/secrets.ts src/lib/services/providers.ts tests`
 
 Run: `git commit -m "feat: add model provider config and contracts"`
 Expected: 生成一个干净提交。
@@ -1013,16 +1074,18 @@ Expected: 生成一个干净提交。
 - Create: `src/worker/processors/image.ts`
 - Create: `src/worker/processors/video.ts`
 - Test: `tests/integration/workers/queue-bootstrap.test.ts`
+- Test: `tests/integration/workers/queue-concurrency.test.ts`
 
 - [ ] **Step 1: 写队列初始化测试**
 
 验证：
 
 1. 能拿到 4 条队列实例
-2. 入队后 job 名称正确
-3. worker 启动不会抛出模块错误
+2. `script-queue` 只接收 `SCRIPT_FINALIZE` 异步任务
+3. 各 worker 并发度分别为 `5 / 10 / 10 / 5`
+4. worker 启动不会抛出模块错误
 
-Run: `pnpm vitest run tests/integration/workers/queue-bootstrap.test.ts`
+Run: `pnpm vitest run tests/integration/workers/queue-bootstrap.test.ts tests/integration/workers/queue-concurrency.test.ts`
 Expected: FAIL。
 
 - [ ] **Step 2: 实现 Redis 与队列注册**
@@ -1059,6 +1122,8 @@ export async function enqueueTask(
 1. 根据任务类型选择队列
 2. 写入 `task_steps`
 3. 记录 `traceId`
+4. `SCRIPT_FINALIZE` -> `script-queue`，`STORYBOARD` -> `storyboard-queue`，`IMAGE` -> `image-queue`，`VIDEO` -> `video-queue`
+5. `SCRIPT_FINALIZE` 与 `STORYBOARD` 默认自动重试 2 次；`IMAGE` 与 `VIDEO` 默认自动重试 1 次
 
 - [ ] **Step 4: 搭建 worker 进程和空处理器**
 
@@ -1068,8 +1133,11 @@ export async function enqueueTask(
 2. 标记 `running`
 3. 输出最小合法结果对象，例如 `{ ok: true, traceId }`
 4. 标记 `succeeded`
+5. `script` processor 当前阶段只处理 `SCRIPT_FINALIZE`
+6. 注册 worker 并发度为：`script=5`、`storyboard=10`、`image=10`、`video=5`
+7. `script_question_generate` / `regenerate` 不进入 BullMQ
 
-Run: `pnpm vitest run tests/integration/workers/queue-bootstrap.test.ts`
+Run: `pnpm vitest run tests/integration/workers/queue-bootstrap.test.ts tests/integration/workers/queue-concurrency.test.ts`
 Expected: PASS。
 
 - [ ] **Step 5: 手动验证 worker 能启动**
@@ -1079,7 +1147,7 @@ Expected: 终端打印 4 条 worker 启动日志，无立即崩溃。
 
 - [ ] **Step 6: 提交本任务**
 
-Run: `git add src/lib/redis.ts src/lib/queues src/worker tests/integration/workers/queue-bootstrap.test.ts`
+Run: `git add src/lib/redis.ts src/lib/queues src/worker tests/integration/workers/queue-bootstrap.test.ts tests/integration/workers/queue-concurrency.test.ts`
 
 Run: `git commit -m "feat: add queue runtime and worker bootstrap"`
 Expected: 生成一个干净提交。
@@ -1091,7 +1159,9 @@ Expected: 生成一个干净提交。
 - Create: `src/app/api/script/sessions/route.ts`
 - Create: `src/app/api/script/sessions/[sessionId]/message/route.ts`
 - Create: `src/app/api/script/sessions/[sessionId]/regenerate/route.ts`
+- Create: `src/app/api/script/sessions/[sessionId]/finalize/route.ts`
 - Create: `src/lib/services/script-sessions.ts`
+- Create: `src/lib/streaming/sse.ts`
 - Modify: `src/worker/processors/script.ts`
 - Test: `tests/integration/api/script-session.test.ts`
 - Test: `tests/e2e/script-session.spec.ts`
@@ -1101,11 +1171,12 @@ Expected: 生成一个干净提交。
 覆盖：
 
 1. 创建 `script_session`
-2. 返回第一轮问题
-3. 提交回答后返回下一轮问题
-4. 可以重新生成当前问题且不推进轮次
-5. 最终定稿生成 `script_version`
-6. 会话结束后不可继续写入
+2. `POST /api/script/sessions` 以 `text/event-stream` 流式返回第一轮问题
+3. `POST /api/script/sessions/[sessionId]/message` 以 `text/event-stream` 流式返回下一轮问题
+4. `POST /api/script/sessions/[sessionId]/regenerate` 以 `text/event-stream` 返回当前轮替换问题且不推进轮次
+5. `POST /api/script/sessions/[sessionId]/finalize` 创建 `SCRIPT_FINALIZE` 任务
+6. `script` worker 成功后生成 `script_version`
+7. 会话结束后不可继续写入
 
 Run: `pnpm vitest run tests/integration/api/script-session.test.ts`
 Expected: FAIL。
@@ -1119,23 +1190,23 @@ export async function startScriptSession(
   projectId: string,
   idea: string,
   userId: string
-): Promise<{ sessionId: string; firstQuestion: string }> {}
+): Promise<{ sessionId: string }> {}
 
 export async function answerScriptQuestion(
   sessionId: string,
   answer: string,
   userId: string
-): Promise<{ nextQuestion?: string; completed: boolean }> {}
+): Promise<{ nextQuestionText?: string; completed: boolean }> {}
 
 export async function regenerateCurrentQuestion(
   sessionId: string,
   userId: string
-): Promise<{ question: string }> {}
+): Promise<{ questionText: string }> {}
 
 export async function finalizeScriptSession(
   sessionId: string,
   userId: string
-): Promise<{ scriptVersionId: string }> {}
+): Promise<{ taskId: string }> {}
 ```
 
 要求：
@@ -1144,15 +1215,16 @@ export async function finalizeScriptSession(
 2. 每次调用模型都带 `traceId`
 3. 最终结果写入 `script_versions`
 4. “重新生成当前问题”只覆盖当前轮次问题文本，不新增额外轮次
+5. 单轮提问生成和重生问题直接调用 `streamProxyModel`，不走 BullMQ 队列
 
 - [ ] **Step 3: 实现剧本 API 和 worker 处理**
 
-1. `POST /api/script/sessions`
-2. `POST /api/script/sessions/[sessionId]/message`
-3. `POST /api/script/sessions/[sessionId]/regenerate`
-4. `script` worker 支持两类 job：
-   - `script_question_generate`
-   - `script_finalize`
+1. `POST /api/script/sessions` 返回 `text/event-stream`，创建会话并流式生成第一轮问题
+2. `POST /api/script/sessions/[sessionId]/message` 返回 `text/event-stream`
+3. `POST /api/script/sessions/[sessionId]/regenerate` 返回 `text/event-stream`
+4. `POST /api/script/sessions/[sessionId]/finalize` 入队 `SCRIPT_FINALIZE`
+5. `script` worker 只处理 `script_finalize`
+6. 定稿任务按文本任务规则自动重试 2 次
 
 Run: `pnpm vitest run tests/integration/api/script-session.test.ts`
 Expected: PASS。
@@ -1164,18 +1236,20 @@ Expected: PASS。
 1. 从路由参数读取 `projectId`
 2. 项目上下文标题与返回项目详情入口
 3. 输入创意
-4. 显示问题列表
-5. 回答单轮问题
-6. 重新生成当前问题
-7. 查看最终剧本
-8. 继续基于当前项目再次开启新会话
+4. 通过 `fetch` + `ReadableStream` 消费 POST SSE，逐字显示 AI 问题
+5. 显示问题列表
+6. 回答单轮问题
+7. 重新生成当前问题
+8. 发起“剧本定稿”后切换到短轮询查看后台任务进度
+9. 查看最终剧本
+10. 继续基于当前项目再次开启新会话
 
 Run: `pnpm playwright test tests/e2e/script-session.spec.ts`
 Expected: PASS。
 
 - [ ] **Step 5: 提交本任务**
 
-Run: `git add src/app/(workspace)/projects/[projectId]/script src/app/api/script src/lib/services/script-sessions.ts src/worker/processors/script.ts tests`
+Run: `git add src/app/(workspace)/projects/[projectId]/script src/app/api/script src/lib/services/script-sessions.ts src/lib/streaming/sse.ts src/worker/processors/script.ts tests`
 
 Run: `git commit -m "feat: add script session workflow"`
 Expected: 生成一个干净提交。
@@ -1196,6 +1270,7 @@ Expected: 生成一个干净提交。
 1. 输入剧本版本后创建 `STORYBOARD` 任务
 2. worker 成功后落库 `storyboard_versions`
 3. 分镜 JSON 至少包含 `index`、`durationSeconds`、`scene`、`shot`、`action`、`dialogue`、`videoPrompt`
+4. 文本任务失败时自动重试 2 次后再标记 `failed`
 
 Run: `pnpm vitest run tests/integration/workers/storyboard-worker.test.ts`
 Expected: FAIL。
@@ -1226,6 +1301,7 @@ API：
 3. 校验分镜结构
 4. 写入 `storyboard_versions`
 5. 更新任务状态
+6. 按文本任务规则自动重试 2 次
 
 Run: `pnpm vitest run tests/integration/workers/storyboard-worker.test.ts`
 Expected: PASS。
@@ -1270,6 +1346,7 @@ Expected: 生成一个干净提交。
 3. 超过 `MAX_UPLOAD_MB` 时返回 `413`
 4. 成功后写入 `assets`
 5. 失败时保留错误日志
+6. 一次重试后仍失败则停止
 
 Run: `pnpm vitest run tests/integration/workers/image-worker.test.ts`
 Expected: FAIL。
@@ -1305,6 +1382,7 @@ API：
 4. 将结果先写临时目录，再提升到正式目录
 5. 写入 `assets`
 6. 更新任务和 `task_steps`
+7. 按规则执行 1 次自动重试
 
 Run: `pnpm vitest run tests/integration/workers/image-worker.test.ts`
 Expected: PASS。
@@ -1506,6 +1584,7 @@ Expected: 生成一个干净提交。
 - Create: `src/app/admin/storage/page.tsx`
 - Create: `src/app/api/admin/tasks/route.ts`
 - Create: `src/app/api/admin/tasks/[taskId]/retry/route.ts`
+- Create: `src/app/api/admin/tasks/[taskId]/cancel/route.ts`
 - Create: `src/app/api/admin/storage/route.ts`
 - Create: `src/app/api/admin/storage/cleanup/route.ts`
 - Modify: `src/lib/services/tasks.ts`
@@ -1519,25 +1598,29 @@ Expected: 生成一个干净提交。
 
 1. 管理员能查看失败任务列表
 2. 管理员能手动重试任务
-3. 管理员能查看目录占用统计和磁盘剩余空间
-4. 管理员能触发清理 30 天前的旧任务缓存图和中间产物
-5. 普通用户无权访问
+3. 管理员能手动取消 queued / running 任务
+4. 管理员能查看目录占用统计和磁盘剩余空间
+5. 管理员能触发清理 30 天前的旧任务缓存图和中间产物
+6. 普通用户无权访问
 
 Run: `pnpm vitest run tests/integration/api/admin-tasks.test.ts`
 Expected: FAIL。
 
-- [ ] **Step 2: 实现任务监控和重试 API**
+- [ ] **Step 2: 实现任务监控、重试和取消 API**
 
 完成：
 
 1. `GET /api/admin/tasks`
 2. `POST /api/admin/tasks/[taskId]/retry`
+3. `POST /api/admin/tasks/[taskId]/cancel`
 
 要求：
 
 1. 重试前校验任务状态
 2. 重试时写新的 `task_step`
 3. 复用统一入队函数
+4. 取消 queued job 时直接移除队列 job 并标记 `CANCELED`
+5. 取消 running job 时写入 `cancelRequestedAt`，processor 在关键步骤前检查后尽快退出
 
 - [ ] **Step 3: 实现存储统计 API**
 
@@ -1571,7 +1654,7 @@ Expected: PASS。
 - [ ] **Step 4: 实现管理员任务页和存储页**
 
 Run: `pnpm playwright test tests/e2e/admin.spec.ts`
-Expected: PASS，至少覆盖“审批申请、查看失败任务、重试任务、查看存储统计、查看磁盘剩余空间、清理 30 天前旧缓存”。
+Expected: PASS，至少覆盖“审批申请、查看失败任务、重试任务、取消任务、查看存储统计、查看磁盘剩余空间、清理 30 天前旧缓存”。
 
 - [ ] **Step 5: 提交本任务**
 
@@ -1597,6 +1680,7 @@ Expected: 生成一个干净提交。
 5. 走通 4 条链路
 6. 查看项目详情
 7. 管理员重试失败任务
+8. 管理员取消一个可取消的后台任务
 
 Run: `pnpm playwright test tests/e2e/full-smoke.spec.ts`
 Expected: 初次 FAIL，提示缺少尚未补齐的页面或流程。
@@ -1613,6 +1697,7 @@ README 至少包含：
 6. Windows 10 下优先使用 WSL2 Linux 文件系统运行仓库与 `storage/`
 7. 局域网访问地址设置
 8. `pg-data`、`redis-data` 和 `storage/` 的备份/恢复方法
+9. Caddy 或 nginx 反向代理、自签名证书生成和 `APP_URL=https://...` 配置指引
 
 - [ ] **Step 3: 运行最终验证矩阵**
 
@@ -1626,8 +1711,10 @@ Run: `pnpm playwright test`
 
 Run: `docker compose up -d`
 
+Run: `docker compose restart web worker`
+
 Run: `pnpm build`
-Expected: 全部通过；如果任一项失败，先修复再提交。
+Expected: 全部通过，且重启后仍能重新访问既有项目、任务、文本与媒体结果；如果任一项失败，先修复再提交。
 
 - [ ] **Step 4: 提交本任务**
 
@@ -1643,9 +1730,9 @@ Expected: 生成一个干净提交。
 1. 注册申请、审批、登录、首次改密完整可用。
 2. 普通用户与管理员权限边界正确。
 3. 项目、任务、文本版本、图片、视频均可持久化保存。
-4. 剧本会话、分镜、图片、视频 4 条链路均能在 UI 发起并落盘。
+4. 剧本会话、分镜、图片、视频 4 条链路均能在 UI 发起并落盘，其中剧本单轮问答走 SSE 流式交互。
 5. 管理员能配置模型代理和默认模型。
-6. 管理员能查看失败任务并重新入队。
+6. 管理员能查看失败任务、重新入队并取消任务。
 7. 服务重启后数据与文件仍能访问。
 8. `pnpm lint`、`pnpm typecheck`、`pnpm test`、`pnpm playwright test`、`pnpm build` 全通过。
 
