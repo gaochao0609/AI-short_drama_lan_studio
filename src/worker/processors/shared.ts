@@ -106,8 +106,25 @@ export async function runMinimalTask(
   }
 }
 
-export function createMinimalWorker(queueName: string): Worker<MinimalWorkerJobData, MinimalWorkerResult, string> {
-  return new BullmqWorker(queueName, runMinimalTask, {
+export function createMinimalWorker(
+  queueName: string,
+  input: {
+    concurrency: number;
+    expectedJobName?: string;
+  },
+): Worker<MinimalWorkerJobData, MinimalWorkerResult, string> {
+  return new BullmqWorker(
+    queueName,
+    async (job) => {
+      if (input.expectedJobName && job.name !== input.expectedJobName) {
+        throw new Error(`Unsupported job "${job.name}" for queue "${queueName}"`);
+      }
+
+      return runMinimalTask(job);
+    },
+    {
     connection: bullmqConnection,
-  });
+      concurrency: input.concurrency,
+    },
+  );
 }

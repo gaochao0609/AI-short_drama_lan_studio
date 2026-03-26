@@ -10,7 +10,15 @@ vi.mock("@/lib/models/provider-registry", () => ({
   getProviderByKey: getProviderByKeyMock,
 }));
 
-import { callProxyModel } from "@/lib/models/proxy-client";
+const { decryptApiKeyMock } = vi.hoisted(() => ({
+  decryptApiKeyMock: vi.fn(),
+}));
+
+vi.mock("@/lib/security/secrets", () => ({
+  decryptApiKey: decryptApiKeyMock,
+}));
+
+import { callProxyModel, streamProxyModel } from "@/lib/models/proxy-client";
 
 function buildRequest() {
   return {
@@ -27,6 +35,7 @@ describe("proxy client", () => {
   beforeEach(() => {
     getProviderByKeyMock.mockReset();
     fetchMock.mockReset();
+    decryptApiKeyMock.mockReset();
     vi.stubGlobal("fetch", fetchMock);
   });
 
@@ -51,7 +60,9 @@ describe("proxy client", () => {
     getProviderByKeyMock.mockResolvedValue({
       key: "script",
       baseUrl: null,
-      apiKey: "secret",
+      apiKeyCiphertext: "cipher",
+      apiKeyIv: "iv",
+      apiKeyAuthTag: "tag",
       timeoutMs: 30000,
       maxRetries: 2,
       enabled: true,
@@ -71,7 +82,9 @@ describe("proxy client", () => {
     getProviderByKeyMock.mockResolvedValue({
       key: "script",
       baseUrl: "https://proxy.example.com/v1",
-      apiKey: "secret",
+      apiKeyCiphertext: "cipher",
+      apiKeyIv: "iv",
+      apiKeyAuthTag: "tag",
       timeoutMs: 30000,
       maxRetries: 2,
       enabled: false,
@@ -91,11 +104,14 @@ describe("proxy client", () => {
     getProviderByKeyMock.mockResolvedValue({
       key: "script",
       baseUrl: "https://proxy.example.com/v1",
-      apiKey: "secret",
+      apiKeyCiphertext: "cipher",
+      apiKeyIv: "iv",
+      apiKeyAuthTag: "tag",
       timeoutMs: 30000,
       maxRetries: 0,
       enabled: true,
     });
+    decryptApiKeyMock.mockReturnValue("secret");
     fetchMock.mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -122,5 +138,46 @@ describe("proxy client", () => {
       errorCode: "PROXY_RATE_LIMITED",
       errorMessage: "Too many requests",
     });
+    expect(decryptApiKeyMock).toHaveBeenCalledWith({
+      apiKeyAuthTag: "tag",
+      apiKeyCiphertext: "cipher",
+      apiKeyIv: "iv",
+    });
+  });
+
+  it("streams proxy responses and injects the decrypted authorization header at call time", async () => {
+    getProviderByKeyMock.mockResolvedValue({
+      key: "script",
+      baseUrl: "https://proxy.example.com/v1/stream",
+      apiKeyCiphertext: "cipher",
+      apiKeyIv: "iv",
+      apiKeyAuthTag: "tag",
+      timeoutMs: 30000,
+      maxRetries: 0,
+      enabled: true,
+    });
+    decryptApiKeyMock.mockReturnValue("stream-secret");
+    fetchMock.mockResolvedValue(
+      new Response("data: next-question\n\n", {
+        status: 200,
+        headers: {
+          "content-type": "text/event-stream",
+        },
+      }),
+    );
+
+    const stream = await streamProxyModel(buildRequest());
+
+    await expect(new Response(stream).text()).resolves.toBe("data: next-question\n\n");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://proxy.example.com/v1/stream",
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          authorization: "Bearer stream-secret",
+          "x-provider-key": "script",
+          "x-trace-id": "trace-123",
+        }),
+      }),
+    );
   });
 });

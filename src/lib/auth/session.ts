@@ -81,4 +81,24 @@ export async function invalidateUserSessions(userId: string): Promise<void> {
   });
 }
 
+export function getSessionCookieOptions(appUrl: string): {
+  httpOnly: true;
+  sameSite: "lax";
+  secure: boolean;
+  path: "/";
+} {
+  let secure = process.env.NODE_ENV === "production";
+
+  try {
+    secure = new URL(appUrl).protocol === "https:";
+  } catch {}
+
+  return {
+    httpOnly: true,
+    sameSite: "lax",
+    secure,
+    path: "/",
+  };
+}
+
 export { SESSION_COOKIE_NAME };

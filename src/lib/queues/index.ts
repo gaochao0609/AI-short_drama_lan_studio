@@ -14,7 +14,6 @@ export async function closeQueues() {
 }
 
 const queueByTaskType = {
-  [TaskType.SCRIPT_QUESTION]: queues.script,
   [TaskType.SCRIPT_FINALIZE]: queues.script,
   [TaskType.STORYBOARD]: queues.storyboard,
   [TaskType.IMAGE]: queues.image,

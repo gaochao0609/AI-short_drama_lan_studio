@@ -44,7 +44,14 @@ export default async function AdminLayout({
           ))}
         </nav>
       </aside>
-      <main style={mainStyle}>{children}</main>
+      <main style={mainStyle}>
+        {process.env.APP_URL?.startsWith("http://") ? (
+          <p style={warningBannerStyle}>
+            当前为非 HTTPS 部署，密码和 API Key 传输存在风险
+          </p>
+        ) : null}
+        {children}
+      </main>
     </div>
   );
 }
@@ -89,4 +96,13 @@ const navLinkStyle = {
 
 const mainStyle = {
   padding: "28px",
+} satisfies React.CSSProperties;
+
+const warningBannerStyle = {
+  margin: "0 0 20px",
+  padding: "14px 16px",
+  borderRadius: "16px",
+  background: "rgba(190, 69, 22, 0.12)",
+  color: "#7b2d0b",
+  border: "1px solid rgba(190, 69, 22, 0.22)",
 } satisfies React.CSSProperties;

@@ -144,3 +144,21 @@ export async function withTestDatabase<T>(
     await dropDatabase(databaseName);
   }
 }
+
+export async function withEmptyTestDatabase<T>(
+  callback: (context: Omit<TestDatabaseContext, "prisma">) => Promise<T>,
+) {
+  const databaseName = `task3_${randomUUID().replaceAll("-", "")}`.toLowerCase();
+  const databaseUrl = getTestDatabaseUrl(databaseName);
+
+  await createDatabase(databaseName);
+
+  try {
+    return await callback({
+      databaseName,
+      databaseUrl,
+    });
+  } finally {
+    await dropDatabase(databaseName);
+  }
+}

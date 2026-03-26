@@ -11,7 +11,7 @@ type ProviderItem = {
   providerName: string;
   modelName: string | null;
   baseUrl: string | null;
-  hasApiKey: boolean;
+  apiKeyMaskedTail: string | null;
   timeoutMs: number;
   maxRetries: number;
   enabled: boolean;
@@ -83,13 +83,21 @@ function toFormState(provider: ProviderItem): ProviderFormState {
     modelName: provider.modelName ?? "",
     baseUrl: provider.baseUrl ?? "",
     apiKey: "",
-    hasStoredApiKey: provider.hasApiKey,
+    hasStoredApiKey: provider.apiKeyMaskedTail !== null,
     clearStoredApiKey: false,
     timeoutMs: String(provider.timeoutMs),
     maxRetries: String(provider.maxRetries),
     enabled: provider.enabled,
     defaultForTasks: provider.configJson.defaultForTasks ?? [],
   };
+}
+
+function getStoredSecretSummary(providers: ProviderItem[], selectedKey: string | null) {
+  if (!selectedKey) {
+    return "already stored";
+  }
+
+  return providers.find((provider) => provider.key === selectedKey)?.apiKeyMaskedTail ?? "already stored";
 }
 
 export default function AdminProvidersPage() {
@@ -332,7 +340,7 @@ export default function AdminProvidersPage() {
               {mode === "edit" ? (
                 <span style={hintStyle}>
                   {form.hasStoredApiKey
-                    ? "A secret is already stored. Leave blank to keep it, or enter a new key to replace it."
+                    ? `Stored secret ${getStoredSecretSummary(providers, selectedKey)}. Leave blank to keep it, or enter a new key to replace it.`
                     : "No secret stored. Enter a key to add one."}
                 </span>
               ) : null}

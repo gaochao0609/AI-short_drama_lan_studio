@@ -1,5 +1,6 @@
 import { type ModelRequest, type ProxyModelResult } from "@/lib/models/contracts";
 import { getProviderByKey } from "@/lib/models/provider-registry";
+import { decryptApiKey } from "@/lib/security/secrets";
 import { ServiceError } from "@/lib/services/errors";
 
 type ProxyPayload = {
@@ -141,6 +142,22 @@ function normalizeProviderLookupError(error: unknown, providerKey: string): Prox
   return toErrorResult("PROXY_PROVIDER_MISCONFIGURED", `Failed to load provider "${providerKey}"`);
 }
 
+function getAuthorizationHeader(provider: {
+  apiKeyCiphertext: string | null;
+  apiKeyIv: string | null;
+  apiKeyAuthTag: string | null;
+}) {
+  if (!provider.apiKeyCiphertext || !provider.apiKeyIv || !provider.apiKeyAuthTag) {
+    return undefined;
+  }
+
+  return `Bearer ${decryptApiKey({
+    apiKeyCiphertext: provider.apiKeyCiphertext,
+    apiKeyIv: provider.apiKeyIv,
+    apiKeyAuthTag: provider.apiKeyAuthTag,
+  })}`;
+}
+
 export async function callProxyModel(input: ModelRequest): Promise<ProxyModelResult> {
   let provider;
 
@@ -165,6 +182,7 @@ export async function callProxyModel(input: ModelRequest): Promise<ProxyModelRes
 
   for (let attempt = 0; attempt < attemptCount; attempt += 1) {
     const abortController = new AbortController();
+    const authorizationHeader = getAuthorizationHeader(provider);
     const timeoutHandle = setTimeout(() => {
       abortController.abort();
     }, provider.timeoutMs);
@@ -174,7 +192,7 @@ export async function callProxyModel(input: ModelRequest): Promise<ProxyModelRes
         method: "POST",
         headers: {
           "content-type": "application/json",
-          ...(provider.apiKey ? { authorization: `Bearer ${provider.apiKey}` } : {}),
+          ...(authorizationHeader ? { authorization: authorizationHeader } : {}),
           "x-provider-key": provider.key,
           "x-trace-id": input.traceId,
         },
@@ -220,4 +238,69 @@ export async function callProxyModel(input: ModelRequest): Promise<ProxyModelRes
   }
 
   return toErrorResult("PROXY_RETRY_EXHAUSTED", "Proxy request exhausted all retries");
+}
+
+export async function streamProxyModel(input: ModelRequest): Promise<ReadableStream<Uint8Array>> {
+  const provider = await getProviderByKey(input.providerKey);
+
+  if (!provider.enabled) {
+    throw new Error(`Provider "${provider.key}" is disabled`);
+  }
+
+  if (!provider.baseUrl) {
+    throw new Error(`Provider "${provider.key}" is missing baseUrl`);
+  }
+
+  const authorizationHeader = getAuthorizationHeader(provider);
+  const abortController = new AbortController();
+  const timeoutHandle = setTimeout(() => {
+    abortController.abort();
+  }, provider.timeoutMs);
+
+  try {
+    const response = await fetch(provider.baseUrl, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(authorizationHeader ? { authorization: authorizationHeader } : {}),
+        "x-provider-key": provider.key,
+        "x-trace-id": input.traceId,
+      },
+      body: JSON.stringify({
+        taskType: input.taskType,
+        providerKey: provider.key,
+        model: input.model,
+        inputText: input.inputText,
+        inputFiles: input.inputFiles,
+        options: input.options,
+        traceId: input.traceId,
+      }),
+      signal: abortController.signal,
+    });
+
+    if (!response.ok) {
+      const rawResponse = await readResponseBody(response);
+      const normalizedError = normalizeFailure(rawResponse, response.status);
+
+      throw new Error(normalizedError.errorMessage ?? "Proxy stream request failed");
+    }
+
+    if (!response.body) {
+      throw new Error("Proxy stream response body is empty");
+    }
+
+    return response.body;
+  } catch (error) {
+    if (error instanceof ServiceError) {
+      throw error;
+    }
+
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("Proxy stream request timed out");
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
 }
