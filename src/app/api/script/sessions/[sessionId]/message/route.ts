@@ -1,7 +1,7 @@
 import { createJsonObjectSchema, JsonTrimmedStringSchema, parseJsonBody } from "@/lib/http/validation";
 import { requireUser } from "@/lib/auth/guards";
 import { createSseResponse, streamTextAsSse } from "@/lib/streaming/sse";
-import { answerScriptQuestion, generateScriptQuestion } from "@/lib/services/script-sessions";
+import { answerScriptQuestion } from "@/lib/services/script-sessions";
 import { toErrorResponse } from "@/lib/services/errors";
 
 type SessionRouteContext = {
@@ -25,18 +25,17 @@ export async function POST(request: Request, context: SessionRouteContext) {
     const sessionId = await readSessionId(context);
     const body = await parseJsonBody(request, AnswerBodySchema);
 
-    await answerScriptQuestion(sessionId, body.answer, user.userId);
-
-    const questionStream = await generateScriptQuestion({
+    const questionStream = await answerScriptQuestion(
       sessionId,
-      userId: user.userId,
-      mode: "next",
-    });
+      body.answer,
+      user.userId,
+    );
 
     return createSseResponse(
       streamTextAsSse({
         upstream: questionStream.proxyStream,
         onComplete: questionStream.persistGeneratedQuestion,
+        onError: questionStream.handleStreamingError,
       }),
       {
         status: 200,

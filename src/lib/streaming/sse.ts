@@ -42,6 +42,7 @@ export function streamTextAsSse(input: {
   upstream: ReadableStream<Uint8Array>;
   initialEvents?: SseEvent[];
   onComplete?: (fullText: string) => Promise<void> | void;
+  onError?: (error: unknown, partialText: string) => Promise<void> | void;
 }) {
   const decoder = new TextDecoder();
 
@@ -100,6 +101,14 @@ export function streamTextAsSse(input: {
         );
         controller.close();
       } catch (error) {
+        if (input.onError) {
+          try {
+            await input.onError(error, fullText.trim());
+          } catch (handlerError) {
+            error = handlerError;
+          }
+        }
+
         const message =
           error instanceof Error ? error.message : "Failed to stream SSE response";
 

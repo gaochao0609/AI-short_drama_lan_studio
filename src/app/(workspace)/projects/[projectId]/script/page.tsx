@@ -75,10 +75,11 @@ export default function ProjectScriptPage() {
   const [finalScript, setFinalScript] = useState("");
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isSessionCompleted, setIsSessionCompleted] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingProject, setIsLoadingProject] = useState(true);
-  const { task } = useTaskPolling(activeTaskId);
+  const { task, error: pollingError } = useTaskPolling(activeTaskId);
 
   useEffect(() => {
     setProjectId(params.projectId ?? "");
@@ -138,31 +139,55 @@ export default function ProjectScriptPage() {
   }, [projectId]);
 
   useEffect(() => {
+    if (!activeTaskId || !pollingError) {
+      return;
+    }
+
+    setStatusMessage(null);
+    setError(
+      pollingError instanceof Error
+        ? pollingError.message
+        : "Failed to fetch task",
+    );
+    setActiveTaskId(null);
+  }, [activeTaskId, pollingError]);
+
+  useEffect(() => {
     const polledTask = task as TaskPollResponse | undefined;
 
-    if (!polledTask) {
+    if (!activeTaskId || !polledTask) {
       return;
     }
 
     if (polledTask.status === "RUNNING") {
       setStatusMessage("正在生成最终剧本...");
+      setError(null);
       return;
     }
 
     if (polledTask.status === "SUCCEEDED") {
       setStatusMessage("最终剧本已生成。");
       setFinalScript(polledTask.outputJson?.body ?? "");
+      setAnswer("");
+      setStreamingQuestion("");
+      setIsSessionCompleted(true);
+      setError(null);
+      setActiveTaskId(null);
       return;
     }
 
     if (polledTask.status === "FAILED" || polledTask.status === "CANCELED") {
+      setStatusMessage(null);
+      setIsSessionCompleted(false);
       setError(polledTask.errorText ?? "剧本定稿任务失败");
+      setActiveTaskId(null);
     }
-  }, [task]);
+  }, [activeTaskId, task]);
 
   async function consumeQuestionStream(
     response: Response,
     mode: "start" | "next" | "regenerate",
+    submittedAnswer?: string,
   ) {
     if (!response.ok || !response.body) {
       const payload = (await response.json().catch(() => null)) as
@@ -210,6 +235,23 @@ export default function ProjectScriptPage() {
 
             startTransition(() => {
               setQuestions((current) => {
+                if (mode === "next" && current.length > 0) {
+                  const previous = current.slice(0, -1);
+                  const latest = current[current.length - 1];
+
+                  return [
+                    ...previous,
+                    {
+                      ...latest,
+                      answer: submittedAnswer,
+                    },
+                    {
+                      id: `${Date.now()}-${current.length + 1}`,
+                      text: payload.questionText,
+                    },
+                  ];
+                }
+
                 if (mode === "regenerate" && current.length > 0) {
                   const previous = current.slice(0, -1);
                   const latest = current[current.length - 1];
@@ -232,6 +274,9 @@ export default function ProjectScriptPage() {
                 ];
               });
             });
+            if (mode === "next") {
+              setAnswer("");
+            }
             setStreamingQuestion("");
           }
 
@@ -241,6 +286,9 @@ export default function ProjectScriptPage() {
           }
         }
       }
+    } catch (streamError) {
+      setStreamingQuestion("");
+      throw streamError;
     } finally {
       reader.releaseLock();
       setIsStreaming(false);
@@ -259,6 +307,7 @@ export default function ProjectScriptPage() {
     setQuestions([]);
     setFinalScript("");
     setActiveTaskId(null);
+    setIsSessionCompleted(false);
     setSessionId(null);
 
     try {
@@ -294,23 +343,7 @@ export default function ProjectScriptPage() {
     setError(null);
     setStatusMessage(null);
     setIsSubmitting(true);
-
-    setQuestions((current) => {
-      if (current.length === 0) {
-        return current;
-      }
-
-      const previous = current.slice(0, -1);
-      const latest = current[current.length - 1];
-
-      return [
-        ...previous,
-        {
-          ...latest,
-          answer,
-        },
-      ];
-    });
+    const submittedAnswer = answer;
 
     try {
       const response = await fetch(
@@ -321,13 +354,12 @@ export default function ProjectScriptPage() {
             "content-type": "application/json",
           },
           body: JSON.stringify({
-            answer,
+            answer: submittedAnswer,
           }),
         },
       );
 
-      setAnswer("");
-      await consumeQuestionStream(response, "next");
+      await consumeQuestionStream(response, "next", submittedAnswer);
     } catch (submitError) {
       setError(
         submitError instanceof Error
@@ -394,6 +426,7 @@ export default function ProjectScriptPage() {
 
       setActiveTaskId(payload.taskId);
     } catch (submitError) {
+      setStatusMessage(null);
       setError(
         submitError instanceof Error
           ? submitError.message
@@ -413,10 +446,14 @@ export default function ProjectScriptPage() {
     setFinalScript("");
     setStatusMessage(null);
     setError(null);
+    setIsSessionCompleted(false);
     setIdea("");
   }
 
   const isBusy = isSubmitting || isStreaming;
+  const isFinalizePolling = Boolean(activeTaskId);
+  const isSessionLocked = isBusy || isFinalizePolling;
+  const isQuestionControlsLocked = isSessionLocked || isSessionCompleted;
 
   return (
     <section style={pageStyle}>
@@ -440,8 +477,16 @@ export default function ProjectScriptPage() {
         </div>
       </header>
 
-      {error ? <p style={errorStyle}>{error}</p> : null}
-      {statusMessage ? <p style={messageStyle}>{statusMessage}</p> : null}
+      {error ? (
+        <p role="alert" style={errorStyle}>
+          {error}
+        </p>
+      ) : null}
+      {statusMessage ? (
+        <p role="status" style={messageStyle}>
+          {statusMessage}
+        </p>
+      ) : null}
 
       <div style={gridStyle}>
         <section style={panelStyle}>
@@ -452,27 +497,30 @@ export default function ProjectScriptPage() {
           <label style={fieldStyle}>
             <span>创意</span>
             <textarea
-              aria-label="创意"
+              aria-label="Script idea input"
               value={idea}
               onChange={(event) => setIdea(event.target.value)}
               rows={5}
               style={textareaStyle}
-              disabled={isBusy}
+              disabled={isSessionLocked}
             />
           </label>
           <div style={buttonRowStyle}>
             <button
               type="button"
+              aria-label="Start script session"
               onClick={handleStartSession}
               style={primaryButtonStyle}
-              disabled={isBusy || !projectId}
+              disabled={isSessionLocked || !projectId}
             >
               开始会话
             </button>
             <button
               type="button"
+              aria-label="Reset script session"
               onClick={handleResetSession}
               style={secondaryButtonStyle}
+              disabled={isSessionLocked}
             >
               开始新会话
             </button>
@@ -510,36 +558,47 @@ export default function ProjectScriptPage() {
           <label style={fieldStyle}>
             <span>回答</span>
             <textarea
-              aria-label="回答"
+              aria-label="Script answer input"
               value={answer}
               onChange={(event) => setAnswer(event.target.value)}
               rows={4}
               style={textareaStyle}
-              disabled={isBusy || !sessionId}
+              disabled={isQuestionControlsLocked || !sessionId}
             />
           </label>
           <div style={buttonRowStyle}>
             <button
               type="button"
+              aria-label="Send script answer"
               onClick={handleSendAnswer}
               style={primaryButtonStyle}
-              disabled={isBusy || !sessionId}
+              disabled={isQuestionControlsLocked || !sessionId}
             >
               发送回答
             </button>
             <button
               type="button"
+              aria-label="Regenerate script question"
               onClick={handleRegenerateQuestion}
               style={secondaryButtonStyle}
-              disabled={isBusy || !sessionId || questions.length === 0}
+              disabled={
+                isQuestionControlsLocked || !sessionId || questions.length === 0
+              }
             >
               重新生成当前问题
             </button>
             <button
               type="button"
+              aria-label="Finalize script"
               onClick={handleFinalize}
               style={primaryButtonStyle}
-              disabled={isBusy || !sessionId || questions.length === 0}
+              disabled={
+                isBusy ||
+                isFinalizePolling ||
+                isSessionCompleted ||
+                !sessionId ||
+                questions.length === 0
+              }
             >
               剧本定稿
             </button>

@@ -10,7 +10,6 @@ import { getDefaultModelSummary } from "@/lib/models/provider-registry";
 import { enqueueTask } from "@/lib/queues/enqueue";
 import { getProject } from "@/lib/services/projects";
 import { ServiceError } from "@/lib/services/errors";
-import { createTask } from "@/lib/services/tasks";
 
 type QaRecord = {
   round: number;
@@ -30,6 +29,23 @@ type OwnedScriptSession = {
   currentQuestion: string | null;
   qaRecordsJson: Prisma.JsonValue | null;
 };
+
+type QuestionPromptSession = Pick<
+  OwnedScriptSession,
+  "id" | "projectId" | "idea" | "completedRounds" | "currentQuestion" | "qaRecordsJson"
+>;
+
+type QuestionGeneration = {
+  sessionId: string;
+  traceId: string;
+  proxyStream: ReadableStream<Uint8Array>;
+  persistGeneratedQuestion: (questionText: string) => Promise<void>;
+  handleStreamingError?: () => Promise<void>;
+};
+
+function toQaJsonValue(records: QaRecord[]): Prisma.JsonValue {
+  return records as unknown as Prisma.JsonValue;
+}
 
 function parseQaRecords(value: Prisma.JsonValue | null): QaRecord[] {
   if (!Array.isArray(value)) {
@@ -58,6 +74,18 @@ function parseQaRecords(value: Prisma.JsonValue | null): QaRecord[] {
 
     return [{ round, question, answer }];
   });
+}
+
+function upsertQaRecord(records: QaRecord[], nextRecord: QaRecord): QaRecord[] {
+  const dedupedRecords = records.filter(
+    (record) =>
+      !(
+        record.round === nextRecord.round &&
+        record.question === nextRecord.question
+      ),
+  );
+
+  return [...dedupedRecords, nextRecord];
 }
 
 async function getOwnedScriptSession(
@@ -94,6 +122,10 @@ async function requireWritableScriptSession(
 ) {
   const session = await getOwnedScriptSession(sessionId, userId);
 
+  if (session.status === ScriptSessionStatus.FINALIZING) {
+    throw new ServiceError(409, "Script session is finalizing");
+  }
+
   if (session.status === ScriptSessionStatus.COMPLETED) {
     throw new ServiceError(409, "Script session is already completed");
   }
@@ -123,7 +155,7 @@ async function getQuestionModelSummary() {
 
 function buildQuestionPrompt(
   session: Pick<
-    OwnedScriptSession,
+    QuestionPromptSession,
     "idea" | "completedRounds" | "currentQuestion" | "qaRecordsJson"
   >,
   mode: "start" | "next" | "regenerate",
@@ -162,11 +194,10 @@ function buildQuestionPrompt(
 }
 
 async function prepareQuestionGeneration(
-  sessionId: string,
-  userId: string,
+  session: QuestionPromptSession,
   mode: "start" | "next" | "regenerate",
-) {
-  const session = await requireWritableScriptSession(sessionId, userId);
+  persistGeneratedQuestion: (questionText: string) => Promise<void>,
+): Promise<QuestionGeneration> {
   const model = await getQuestionModelSummary();
   const traceId = randomUUID();
 
@@ -188,123 +219,347 @@ async function prepareQuestionGeneration(
     sessionId: session.id,
     traceId,
     proxyStream,
-    persistGeneratedQuestion: async (questionText: string) => {
-      await prisma.scriptSession.update({
-        where: {
-          id: session.id,
-        },
-        data: {
-          currentQuestion: questionText,
-        },
-      });
-    },
+    persistGeneratedQuestion,
   };
+}
+
+async function deleteUnstartedScriptSession(sessionId: string, userId: string) {
+  await prisma.scriptSession.deleteMany({
+    where: {
+      id: sessionId,
+      creatorId: userId,
+      status: ScriptSessionStatus.ACTIVE,
+      completedRounds: 0,
+      currentQuestion: null,
+    },
+  });
+}
+
+async function restorePendingQuestionAfterFailedAnswer(input: {
+  sessionId: string;
+  userId: string;
+  completedRounds: number;
+  previousCompletedRounds: number;
+  previousQuestion: string;
+  previousQaRecordsJson: Prisma.JsonValue | null;
+}) {
+  await prisma.scriptSession.updateMany({
+    where: {
+      id: input.sessionId,
+      creatorId: input.userId,
+      status: ScriptSessionStatus.ACTIVE,
+      completedRounds: input.completedRounds,
+      currentQuestion: null,
+    },
+    data: {
+      completedRounds: input.previousCompletedRounds,
+      currentQuestion: input.previousQuestion,
+      qaRecordsJson:
+        (input.previousQaRecordsJson ?? []) as Prisma.InputJsonValue,
+    },
+  });
 }
 
 export async function startScriptSession(
   projectId: string,
   idea: string,
   userId: string,
-): Promise<{ sessionId: string }> {
+): Promise<QuestionGeneration> {
   await getProject(projectId, userId);
 
-  const session = await prisma.scriptSession.create({
+  const sessionId = randomUUID();
+  await prisma.scriptSession.create({
     data: {
+      id: sessionId,
       projectId,
       creatorId: userId,
       idea,
+      currentQuestion: null,
       qaRecordsJson: [] as Prisma.InputJsonValue,
-    },
-    select: {
-      id: true,
     },
   });
 
-  return {
-    sessionId: session.id,
-  };
+  try {
+    const generation = await prepareQuestionGeneration(
+      {
+        id: sessionId,
+        projectId,
+        idea,
+        completedRounds: 0,
+        currentQuestion: null,
+        qaRecordsJson: toQaJsonValue([]),
+      },
+      "start",
+      async (questionText: string) => {
+        const result = await prisma.scriptSession.updateMany({
+          where: {
+            id: sessionId,
+            creatorId: userId,
+            status: ScriptSessionStatus.ACTIVE,
+            completedRounds: 0,
+            currentQuestion: null,
+          },
+          data: {
+            currentQuestion: questionText,
+          },
+        });
+
+        if (result.count !== 1) {
+          throw new ServiceError(
+            409,
+            "Script session changed before the first question could be saved",
+          );
+        }
+      },
+    );
+
+    return {
+      ...generation,
+      handleStreamingError: async () => {
+        await deleteUnstartedScriptSession(sessionId, userId);
+      },
+    };
+  } catch (error) {
+    await deleteUnstartedScriptSession(sessionId, userId);
+    throw error;
+  }
 }
 
 export async function answerScriptQuestion(
   sessionId: string,
   answer: string,
   userId: string,
-): Promise<{ nextQuestionText?: string; completed: boolean }> {
+): Promise<QuestionGeneration> {
   const session = await requireWritableScriptSession(sessionId, userId);
 
   if (!session.currentQuestion) {
     throw new ServiceError(409, "Script session does not have a pending question");
   }
 
-  const qaRecords = parseQaRecords(session.qaRecordsJson);
-  qaRecords.push({
+  const updatedQaRecords = upsertQaRecord(parseQaRecords(session.qaRecordsJson), {
     round: session.completedRounds + 1,
     question: session.currentQuestion,
     answer,
   });
+  const updatedCompletedRounds = session.completedRounds + 1;
+  const previousQuestion = session.currentQuestion;
 
-  await prisma.scriptSession.update({
+  const stageAnswerResult = await prisma.scriptSession.updateMany({
     where: {
       id: session.id,
+      creatorId: userId,
+      status: ScriptSessionStatus.ACTIVE,
+      completedRounds: session.completedRounds,
+      currentQuestion: session.currentQuestion,
     },
     data: {
-      completedRounds: session.completedRounds + 1,
-      qaRecordsJson: qaRecords as Prisma.InputJsonValue,
+      completedRounds: updatedCompletedRounds,
+      qaRecordsJson: updatedQaRecords as Prisma.InputJsonValue,
       currentQuestion: null,
     },
   });
 
-  return {
-    completed: false,
+  if (stageAnswerResult.count !== 1) {
+    throw new ServiceError(
+      409,
+      "Script session changed before the submitted answer could be staged",
+    );
+  }
+
+  const restorePendingQuestion = async () => {
+    await restorePendingQuestionAfterFailedAnswer({
+      sessionId: session.id,
+      userId,
+      completedRounds: updatedCompletedRounds,
+      previousCompletedRounds: session.completedRounds,
+      previousQuestion,
+      previousQaRecordsJson: session.qaRecordsJson,
+    });
   };
+
+  try {
+    const generation = await prepareQuestionGeneration(
+      {
+        ...session,
+        completedRounds: updatedCompletedRounds,
+        currentQuestion: null,
+        qaRecordsJson: toQaJsonValue(updatedQaRecords),
+      },
+      "next",
+      async (questionText: string) => {
+        const result = await prisma.scriptSession.updateMany({
+          where: {
+            id: session.id,
+            creatorId: userId,
+            status: ScriptSessionStatus.ACTIVE,
+            completedRounds: updatedCompletedRounds,
+            currentQuestion: null,
+          },
+          data: {
+            currentQuestion: questionText,
+          },
+        });
+
+        if (result.count !== 1) {
+          throw new ServiceError(
+            409,
+            "Script session changed before the next question could be saved",
+          );
+        }
+      },
+    );
+
+    return {
+      ...generation,
+      handleStreamingError: restorePendingQuestion,
+    };
+  } catch (error) {
+    await restorePendingQuestion();
+    throw error;
+  }
 }
 
 export async function regenerateCurrentQuestion(
   sessionId: string,
   userId: string,
-): Promise<{ questionText: string }> {
+): Promise<QuestionGeneration> {
   const session = await requireWritableScriptSession(sessionId, userId);
 
   if (!session.currentQuestion) {
     throw new ServiceError(409, "Script session does not have a current question");
   }
 
-  return {
-    questionText: session.currentQuestion,
-  };
+  return prepareQuestionGeneration(
+    session,
+    "regenerate",
+    async (questionText: string) => {
+      const result = await prisma.scriptSession.updateMany({
+        where: {
+          id: session.id,
+          creatorId: userId,
+          status: ScriptSessionStatus.ACTIVE,
+          completedRounds: session.completedRounds,
+          currentQuestion: session.currentQuestion,
+        },
+        data: {
+          currentQuestion: questionText,
+        },
+      });
+
+      if (result.count !== 1) {
+        throw new ServiceError(
+          409,
+          "Script session changed before the regenerated question could be saved",
+        );
+      }
+    },
+  );
 }
 
 export async function finalizeScriptSession(
   sessionId: string,
   userId: string,
 ): Promise<{ taskId: string }> {
-  const session = await requireWritableScriptSession(sessionId, userId);
-  const traceId = randomUUID();
-  const task = await createTask({
-    projectId: session.projectId,
-    createdById: userId,
-    type: TaskType.SCRIPT_FINALIZE,
-    inputJson: {
-      sessionId: session.id,
-    } as Prisma.InputJsonValue,
+  const session = await getOwnedScriptSession(sessionId, userId);
+
+  if (session.status === ScriptSessionStatus.FINALIZING) {
+    throw new ServiceError(409, "Script finalize task is already in progress");
+  }
+
+  if (session.status === ScriptSessionStatus.COMPLETED) {
+    throw new ServiceError(409, "Script session is already completed");
+  }
+
+  if (session.status === ScriptSessionStatus.CANCELED) {
+    throw new ServiceError(409, "Script session is canceled");
+  }
+
+  const task = await prisma.$transaction(async (tx) => {
+    const freezeResult = await tx.scriptSession.updateMany({
+      where: {
+        id: session.id,
+        creatorId: userId,
+        status: ScriptSessionStatus.ACTIVE,
+      },
+      data: {
+        status: ScriptSessionStatus.FINALIZING,
+      },
+    });
+
+    if (freezeResult.count !== 1) {
+      const latestSession = await tx.scriptSession.findFirst({
+        where: {
+          id: session.id,
+          creatorId: userId,
+        },
+        select: {
+          status: true,
+        },
+      });
+
+      if (latestSession?.status === ScriptSessionStatus.FINALIZING) {
+        throw new ServiceError(409, "Script finalize task is already in progress");
+      }
+
+      if (latestSession?.status === ScriptSessionStatus.COMPLETED) {
+        throw new ServiceError(409, "Script session is already completed");
+      }
+
+      if (latestSession?.status === ScriptSessionStatus.CANCELED) {
+        throw new ServiceError(409, "Script session is canceled");
+      }
+
+      throw new ServiceError(409, "Script session changed before finalize could start");
+    }
+
+    return tx.task.create({
+      data: {
+        projectId: session.projectId,
+        createdById: userId,
+        type: TaskType.SCRIPT_FINALIZE,
+        inputJson: {
+          sessionId: session.id,
+        } as Prisma.InputJsonValue,
+      },
+      select: {
+        id: true,
+      },
+    });
   });
 
-  await enqueueTask(task.id, TaskType.SCRIPT_FINALIZE, {
-    sessionId: session.id,
-    traceId,
-  });
+  const traceId = randomUUID();
+
+  try {
+    await enqueueTask(task.id, TaskType.SCRIPT_FINALIZE, {
+      sessionId: session.id,
+      traceId,
+    });
+  } catch (error) {
+    await prisma.$transaction(async (tx) => {
+      await tx.task.deleteMany({
+        where: {
+          id: task.id,
+          projectId: session.projectId,
+          createdById: userId,
+          type: TaskType.SCRIPT_FINALIZE,
+        },
+      });
+      await tx.scriptSession.updateMany({
+        where: {
+          id: session.id,
+          creatorId: userId,
+          status: ScriptSessionStatus.FINALIZING,
+        },
+        data: {
+          status: ScriptSessionStatus.ACTIVE,
+        },
+      });
+    });
+
+    throw error;
+  }
 
   return {
     taskId: task.id,
   };
-}
-
-export async function generateScriptQuestion(
-  input: {
-    sessionId: string;
-    userId: string;
-    mode: "start" | "next" | "regenerate";
-  },
-) {
-  return prepareQuestionGeneration(input.sessionId, input.userId, input.mode);
 }

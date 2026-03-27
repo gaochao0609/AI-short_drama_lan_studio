@@ -3,32 +3,41 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
   const findUniqueOrThrow = vi.fn();
+  const scriptSessionUpdateMany = vi.fn();
   const count = vi.fn();
   const create = vi.fn();
+  const findFirst = vi.fn();
   const scriptSessionUpdate = vi.fn();
   const taskUpdate = vi.fn();
   const taskStepUpdate = vi.fn();
-  const transaction = vi.fn(async (operations: Array<unknown>) => operations);
+  const prisma = {
+    scriptSession: {
+      findUniqueOrThrow,
+      updateMany: scriptSessionUpdateMany,
+      update: scriptSessionUpdate,
+    },
+    scriptVersion: {
+      count,
+      create,
+      findFirst,
+    },
+    task: {
+      update: taskUpdate,
+    },
+    taskStep: {
+      update: taskStepUpdate,
+    },
+  };
+  const transaction = vi.fn(async (operations: Array<unknown> | ((tx: typeof prisma) => unknown)) =>
+    typeof operations === "function" ? operations(prisma) : operations,
+  );
 
   return {
     callProxyModel: vi.fn(),
     getDefaultModelSummary: vi.fn(),
     prisma: {
       $transaction: transaction,
-      scriptSession: {
-        findUniqueOrThrow,
-        update: scriptSessionUpdate,
-      },
-      scriptVersion: {
-        count,
-        create,
-      },
-      task: {
-        update: taskUpdate,
-      },
-      taskStep: {
-        update: taskStepUpdate,
-      },
+      ...prisma,
     },
   };
 });
@@ -53,9 +62,11 @@ describe("processScriptFinalizeJob", () => {
     mocks.getDefaultModelSummary.mockReset();
     mocks.prisma.$transaction.mockReset();
     mocks.prisma.scriptSession.findUniqueOrThrow.mockReset();
+    mocks.prisma.scriptSession.updateMany.mockReset();
     mocks.prisma.scriptSession.update.mockReset();
     mocks.prisma.scriptVersion.count.mockReset();
     mocks.prisma.scriptVersion.create.mockReset();
+    mocks.prisma.scriptVersion.findFirst.mockReset();
     mocks.prisma.task.update.mockReset();
     mocks.prisma.taskStep.update.mockReset();
   });
@@ -74,6 +85,7 @@ describe("processScriptFinalizeJob", () => {
         },
       ],
     });
+    mocks.prisma.scriptVersion.findFirst.mockResolvedValue(null);
     mocks.prisma.scriptVersion.count.mockResolvedValue(0);
     mocks.getDefaultModelSummary.mockResolvedValue({
       providerKey: "script",
@@ -92,11 +104,12 @@ describe("processScriptFinalizeJob", () => {
     mocks.prisma.scriptVersion.create.mockResolvedValue({
       id: "version-1",
     });
-    mocks.prisma.scriptSession.update.mockResolvedValue({
-      id: "session-1",
-      finalScriptVersionId: "version-1",
+    mocks.prisma.scriptSession.updateMany.mockResolvedValue({
+      count: 1,
     });
-    mocks.prisma.$transaction.mockResolvedValue([]);
+    mocks.prisma.$transaction.mockImplementation(async (operations) =>
+      typeof operations === "function" ? operations(mocks.prisma) : operations,
+    );
 
     const job = {
       attemptsMade: 0,
@@ -149,10 +162,11 @@ describe("processScriptFinalizeJob", () => {
         }),
       }),
     );
-    expect(mocks.prisma.scriptSession.update).toHaveBeenCalledWith(
+    expect(mocks.prisma.scriptSession.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
           id: "session-1",
+          status: "FINALIZING",
         },
         data: expect.objectContaining({
           status: "COMPLETED",
@@ -175,6 +189,253 @@ describe("processScriptFinalizeJob", () => {
             scriptVersionId: "version-1",
             body: "INT. ARCHIVE - NIGHT\nThe courier opens the vault.",
           }),
+        }),
+      }),
+    );
+  });
+
+  it("reuses an existing final script version instead of creating a duplicate on retry", async () => {
+    mocks.prisma.scriptSession.findUniqueOrThrow.mockResolvedValue({
+      id: "session-1",
+      projectId: "project-1",
+      creatorId: "user-1",
+      idea: "A courier tries to restore stolen memories.",
+      status: "FINALIZING",
+      qaRecordsJson: [],
+      finalScriptVersionId: "version-1",
+      finalScriptVersion: {
+        id: "version-1",
+        body: "INT. ARCHIVE - NIGHT\nThe courier opens the vault.",
+      },
+    });
+    mocks.prisma.scriptSession.updateMany.mockResolvedValue({
+      count: 1,
+    });
+    mocks.prisma.$transaction.mockImplementation(async (operations) =>
+      typeof operations === "function" ? operations(mocks.prisma) : operations,
+    );
+
+    const job = {
+      attemptsMade: 1,
+      opts: {
+        attempts: 3,
+      },
+      data: {
+        taskId: "task-1",
+        taskStepId: "step-1",
+        traceId: "trace-1",
+        payload: {
+          sessionId: "session-1",
+          traceId: "trace-1",
+        },
+      },
+    } as Parameters<typeof processScriptFinalizeJob>[0];
+
+    await expect(processScriptFinalizeJob(job)).resolves.toEqual({
+      ok: true,
+      traceId: "trace-1",
+      scriptVersionId: "version-1",
+      body: "INT. ARCHIVE - NIGHT\nThe courier opens the vault.",
+    });
+
+    expect(mocks.callProxyModel).not.toHaveBeenCalled();
+    expect(mocks.prisma.scriptVersion.create).not.toHaveBeenCalled();
+    expect(mocks.prisma.scriptSession.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          id: "session-1",
+          status: "FINALIZING",
+        },
+        data: expect.objectContaining({
+          finalScriptVersionId: "version-1",
+          status: "COMPLETED",
+        }),
+      }),
+    );
+  });
+
+  it("treats replay after a successful finalize as an idempotent success", async () => {
+    mocks.prisma.scriptSession.findUniqueOrThrow.mockResolvedValue({
+      id: "session-1",
+      projectId: "project-1",
+      creatorId: "user-1",
+      idea: "A courier tries to restore stolen memories.",
+      status: "COMPLETED",
+      completedAt: new Date("2026-03-27T12:00:00.000Z"),
+      qaRecordsJson: [],
+      finalScriptVersionId: "version-1",
+      finalScriptVersion: {
+        id: "version-1",
+        body: "INT. ARCHIVE - NIGHT\nThe courier opens the vault.",
+      },
+    });
+    mocks.prisma.$transaction.mockImplementation(async (operations) =>
+      typeof operations === "function" ? operations(mocks.prisma) : operations,
+    );
+
+    const job = {
+      attemptsMade: 1,
+      opts: {
+        attempts: 3,
+      },
+      data: {
+        taskId: "task-1",
+        taskStepId: "step-1",
+        traceId: "trace-1",
+        payload: {
+          sessionId: "session-1",
+          traceId: "trace-1",
+        },
+      },
+    } as Parameters<typeof processScriptFinalizeJob>[0];
+
+    await expect(processScriptFinalizeJob(job)).resolves.toEqual({
+      ok: true,
+      traceId: "trace-1",
+      scriptVersionId: "version-1",
+      body: "INT. ARCHIVE - NIGHT\nThe courier opens the vault.",
+    });
+
+    expect(mocks.callProxyModel).not.toHaveBeenCalled();
+    expect(mocks.prisma.scriptVersion.create).not.toHaveBeenCalled();
+    expect(mocks.prisma.scriptSession.updateMany).not.toHaveBeenCalled();
+    expect(mocks.prisma.task.update).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: {
+          id: "task-1",
+        },
+        data: expect.objectContaining({
+          status: TaskStatus.SUCCEEDED,
+          outputJson: expect.objectContaining({
+            scriptVersionId: "version-1",
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("reuses a linked script version from a partial previous attempt", async () => {
+    mocks.prisma.scriptSession.findUniqueOrThrow.mockResolvedValue({
+      id: "session-1",
+      projectId: "project-1",
+      creatorId: "user-1",
+      idea: "A courier tries to restore stolen memories.",
+      status: "FINALIZING",
+      qaRecordsJson: [],
+      finalScriptVersionId: null,
+      finalScriptVersion: null,
+      completedAt: null,
+    });
+    mocks.prisma.scriptVersion.findFirst.mockResolvedValue({
+      id: "version-2",
+      body: "INT. HARBOR - DUSK\nThe courier burns the ledger.",
+    });
+    mocks.prisma.scriptSession.updateMany.mockResolvedValue({
+      count: 1,
+    });
+    mocks.prisma.$transaction.mockImplementation(async (operations) =>
+      typeof operations === "function" ? operations(mocks.prisma) : operations,
+    );
+
+    const job = {
+      attemptsMade: 1,
+      opts: {
+        attempts: 3,
+      },
+      data: {
+        taskId: "task-1",
+        taskStepId: "step-1",
+        traceId: "trace-1",
+        payload: {
+          sessionId: "session-1",
+          traceId: "trace-1",
+        },
+      },
+    } as Parameters<typeof processScriptFinalizeJob>[0];
+
+    await expect(processScriptFinalizeJob(job)).resolves.toEqual({
+      ok: true,
+      traceId: "trace-1",
+      scriptVersionId: "version-2",
+      body: "INT. HARBOR - DUSK\nThe courier burns the ledger.",
+    });
+
+    expect(mocks.callProxyModel).not.toHaveBeenCalled();
+    expect(mocks.prisma.scriptVersion.create).not.toHaveBeenCalled();
+    expect(mocks.prisma.scriptSession.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          id: "session-1",
+          status: "FINALIZING",
+        },
+        data: expect.objectContaining({
+          finalScriptVersionId: "version-2",
+          status: "COMPLETED",
+        }),
+      }),
+    );
+  });
+
+  it("restores the session to ACTIVE when a finalize job fails terminally", async () => {
+    mocks.prisma.scriptSession.findUniqueOrThrow.mockResolvedValue({
+      id: "session-1",
+      projectId: "project-1",
+      creatorId: "user-1",
+      idea: "A courier tries to restore stolen memories.",
+      qaRecordsJson: [],
+      finalScriptVersionId: null,
+      finalScriptVersion: null,
+      completedAt: null,
+      status: "FINALIZING",
+    });
+    mocks.getDefaultModelSummary.mockResolvedValue({
+      providerKey: "script",
+      model: "gpt-4.1-mini",
+    });
+    mocks.callProxyModel.mockRejectedValue(new Error("proxy unavailable"));
+    mocks.prisma.scriptSession.updateMany.mockResolvedValue({
+      count: 1,
+    });
+    mocks.prisma.$transaction.mockImplementation(async (operations) =>
+      typeof operations === "function" ? operations(mocks.prisma) : operations,
+    );
+
+    const job = {
+      attemptsMade: 2,
+      opts: {
+        attempts: 3,
+      },
+      data: {
+        taskId: "task-1",
+        taskStepId: "step-1",
+        traceId: "trace-1",
+        payload: {
+          sessionId: "session-1",
+          traceId: "trace-1",
+        },
+      },
+    } as Parameters<typeof processScriptFinalizeJob>[0];
+
+    await expect(processScriptFinalizeJob(job)).rejects.toThrow("proxy unavailable");
+
+    expect(mocks.prisma.scriptSession.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "session-1",
+        status: "FINALIZING",
+      },
+      data: {
+        status: "ACTIVE",
+      },
+    });
+    expect(mocks.prisma.task.update).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: {
+          id: "task-1",
+        },
+        data: expect.objectContaining({
+          status: TaskStatus.FAILED,
+          errorText: "proxy unavailable",
         }),
       }),
     );

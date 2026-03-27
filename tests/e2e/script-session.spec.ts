@@ -139,44 +139,126 @@ test("script session page streams questions and shows the finalized script resul
     await page.goto(`http://127.0.0.1:3000/projects/${projectId}/script`);
 
     await expect(page.getByRole("heading", { name: `Script Project ${suffix}` })).toBeVisible();
-    await page.getByLabel("创意").fill("A courier uncovers a black-market memory trade.");
-    await page.getByRole("button", { name: "开始会话" }).click();
+    await page.getByLabel("Script idea input").fill("A courier uncovers a black-market memory trade.");
+    await page.getByRole("button", { name: "Start script session" }).click();
     await expect(page.getByText("Who is the hero?")).toBeVisible();
 
-    await page.getByLabel("回答").fill("A river courier who smuggles memories.");
-    await page.getByRole("button", { name: "发送回答" }).click();
+    await page.getByLabel("Script answer input").fill("A river courier who smuggles memories.");
+    await page.getByRole("button", { name: "Send script answer" }).click();
     await expect(page.getByText("What does the hero stand to lose?")).toBeVisible();
 
-    await page.getByRole("button", { name: "重新生成当前问题" }).click();
+    await page.getByRole("button", { name: "Regenerate script question" }).click();
     await expect(page.getByText("What secret is the hero hiding?")).toBeVisible();
 
-    await page.getByRole("button", { name: "剧本定稿" }).click();
-    await expect(page.getByText("正在生成最终剧本")).toBeVisible();
+    await page.getByRole("button", { name: "Finalize script" }).click();
+    await expect(page.getByRole("button", { name: "Finalize script" })).toBeDisabled();
     await expect(page.getByText("INT. ARCHIVE - NIGHT")).toBeVisible();
 
-    await page.getByRole("button", { name: "开始新会话" }).click();
-    await expect(page.getByLabel("创意")).toHaveValue("");
+    await page.getByRole("button", { name: "Reset script session" }).click();
+    await expect(page.getByLabel("Script idea input")).toHaveValue("");
     await expect(page.getByText("What secret is the hero hiding?")).not.toBeVisible();
   } finally {
-    if (projectId) {
-      await prisma.project.deleteMany({
-        where: {
-          id: projectId,
-        },
-      });
-    }
-    await prisma.session.deleteMany({
-      where: {
-        user: {
-          username,
-        },
-      },
-    });
-    await prisma.user.deleteMany({
-      where: {
+    await prisma.$disconnect();
+  }
+});
+
+test("script session page surfaces polling errors during finalize", async ({
+  context,
+  page,
+}) => {
+  const prisma = createPrismaClient();
+  const suffix = randomUUID().replaceAll("-", "").slice(0, 8);
+  const username = `script-e2e-poll-${suffix}`;
+  const passwordHash = await hash("ScriptE2E123!", 12);
+  const sessionToken = `session-${suffix}`;
+  let projectId = "";
+
+  try {
+    const user = await prisma.user.create({
+      data: {
         username,
+        passwordHash,
+        role: UserRole.USER,
+        status: UserStatus.ACTIVE,
+        forcePasswordChange: false,
       },
     });
+    const project = await prisma.project.create({
+      data: {
+        ownerId: user.id,
+        title: `Script Project ${suffix}`,
+        idea: "Existing project idea",
+      },
+    });
+    projectId = project.id;
+    await prisma.session.create({
+      data: {
+        userId: user.id,
+        tokenHash: createHmac(
+          "sha256",
+          process.env.SESSION_SECRET ?? "12345678901234567890123456789012",
+        )
+          .update(sessionToken)
+          .digest("hex"),
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+        ipAddress: "127.0.0.1",
+        userAgent: "playwright",
+      },
+    });
+
+    await context.addCookies([
+      {
+        name: "session",
+        value: sessionToken,
+        domain: "127.0.0.1",
+        path: "/",
+        httpOnly: true,
+        sameSite: "Lax",
+      },
+    ]);
+
+    await page.route("**/api/script/sessions", async (route) => {
+      await route.fulfill({
+        status: 201,
+        contentType: "text/event-stream; charset=utf-8",
+        body: [
+          'event: session\n',
+          'data: {"sessionId":"session-e2e-2"}\n\n',
+          'event: question\n',
+          'data: {"delta":"Who is the hero?"}\n\n',
+          'event: done\n',
+          'data: {"questionText":"Who is the hero?"}\n\n',
+        ].join(""),
+      });
+    });
+    await page.route("**/api/script/sessions/session-e2e-2/finalize", async (route) => {
+      await route.fulfill({
+        status: 202,
+        contentType: "application/json; charset=utf-8",
+        body: JSON.stringify({
+          taskId: "task-e2e-2",
+        }),
+      });
+    });
+    await page.route("**/api/tasks/task-e2e-2", async (route) => {
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json; charset=utf-8",
+        body: JSON.stringify({
+          error: "Task polling exploded",
+        }),
+      });
+    });
+
+    await page.goto(`http://127.0.0.1:3000/projects/${projectId}/script`);
+
+    await page.getByLabel("Script idea input").fill("A courier uncovers a black-market memory trade.");
+    await page.getByRole("button", { name: "Start script session" }).click();
+    await expect(page.getByText("Who is the hero?")).toBeVisible();
+
+    await page.getByRole("button", { name: "Finalize script" }).click();
+    await expect(page.getByText("Failed to fetch task: 500")).toBeVisible();
+  } finally {
     await prisma.$disconnect();
   }
 });

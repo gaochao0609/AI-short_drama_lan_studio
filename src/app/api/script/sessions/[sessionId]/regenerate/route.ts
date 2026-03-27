@@ -1,9 +1,6 @@
 import { requireUser } from "@/lib/auth/guards";
 import { createSseResponse, streamTextAsSse } from "@/lib/streaming/sse";
-import {
-  generateScriptQuestion,
-  regenerateCurrentQuestion,
-} from "@/lib/services/script-sessions";
+import { regenerateCurrentQuestion } from "@/lib/services/script-sessions";
 import { toErrorResponse } from "@/lib/services/errors";
 
 type SessionRouteContext = {
@@ -20,13 +17,7 @@ export async function POST(_request: Request, context: SessionRouteContext) {
     const user = await requireUser();
     const sessionId = await readSessionId(context);
 
-    await regenerateCurrentQuestion(sessionId, user.userId);
-
-    const questionStream = await generateScriptQuestion({
-      sessionId,
-      userId: user.userId,
-      mode: "regenerate",
-    });
+    const questionStream = await regenerateCurrentQuestion(sessionId, user.userId);
 
     return createSseResponse(
       streamTextAsSse({

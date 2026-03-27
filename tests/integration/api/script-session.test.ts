@@ -81,7 +81,77 @@ function createTextStream(...chunks: string[]) {
   });
 }
 
+function createErroringTextStream(...chunks: string[]) {
+  const encoder = new TextEncoder();
+
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) {
+        controller.enqueue(encoder.encode(chunk));
+      }
+
+      controller.error(new Error("stream interrupted"));
+    },
+  });
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+
+  return {
+    promise,
+    resolve,
+    reject,
+  };
+}
+
 describe("script session api", () => {
+  it("does not persist a new session when the first question generation fails", async () => {
+    streamProxyModelMock.mockRejectedValueOnce(new Error("proxy unavailable"));
+
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      await withApiTestEnv(databaseUrl, async () => {
+        const user = await createActiveUser(prisma, "script-session-start-fail");
+        const session = await insertSessionForUser(prisma, user.id);
+        const project = await createProjectWithProvider(prisma, user.id, "start-fail");
+        const { POST } = await loadRouteModule<{
+          POST: (request: Request) => Promise<Response>;
+        }>("src/app/api/script/sessions/route.ts", {
+          sessionToken: session.token,
+        });
+
+        const response = await POST(
+          jsonRequest(
+            "http://localhost/api/script/sessions",
+            {
+              projectId: project.id,
+              idea: "A city forgets the same hour every night.",
+            },
+            { method: "POST" },
+          ),
+        );
+
+        expect(response.status).toBe(500);
+        await expect(response.json()).resolves.toEqual({
+          error: "Internal server error",
+        });
+        await expect(
+          prisma.scriptSession.findMany({
+            where: {
+              projectId: project.id,
+              creatorId: user.id,
+            },
+          }),
+        ).resolves.toHaveLength(0);
+      });
+    });
+  });
+
   it("creates a session, returns SSE, and persists the first streamed question", async () => {
     streamProxyModelMock.mockResolvedValueOnce(
       createTextStream("Who is your main character", " and what do they want?"),
@@ -111,6 +181,26 @@ describe("script session api", () => {
 
         expect(response.status).toBe(201);
         expect(response.headers.get("content-type")).toContain("text/event-stream");
+        const startedSessionId = streamProxyModelMock.mock.calls[0]?.[0]?.options?.sessionId;
+        expect(typeof startedSessionId).toBe("string");
+        await expect(
+          prisma.scriptSession.findUnique({
+            where: {
+              id: startedSessionId,
+            },
+          }),
+        ).resolves.toEqual(
+          expect.objectContaining({
+            id: startedSessionId,
+            projectId: project.id,
+            creatorId: user.id,
+            idea: "A courier discovers a citywide memory blackout.",
+            status: ScriptSessionStatus.ACTIVE,
+            completedRounds: 0,
+            currentQuestion: null,
+            qaRecordsJson: [],
+          }),
+        );
         await expect(response.text()).resolves.toContain("Who is your main character and what do they want?");
         expect(enqueueTaskMock).not.toHaveBeenCalled();
         expect(streamProxyModelMock).toHaveBeenCalledWith(
@@ -140,6 +230,48 @@ describe("script session api", () => {
             qaRecordsJson: [],
           }),
         );
+      });
+    });
+  });
+
+  it("deletes a newly created session if the first-question stream fails before completion", async () => {
+    streamProxyModelMock.mockResolvedValueOnce(
+      createErroringTextStream("Who is your main character"),
+    );
+
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      await withApiTestEnv(databaseUrl, async () => {
+        const user = await createActiveUser(prisma, "script-session-stream-fail");
+        const session = await insertSessionForUser(prisma, user.id);
+        const project = await createProjectWithProvider(prisma, user.id, "stream-fail");
+        const { POST } = await loadRouteModule<{
+          POST: (request: Request) => Promise<Response>;
+        }>("src/app/api/script/sessions/route.ts", {
+          sessionToken: session.token,
+        });
+
+        const response = await POST(
+          jsonRequest(
+            "http://localhost/api/script/sessions",
+            {
+              projectId: project.id,
+              idea: "A courier discovers a citywide memory blackout.",
+            },
+            { method: "POST" },
+          ),
+        );
+
+        expect(response.status).toBe(201);
+        const startedSessionId = streamProxyModelMock.mock.calls[0]?.[0]?.options?.sessionId;
+        expect(typeof startedSessionId).toBe("string");
+        await expect(response.text()).resolves.toContain("event: error");
+        await expect(
+          prisma.scriptSession.findUnique({
+            where: {
+              id: startedSessionId,
+            },
+          }),
+        ).resolves.toBeNull();
       });
     });
   });
@@ -185,6 +317,24 @@ describe("script session api", () => {
 
         expect(response.status).toBe(200);
         expect(response.headers.get("content-type")).toContain("text/event-stream");
+        await expect(
+          prisma.scriptSession.findUniqueOrThrow({
+            where: { id: scriptSession.id },
+          }),
+        ).resolves.toEqual(
+          expect.objectContaining({
+            id: scriptSession.id,
+            completedRounds: 1,
+            currentQuestion: null,
+            qaRecordsJson: [
+              {
+                round: 1,
+                question: "What kind of world is this story set in?",
+                answer: "A near-future river city built on stacked flood barriers.",
+              },
+            ],
+          }),
+        );
         await expect(response.text()).resolves.toContain("What is the hero's deepest fear?");
         expect(enqueueTaskMock).not.toHaveBeenCalled();
         expect(streamProxyModelMock).toHaveBeenCalledWith(
@@ -208,6 +358,331 @@ describe("script session api", () => {
                 round: 1,
                 question: "What kind of world is this story set in?",
                 answer: "A near-future river city built on stacked flood barriers.",
+              },
+            ],
+          }),
+        );
+      });
+    });
+  });
+
+  it("stages the answer before the next-question stream completes and blocks stale writes", async () => {
+    const nextQuestionRelease = createDeferred<void>();
+    const encoder = new TextEncoder();
+    streamProxyModelMock.mockResolvedValueOnce(
+      new ReadableStream<Uint8Array>({
+        async start(controller) {
+          await nextQuestionRelease.promise;
+          controller.enqueue(encoder.encode("What is the hero's deepest fear?"));
+          controller.close();
+        },
+      }),
+    );
+
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      await withApiTestEnv(databaseUrl, async () => {
+        const user = await createActiveUser(prisma, "script-session-message-staged");
+        const session = await insertSessionForUser(prisma, user.id);
+        const project = await createProjectWithProvider(prisma, user.id, "message-staged");
+        const scriptSession = await prisma.scriptSession.create({
+          data: {
+            projectId: project.id,
+            creatorId: user.id,
+            idea: "Initial idea",
+            currentQuestion: "What kind of world is this story set in?",
+            qaRecordsJson: [],
+          },
+        });
+        const { POST: answerPost } = await loadRouteModule<{
+          POST: (
+            request: Request,
+            context: { params: Promise<{ sessionId: string }> | { sessionId: string } },
+          ) => Promise<Response>;
+        }>("src/app/api/script/sessions/[sessionId]/message/route.ts", {
+          sessionToken: session.token,
+        });
+        const { POST: regeneratePost } = await loadRouteModule<{
+          POST: (
+            request: Request,
+            context: { params: Promise<{ sessionId: string }> | { sessionId: string } },
+          ) => Promise<Response>;
+        }>("src/app/api/script/sessions/[sessionId]/regenerate/route.ts", {
+          sessionToken: session.token,
+        });
+
+        const response = await answerPost(
+          jsonRequest(
+            `http://localhost/api/script/sessions/${scriptSession.id}/message`,
+            {
+              answer: "A near-future river city built on stacked flood barriers.",
+            },
+            { method: "POST" },
+          ),
+          { params: { sessionId: scriptSession.id } },
+        );
+
+        expect(response.status).toBe(200);
+        await expect(
+          prisma.scriptSession.findUniqueOrThrow({
+            where: { id: scriptSession.id },
+          }),
+        ).resolves.toEqual(
+          expect.objectContaining({
+            id: scriptSession.id,
+            completedRounds: 1,
+            currentQuestion: null,
+            qaRecordsJson: [
+              {
+                round: 1,
+                question: "What kind of world is this story set in?",
+                answer: "A near-future river city built on stacked flood barriers.",
+              },
+            ],
+          }),
+        );
+
+        const retryAnswerResponse = await answerPost(
+          jsonRequest(
+            `http://localhost/api/script/sessions/${scriptSession.id}/message`,
+            {
+              answer: "A vertical port city where the levees are homes.",
+            },
+            { method: "POST" },
+          ),
+          { params: { sessionId: scriptSession.id } },
+        );
+        const regenerateResponse = await regeneratePost(
+          jsonRequest(
+            `http://localhost/api/script/sessions/${scriptSession.id}/regenerate`,
+            undefined,
+            { method: "POST" },
+          ),
+          { params: { sessionId: scriptSession.id } },
+        );
+
+        expect(retryAnswerResponse.status).toBe(409);
+        await expect(retryAnswerResponse.json()).resolves.toEqual({
+          error: "Script session does not have a pending question",
+        });
+        expect(regenerateResponse.status).toBe(409);
+        await expect(regenerateResponse.json()).resolves.toEqual({
+          error: "Script session does not have a current question",
+        });
+        expect(streamProxyModelMock).toHaveBeenCalledTimes(1);
+
+        nextQuestionRelease.resolve();
+        await expect(response.text()).resolves.toContain("What is the hero's deepest fear?");
+        await expect(
+          prisma.scriptSession.findUniqueOrThrow({
+            where: { id: scriptSession.id },
+          }),
+        ).resolves.toEqual(
+          expect.objectContaining({
+            id: scriptSession.id,
+            completedRounds: 1,
+            currentQuestion: "What is the hero's deepest fear?",
+            qaRecordsJson: [
+              {
+                round: 1,
+                question: "What kind of world is this story set in?",
+                answer: "A near-future river city built on stacked flood barriers.",
+              },
+            ],
+          }),
+        );
+      });
+    });
+  });
+
+  it("restores the previous question when next-question generation fails", async () => {
+    streamProxyModelMock.mockRejectedValueOnce(new Error("proxy unavailable"));
+
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      await withApiTestEnv(databaseUrl, async () => {
+        const user = await createActiveUser(prisma, "script-session-message-fail");
+        const session = await insertSessionForUser(prisma, user.id);
+        const project = await createProjectWithProvider(prisma, user.id, "message-fail");
+        const scriptSession = await prisma.scriptSession.create({
+          data: {
+            projectId: project.id,
+            creatorId: user.id,
+            idea: "Initial idea",
+            currentQuestion: "What kind of world is this story set in?",
+            qaRecordsJson: [],
+          },
+        });
+        const { POST } = await loadRouteModule<{
+          POST: (
+            request: Request,
+            context: { params: Promise<{ sessionId: string }> | { sessionId: string } },
+          ) => Promise<Response>;
+        }>("src/app/api/script/sessions/[sessionId]/message/route.ts", {
+          sessionToken: session.token,
+        });
+
+        const response = await POST(
+          jsonRequest(
+            `http://localhost/api/script/sessions/${scriptSession.id}/message`,
+            {
+              answer: "A near-future river city built on stacked flood barriers.",
+            },
+            { method: "POST" },
+          ),
+          { params: { sessionId: scriptSession.id } },
+        );
+
+        expect(response.status).toBe(500);
+        await expect(response.json()).resolves.toEqual({
+          error: "Internal server error",
+        });
+        await expect(
+          prisma.scriptSession.findUniqueOrThrow({
+            where: { id: scriptSession.id },
+          }),
+        ).resolves.toEqual(
+          expect.objectContaining({
+            id: scriptSession.id,
+            completedRounds: 0,
+            currentQuestion: "What kind of world is this story set in?",
+            qaRecordsJson: [],
+          }),
+        );
+      });
+    });
+  });
+
+  it("restores the previous question when next-question SSE fails before completion", async () => {
+    streamProxyModelMock.mockResolvedValueOnce(
+      createErroringTextStream("What is the hero"),
+    );
+
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      await withApiTestEnv(databaseUrl, async () => {
+        const user = await createActiveUser(prisma, "script-session-message-stream-fail");
+        const session = await insertSessionForUser(prisma, user.id);
+        const project = await createProjectWithProvider(prisma, user.id, "message-stream-fail");
+        const scriptSession = await prisma.scriptSession.create({
+          data: {
+            projectId: project.id,
+            creatorId: user.id,
+            idea: "Initial idea",
+            currentQuestion: "What kind of world is this story set in?",
+            qaRecordsJson: [],
+          },
+        });
+        const { POST } = await loadRouteModule<{
+          POST: (
+            request: Request,
+            context: { params: Promise<{ sessionId: string }> | { sessionId: string } },
+          ) => Promise<Response>;
+        }>("src/app/api/script/sessions/[sessionId]/message/route.ts", {
+          sessionToken: session.token,
+        });
+
+        const response = await POST(
+          jsonRequest(
+            `http://localhost/api/script/sessions/${scriptSession.id}/message`,
+            {
+              answer: "A near-future river city built on stacked flood barriers.",
+            },
+            { method: "POST" },
+          ),
+          { params: { sessionId: scriptSession.id } },
+        );
+
+        expect(response.status).toBe(200);
+        await expect(response.text()).resolves.toContain("event: error");
+        await expect(
+          prisma.scriptSession.findUniqueOrThrow({
+            where: { id: scriptSession.id },
+          }),
+        ).resolves.toEqual(
+          expect.objectContaining({
+            id: scriptSession.id,
+            completedRounds: 0,
+            currentQuestion: "What kind of world is this story set in?",
+            qaRecordsJson: [],
+          }),
+        );
+      });
+    });
+  });
+
+  it("allows retrying the answer after next-question generation fails", async () => {
+    streamProxyModelMock
+      .mockRejectedValueOnce(new Error("proxy unavailable"))
+      .mockResolvedValueOnce(
+        createTextStream("What secret does the city", " hide underwater?"),
+      );
+
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      await withApiTestEnv(databaseUrl, async () => {
+        const user = await createActiveUser(prisma, "script-session-message-retry");
+        const session = await insertSessionForUser(prisma, user.id);
+        const project = await createProjectWithProvider(prisma, user.id, "message-retry");
+        const scriptSession = await prisma.scriptSession.create({
+          data: {
+            projectId: project.id,
+            creatorId: user.id,
+            idea: "Initial idea",
+            currentQuestion: "What kind of world is this story set in?",
+            qaRecordsJson: [],
+          },
+        });
+        const { POST } = await loadRouteModule<{
+          POST: (
+            request: Request,
+            context: { params: Promise<{ sessionId: string }> | { sessionId: string } },
+          ) => Promise<Response>;
+        }>("src/app/api/script/sessions/[sessionId]/message/route.ts", {
+          sessionToken: session.token,
+        });
+
+        const firstResponse = await POST(
+          jsonRequest(
+            `http://localhost/api/script/sessions/${scriptSession.id}/message`,
+            {
+              answer: "A near-future river city built on stacked flood barriers.",
+            },
+            { method: "POST" },
+          ),
+          { params: { sessionId: scriptSession.id } },
+        );
+
+        expect(firstResponse.status).toBe(500);
+        await expect(firstResponse.json()).resolves.toEqual({
+          error: "Internal server error",
+        });
+
+        const secondResponse = await POST(
+          jsonRequest(
+            `http://localhost/api/script/sessions/${scriptSession.id}/message`,
+            {
+              answer: "A vertical port city where the levees are homes.",
+            },
+            { method: "POST" },
+          ),
+          { params: { sessionId: scriptSession.id } },
+        );
+
+        expect(secondResponse.status).toBe(200);
+        await expect(secondResponse.text()).resolves.toContain(
+          "What secret does the city hide underwater?",
+        );
+        await expect(
+          prisma.scriptSession.findUniqueOrThrow({
+            where: { id: scriptSession.id },
+          }),
+        ).resolves.toEqual(
+          expect.objectContaining({
+            id: scriptSession.id,
+            completedRounds: 1,
+            currentQuestion: "What secret does the city hide underwater?",
+            qaRecordsJson: [
+              {
+                round: 1,
+                question: "What kind of world is this story set in?",
+                answer: "A vertical port city where the levees are homes.",
               },
             ],
           }),
@@ -287,6 +762,155 @@ describe("script session api", () => {
                 answer: "A flooded megacity.",
               },
             ],
+          }),
+        );
+      });
+    });
+  });
+
+  it("regenerateCurrentQuestion returns the generation stream contract and updates the question on completion", async () => {
+    streamProxyModelMock.mockResolvedValueOnce(
+      createTextStream("What does the antagonist hide", " from everyone else?"),
+    );
+
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      await withApiTestEnv(databaseUrl, async () => {
+        const user = await createActiveUser(prisma, "script-session-regenerate-service");
+        const project = await createProjectWithProvider(prisma, user.id, "regenerate-service");
+        const scriptSession = await prisma.scriptSession.create({
+          data: {
+            projectId: project.id,
+            creatorId: user.id,
+            idea: "Initial idea",
+            completedRounds: 1,
+            currentQuestion: "What secret has the antagonist buried?",
+            qaRecordsJson: [
+              {
+                round: 1,
+                question: "What kind of world is this story set in?",
+                answer: "A flooded megacity.",
+              },
+            ],
+          },
+        });
+        const { regenerateCurrentQuestion } = await loadRouteModule<
+          typeof import("../../../src/lib/services/script-sessions")
+        >("src/lib/services/script-sessions.ts");
+
+        const generation = await regenerateCurrentQuestion(
+          scriptSession.id,
+          user.id,
+        ) as unknown as {
+          sessionId: string;
+          traceId: string;
+          proxyStream: ReadableStream<Uint8Array>;
+          persistGeneratedQuestion: (questionText: string) => Promise<void>;
+        };
+
+        expect(generation.sessionId).toBe(scriptSession.id);
+        expect(generation.traceId).toEqual(expect.any(String));
+        expect(generation.proxyStream).toBeInstanceOf(ReadableStream);
+        expect(generation.persistGeneratedQuestion).toEqual(expect.any(Function));
+        expect(streamProxyModelMock).toHaveBeenCalledWith(
+          expect.objectContaining({
+            taskType: "script_question_generate",
+            traceId: generation.traceId,
+            options: expect.objectContaining({
+              sessionId: scriptSession.id,
+              projectId: project.id,
+              mode: "regenerate",
+            }),
+          }),
+        );
+
+        await generation.persistGeneratedQuestion(
+          "What does the antagonist hide from everyone else?",
+        );
+
+        await expect(
+          prisma.scriptSession.findUniqueOrThrow({
+            where: { id: scriptSession.id },
+          }),
+        ).resolves.toEqual(
+          expect.objectContaining({
+            id: scriptSession.id,
+            completedRounds: 1,
+            currentQuestion: "What does the antagonist hide from everyone else?",
+            qaRecordsJson: [
+              {
+                round: 1,
+                question: "What kind of world is this story set in?",
+                answer: "A flooded megacity.",
+              },
+            ],
+          }),
+        );
+      });
+    });
+  });
+
+  it("does not overwrite a regenerated question if the session changes before completion", async () => {
+    streamProxyModelMock.mockResolvedValueOnce(
+      createTextStream("What does the antagonist hide", " from everyone else?"),
+    );
+
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      await withApiTestEnv(databaseUrl, async () => {
+        const user = await createActiveUser(prisma, "script-session-regenerate-cas");
+        const project = await createProjectWithProvider(prisma, user.id, "regenerate-cas");
+        const scriptSession = await prisma.scriptSession.create({
+          data: {
+            projectId: project.id,
+            creatorId: user.id,
+            idea: "Initial idea",
+            completedRounds: 1,
+            currentQuestion: "What secret has the antagonist buried?",
+            qaRecordsJson: [
+              {
+                round: 1,
+                question: "What kind of world is this story set in?",
+                answer: "A flooded megacity.",
+              },
+            ],
+          },
+        });
+        const { regenerateCurrentQuestion } = await loadRouteModule<
+          typeof import("../../../src/lib/services/script-sessions")
+        >("src/lib/services/script-sessions.ts");
+
+        const generation = await regenerateCurrentQuestion(
+          scriptSession.id,
+          user.id,
+        ) as unknown as {
+          persistGeneratedQuestion: (questionText: string) => Promise<void>;
+        };
+
+        await prisma.scriptSession.update({
+          where: {
+            id: scriptSession.id,
+          },
+          data: {
+            currentQuestion: "What truth is the hero refusing to face?",
+          },
+        });
+
+        await expect(
+          generation.persistGeneratedQuestion(
+            "What does the antagonist hide from everyone else?",
+          ),
+        ).rejects.toMatchObject({
+          status: 409,
+          message: "Script session changed before the regenerated question could be saved",
+        });
+
+        await expect(
+          prisma.scriptSession.findUniqueOrThrow({
+            where: { id: scriptSession.id },
+          }),
+        ).resolves.toEqual(
+          expect.objectContaining({
+            id: scriptSession.id,
+            currentQuestion: "What truth is the hero refusing to face?",
           }),
         );
       });
@@ -379,6 +1003,298 @@ describe("script session api", () => {
             },
           }),
         );
+        await expect(
+          prisma.scriptSession.findUniqueOrThrow({
+            where: { id: scriptSession.id },
+          }),
+        ).resolves.toEqual(
+          expect.objectContaining({
+            id: scriptSession.id,
+            status: "FINALIZING",
+          }),
+        );
+      });
+    });
+  });
+
+  it("freezes the session after finalize accepts and blocks answer and regenerate requests", async () => {
+    enqueueTaskMock.mockResolvedValueOnce({
+      jobId: "job-script-finalize-freeze",
+      queueName: "script-queue",
+    });
+
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      await withApiTestEnv(databaseUrl, async () => {
+        const user = await createActiveUser(prisma, "script-session-finalize-freeze");
+        const session = await insertSessionForUser(prisma, user.id);
+        const project = await createProjectWithProvider(prisma, user.id, "finalize-freeze");
+        const scriptSession = await prisma.scriptSession.create({
+          data: {
+            projectId: project.id,
+            creatorId: user.id,
+            idea: "Initial idea",
+            completedRounds: 2,
+            currentQuestion: "What does the ending cost the hero?",
+            qaRecordsJson: [
+              {
+                round: 1,
+                question: "Who is the hero?",
+                answer: "A courier.",
+              },
+            ],
+          },
+        });
+        const { POST: finalizePost } = await loadRouteModule<{
+          POST: (
+            request: Request,
+            context: { params: Promise<{ sessionId: string }> | { sessionId: string } },
+          ) => Promise<Response>;
+        }>("src/app/api/script/sessions/[sessionId]/finalize/route.ts", {
+          sessionToken: session.token,
+        });
+        const { POST: answerPost } = await loadRouteModule<{
+          POST: (
+            request: Request,
+            context: { params: Promise<{ sessionId: string }> | { sessionId: string } },
+          ) => Promise<Response>;
+        }>("src/app/api/script/sessions/[sessionId]/message/route.ts", {
+          sessionToken: session.token,
+        });
+        const { POST: regeneratePost } = await loadRouteModule<{
+          POST: (
+            request: Request,
+            context: { params: Promise<{ sessionId: string }> | { sessionId: string } },
+          ) => Promise<Response>;
+        }>("src/app/api/script/sessions/[sessionId]/regenerate/route.ts", {
+          sessionToken: session.token,
+        });
+
+        const finalizeResponse = await finalizePost(
+          jsonRequest(
+            `http://localhost/api/script/sessions/${scriptSession.id}/finalize`,
+            undefined,
+            { method: "POST" },
+          ),
+          { params: { sessionId: scriptSession.id } },
+        );
+
+        expect(finalizeResponse.status).toBe(202);
+        await expect(
+          prisma.scriptSession.findUniqueOrThrow({
+            where: { id: scriptSession.id },
+          }),
+        ).resolves.toEqual(
+          expect.objectContaining({
+            id: scriptSession.id,
+            status: "FINALIZING",
+          }),
+        );
+
+        const answerResponse = await answerPost(
+          jsonRequest(
+            `http://localhost/api/script/sessions/${scriptSession.id}/message`,
+            {
+              answer: "One more answer.",
+            },
+            { method: "POST" },
+          ),
+          { params: { sessionId: scriptSession.id } },
+        );
+        const regenerateResponse = await regeneratePost(
+          jsonRequest(
+            `http://localhost/api/script/sessions/${scriptSession.id}/regenerate`,
+            undefined,
+            { method: "POST" },
+          ),
+          { params: { sessionId: scriptSession.id } },
+        );
+
+        expect(answerResponse.status).toBe(409);
+        await expect(answerResponse.json()).resolves.toEqual({
+          error: "Script session is finalizing",
+        });
+        expect(regenerateResponse.status).toBe(409);
+        await expect(regenerateResponse.json()).resolves.toEqual({
+          error: "Script session is finalizing",
+        });
+        expect(streamProxyModelMock).not.toHaveBeenCalled();
+      });
+    });
+  });
+
+  it("rejects a duplicate finalize request after the first request freezes the session", async () => {
+    const enqueueStarted = createDeferred<void>();
+    const enqueueRelease = createDeferred<{
+      jobId: string;
+      queueName: string;
+    }>();
+    enqueueTaskMock.mockImplementationOnce(async () => {
+      enqueueStarted.resolve();
+      return enqueueRelease.promise;
+    });
+
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      await withApiTestEnv(databaseUrl, async () => {
+        const user = await createActiveUser(prisma, "script-session-finalize-dup");
+        const project = await createProjectWithProvider(prisma, user.id, "finalize-dup");
+        const scriptSession = await prisma.scriptSession.create({
+          data: {
+            projectId: project.id,
+            creatorId: user.id,
+            idea: "Initial idea",
+            completedRounds: 2,
+            currentQuestion: "What does the ending cost the hero?",
+            qaRecordsJson: [
+              {
+                round: 1,
+                question: "Who is the hero?",
+                answer: "A courier.",
+              },
+            ],
+          },
+        });
+        const { finalizeScriptSession } = await loadRouteModule<
+          typeof import("../../../src/lib/services/script-sessions")
+        >("src/lib/services/script-sessions.ts");
+
+        const firstFinalize = finalizeScriptSession(scriptSession.id, user.id);
+        await enqueueStarted.promise;
+
+        await expect(
+          finalizeScriptSession(scriptSession.id, user.id),
+        ).rejects.toMatchObject({
+          status: 409,
+          message: "Script finalize task is already in progress",
+        });
+
+        enqueueRelease.resolve({
+          jobId: "job-script-finalize",
+          queueName: "script-queue",
+        });
+
+        await expect(firstFinalize).resolves.toEqual({
+          taskId: expect.any(String),
+        });
+        expect(enqueueTaskMock).toHaveBeenCalledTimes(1);
+        await expect(
+          prisma.task.count({
+            where: {
+              projectId: project.id,
+              createdById: user.id,
+              type: TaskType.SCRIPT_FINALIZE,
+            },
+          }),
+        ).resolves.toBe(1);
+      });
+    });
+  });
+
+  it("restores the session to ACTIVE and deletes the queued task when finalize enqueueing fails", async () => {
+    enqueueTaskMock.mockRejectedValueOnce(new Error("queue unavailable"));
+
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      await withApiTestEnv(databaseUrl, async () => {
+        const user = await createActiveUser(prisma, "script-session-finalize-enqueue-fail");
+        const project = await createProjectWithProvider(prisma, user.id, "finalize-enqueue-fail");
+        const scriptSession = await prisma.scriptSession.create({
+          data: {
+            projectId: project.id,
+            creatorId: user.id,
+            idea: "Initial idea",
+            completedRounds: 2,
+            currentQuestion: "What does the ending cost the hero?",
+            qaRecordsJson: [
+              {
+                round: 1,
+                question: "Who is the hero?",
+                answer: "A courier.",
+              },
+            ],
+          },
+        });
+        const { finalizeScriptSession } = await loadRouteModule<
+          typeof import("../../../src/lib/services/script-sessions")
+        >("src/lib/services/script-sessions.ts");
+
+        await expect(
+          finalizeScriptSession(scriptSession.id, user.id),
+        ).rejects.toThrow("queue unavailable");
+
+        await expect(
+          prisma.scriptSession.findUniqueOrThrow({
+            where: { id: scriptSession.id },
+          }),
+        ).resolves.toEqual(
+          expect.objectContaining({
+            id: scriptSession.id,
+            status: ScriptSessionStatus.ACTIVE,
+          }),
+        );
+        await expect(
+          prisma.task.count({
+            where: {
+            projectId: project.id,
+            createdById: user.id,
+            type: TaskType.SCRIPT_FINALIZE,
+          },
+        }),
+        ).resolves.toBe(0);
+      });
+    });
+  });
+
+  it("does not accumulate orphaned finalize tasks when retrying after an enqueue failure", async () => {
+    enqueueTaskMock
+      .mockRejectedValueOnce(new Error("queue unavailable"))
+      .mockResolvedValueOnce({
+        jobId: "job-script-finalize-retry",
+        queueName: "script-queue",
+      });
+
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      await withApiTestEnv(databaseUrl, async () => {
+        const user = await createActiveUser(prisma, "script-session-finalize-retry-clean");
+        const project = await createProjectWithProvider(prisma, user.id, "finalize-retry-clean");
+        const scriptSession = await prisma.scriptSession.create({
+          data: {
+            projectId: project.id,
+            creatorId: user.id,
+            idea: "Initial idea",
+            completedRounds: 2,
+            currentQuestion: "What does the ending cost the hero?",
+            qaRecordsJson: [
+              {
+                round: 1,
+                question: "Who is the hero?",
+                answer: "A courier.",
+              },
+            ],
+          },
+        });
+        const { finalizeScriptSession } = await loadRouteModule<
+          typeof import("../../../src/lib/services/script-sessions")
+        >("src/lib/services/script-sessions.ts");
+
+        await expect(
+          finalizeScriptSession(scriptSession.id, user.id),
+        ).rejects.toThrow("queue unavailable");
+
+        await expect(
+          finalizeScriptSession(scriptSession.id, user.id),
+        ).resolves.toEqual({
+          taskId: expect.any(String),
+        });
+
+        expect(enqueueTaskMock).toHaveBeenCalledTimes(2);
+        await expect(
+          prisma.task.count({
+            where: {
+              projectId: project.id,
+              createdById: user.id,
+              type: TaskType.SCRIPT_FINALIZE,
+            },
+          }),
+        ).resolves.toBe(1);
       });
     });
   });

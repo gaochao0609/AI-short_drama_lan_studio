@@ -1,7 +1,7 @@
 import { createJsonObjectSchema, JsonTrimmedStringSchema, parseJsonBody } from "@/lib/http/validation";
 import { createSseResponse, streamTextAsSse } from "@/lib/streaming/sse";
 import { requireUser } from "@/lib/auth/guards";
-import { generateScriptQuestion, startScriptSession } from "@/lib/services/script-sessions";
+import { startScriptSession } from "@/lib/services/script-sessions";
 import { toErrorResponse } from "@/lib/services/errors";
 
 const StartScriptSessionBodySchema = createJsonObjectSchema({
@@ -15,16 +15,11 @@ export async function POST(request: Request) {
   try {
     const user = await requireUser();
     const body = await parseJsonBody(request, StartScriptSessionBodySchema);
-    const { sessionId } = await startScriptSession(
+    const questionStream = await startScriptSession(
       body.projectId,
       body.idea,
       user.userId,
     );
-    const questionStream = await generateScriptQuestion({
-      sessionId,
-      userId: user.userId,
-      mode: "start",
-    });
 
     return createSseResponse(
       streamTextAsSse({
@@ -33,11 +28,12 @@ export async function POST(request: Request) {
           {
             event: "session",
             data: {
-              sessionId,
+              sessionId: questionStream.sessionId,
             },
           },
         ],
         onComplete: questionStream.persistGeneratedQuestion,
+        onError: questionStream.handleStreamingError,
       }),
       {
         status: 201,
