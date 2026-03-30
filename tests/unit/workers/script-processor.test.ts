@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => {
   const findFirst = vi.fn();
   const scriptSessionUpdate = vi.fn();
   const taskUpdate = vi.fn();
+  const taskFindUnique = vi.fn();
   const taskStepUpdate = vi.fn();
   const prisma = {
     scriptSession: {
@@ -23,6 +24,7 @@ const mocks = vi.hoisted(() => {
     },
     task: {
       update: taskUpdate,
+      findUnique: taskFindUnique,
     },
     taskStep: {
       update: taskStepUpdate,
@@ -68,6 +70,7 @@ describe("processScriptFinalizeJob", () => {
     mocks.prisma.scriptVersion.create.mockReset();
     mocks.prisma.scriptVersion.findFirst.mockReset();
     mocks.prisma.task.update.mockReset();
+    mocks.prisma.task.findUnique.mockReset();
     mocks.prisma.taskStep.update.mockReset();
   });
 
@@ -419,6 +422,91 @@ describe("processScriptFinalizeJob", () => {
 
     await expect(processScriptFinalizeJob(job)).rejects.toThrow("proxy unavailable");
 
+    expect(mocks.prisma.scriptSession.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: "session-1",
+        }),
+        data: {
+          status: "ACTIVE",
+        },
+      }),
+    );
+    expect(mocks.prisma.task.update).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: {
+          id: "task-1",
+        },
+        data: expect.objectContaining({
+          status: TaskStatus.FAILED,
+          errorText: "proxy unavailable",
+        }),
+      }),
+    );
+  });
+
+  it("restores the session to ACTIVE when a finalize job is canceled mid-flight", async () => {
+    const cancelRequestedAt = new Date("2026-03-30T12:00:00.000Z");
+
+    mocks.prisma.task.findUnique
+      .mockResolvedValueOnce({
+        id: "task-1",
+        cancelRequestedAt: null,
+      })
+      .mockResolvedValueOnce({
+        id: "task-1",
+        cancelRequestedAt,
+      });
+    mocks.prisma.scriptSession.updateMany.mockResolvedValue({
+      count: 1,
+    });
+    mocks.prisma.scriptSession.findUniqueOrThrow.mockResolvedValue({
+      id: "session-1",
+      projectId: "project-1",
+      creatorId: "user-1",
+      idea: "A courier tries to restore stolen memories.",
+      status: "FINALIZING",
+      qaRecordsJson: [],
+      finalScriptVersionId: null,
+      finalScriptVersion: null,
+      completedAt: null,
+    });
+    mocks.getDefaultModelSummary.mockResolvedValue({
+      providerKey: "script",
+      model: "gpt-4.1-mini",
+    });
+    mocks.callProxyModel.mockResolvedValue({
+      status: "ok",
+      textOutput: "INT. ARCHIVE - NIGHT\nThe courier opens the vault.",
+      rawResponse: {},
+    });
+    mocks.prisma.$transaction.mockImplementation(async (operations) =>
+      typeof operations === "function" ? operations(mocks.prisma) : operations,
+    );
+
+    const job = {
+      attemptsMade: 0,
+      opts: {
+        attempts: 3,
+      },
+      data: {
+        taskId: "task-1",
+        taskStepId: "step-1",
+        traceId: "trace-1",
+        payload: {
+          sessionId: "session-1",
+          traceId: "trace-1",
+        },
+      },
+    } as Parameters<typeof processScriptFinalizeJob>[0];
+
+    await expect(processScriptFinalizeJob(job)).resolves.toEqual({
+      ok: true,
+      traceId: "trace-1",
+      scriptVersionId: "",
+      body: "",
+    });
+
     expect(mocks.prisma.scriptSession.updateMany).toHaveBeenCalledWith({
       where: {
         id: "session-1",
@@ -434,8 +522,8 @@ describe("processScriptFinalizeJob", () => {
           id: "task-1",
         },
         data: expect.objectContaining({
-          status: TaskStatus.FAILED,
-          errorText: "proxy unavailable",
+          status: TaskStatus.CANCELED,
+          errorText: "Canceled by admin",
         }),
       }),
     );

@@ -6,7 +6,12 @@ type CancellableJobData = {
   taskStepId: string;
 };
 
-export async function cancelTaskIfRequested(jobData: CancellableJobData) {
+export async function cancelTaskIfRequested(
+  jobData: CancellableJobData,
+  input: {
+    onCanceled?: () => Promise<void>;
+  } = {},
+) {
   const task = await prisma.task.findUnique({
     where: {
       id: jobData.taskId,
@@ -45,6 +50,8 @@ export async function cancelTaskIfRequested(jobData: CancellableJobData) {
       },
     }),
   ]);
+
+  await input.onCanceled?.();
 
   return true;
 }

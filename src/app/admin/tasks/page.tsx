@@ -201,8 +201,11 @@ export default function AdminTasksPage() {
       <section style={panelStyle}>
         <div style={sectionHeaderStyle}>
           <div>
-            <h3 style={panelTitleStyle}>All Tasks</h3>
-            <p style={copyStyle}>Failed tasks appear first so retries and cancellations are easy to reach.</p>
+            <h3 style={panelTitleStyle}>Recent 100 tasks</h3>
+            <p style={copyStyle}>
+              Showing the newest 100 tasks, with failed jobs first so retries and cancellations are easy
+              to reach.
+            </p>
           </div>
           <button type="button" style={secondaryButtonStyle} onClick={() => void loadTasks()}>
             Refresh

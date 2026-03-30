@@ -154,7 +154,26 @@ async function removeEmptyDirectories(directoryPath: string, stopAtPath: string)
 }
 
 export async function getDiskSpaceStats(targetPath: string) {
-  const stats = await statfs(targetPath);
+  let candidatePath = path.resolve(targetPath);
+  const rootPath = path.parse(candidatePath).root;
+
+  while (candidatePath !== rootPath) {
+    const candidateStats = await stat(candidatePath).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") {
+        return null;
+      }
+
+      throw error;
+    });
+
+    if (candidateStats) {
+      break;
+    }
+
+    candidatePath = path.dirname(candidatePath);
+  }
+
+  const stats = await statfs(candidatePath);
   const blockSize = toNumber(stats.bsize);
   const totalBlocks = toNumber(stats.blocks);
   const freeBlocks = toNumber(stats.bavail);

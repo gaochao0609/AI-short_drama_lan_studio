@@ -214,6 +214,15 @@ function canRetryTask(status: TaskStatus) {
   return status === TaskStatus.FAILED || status === TaskStatus.CANCELED;
 }
 
+function isQueueRemoveRace(error: unknown) {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+  return message.includes("lock") || message.includes("locked") || message.includes("active");
+}
+
 export async function retryAdminTask(taskId: string) {
   const task = await prisma.task.findUnique({
     where: {
@@ -302,7 +311,28 @@ export async function cancelAdminTask(taskId: string) {
     const job = await queue.getJob(latestStep.id);
 
     if (job) {
-      await job.remove();
+      try {
+        await job.remove();
+      } catch (error) {
+        if (!isQueueRemoveRace(error)) {
+          throw error;
+        }
+
+        await prisma.task.update({
+          where: {
+            id: task.id,
+          },
+          data: {
+            cancelRequestedAt: now,
+          },
+        });
+
+        return {
+          taskId: task.id,
+          status: TaskStatus.QUEUED,
+          cancelRequestedAt: now,
+        };
+      }
     }
 
     await prisma.$transaction([
@@ -350,12 +380,12 @@ export async function cancelAdminTask(taskId: string) {
       });
     }
 
-    return {
-      taskId: task.id,
-      status: TaskStatus.RUNNING,
-      cancelRequestedAt,
-    };
-  }
+  return {
+    taskId: task.id,
+    status: TaskStatus.RUNNING,
+    cancelRequestedAt,
+  };
+}
 
   throw new ServiceError(409, "Only queued or running tasks can be canceled");
 }

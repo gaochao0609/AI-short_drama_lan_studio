@@ -233,6 +233,22 @@ function createCanceledResult(traceId: string): ScriptWorkerResult {
   };
 }
 
+async function restoreSessionToActiveAfterCancellation(sessionId: string | undefined) {
+  if (!sessionId) {
+    return;
+  }
+
+  await prisma.scriptSession.updateMany({
+    where: {
+      id: sessionId,
+      status: ScriptSessionStatus.FINALIZING,
+    },
+    data: {
+      status: ScriptSessionStatus.ACTIVE,
+    },
+  });
+}
+
 export async function processScriptFinalizeJob(
   job: Job<ScriptWorkerJobData, ScriptWorkerResult, string>,
 ): Promise<ScriptWorkerResult> {
@@ -245,7 +261,11 @@ export async function processScriptFinalizeJob(
       errorText: null,
     });
 
-    if (await cancelTaskIfRequested(job.data)) {
+    if (
+      await cancelTaskIfRequested(job.data, {
+        onCanceled: () => restoreSessionToActiveAfterCancellation(sessionId),
+      })
+    ) {
       return createCanceledResult(job.data.traceId);
     }
 
@@ -320,7 +340,11 @@ export async function processScriptFinalizeJob(
       },
     });
 
-    if (await cancelTaskIfRequested(job.data)) {
+    if (
+      await cancelTaskIfRequested(job.data, {
+        onCanceled: () => restoreSessionToActiveAfterCancellation(sessionId),
+      })
+    ) {
       return createCanceledResult(job.data.traceId);
     }
 

@@ -320,6 +320,7 @@ test("admin flow covers approval, task monitoring, retry, cancel, storage stats,
 
     await page.goto("http://127.0.0.1:3000/admin/tasks");
     await expect(page.getByRole("heading", { name: "Task Monitoring" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Recent 100 tasks" })).toBeVisible();
     const failedTaskCard = page.locator("article").filter({ hasText: failedTaskId }).first();
     await expect(failedTaskCard).toContainText("provider timeout");
     const retryResponsePromise = page.waitForResponse((response) => {

@@ -495,6 +495,149 @@ describe("admin tasks and storage api", () => {
     );
   });
 
+  it("falls back to cancel request mode when queued job removal loses a lock race", async () => {
+    await withTestDatabase(
+      async ({ databaseUrl, prisma }) => {
+        const storageRoot = await mkdtemp(path.join(os.tmpdir(), "lan-admin-cancel-race-storage-"));
+
+        try {
+          await withAdminQueueTestEnv(
+            databaseUrl,
+            async () => {
+              const admin = await prisma.user.update({
+                where: { username: "admin-auth-tests" },
+                data: { forcePasswordChange: false },
+              });
+              const adminSession = await insertSessionForUser(prisma, admin.id);
+              const user = await createActiveUser(prisma, "admin-cancel-race-target");
+              const queuedTask = await createTaskFixture(prisma, {
+                ownerId: user.id,
+                title: "Queued task race project",
+                type: TaskType.VIDEO,
+                status: TaskStatus.QUEUED,
+                taskSteps: [
+                  {
+                    status: TaskStatus.QUEUED,
+                    retryCount: 0,
+                  },
+                ],
+              });
+
+              const { queues } = await import("@/lib/queues");
+              const getJobSpy = vi.spyOn(queues.video, "getJob").mockResolvedValue({
+                remove: vi.fn().mockRejectedValue(new Error("Job is locked")),
+              } as never);
+              const { POST } = await loadRouteModule<{
+                POST: (
+                  request: Request,
+                  context: { params: Promise<{ taskId: string }> | { taskId: string } },
+                ) => Promise<Response>;
+              }>("src/app/api/admin/tasks/[taskId]/cancel/route.ts", {
+                sessionToken: adminSession.token,
+              });
+
+              try {
+                const response = await POST(
+                  jsonRequest(`http://localhost/api/admin/tasks/${queuedTask.id}/cancel`, undefined, {
+                    method: "POST",
+                  }),
+                  { params: { taskId: queuedTask.id } },
+                );
+
+                expect(response.status).toBe(202);
+                await expect(response.json()).resolves.toEqual(
+                  expect.objectContaining({
+                    taskId: queuedTask.id,
+                    status: TaskStatus.QUEUED,
+                    cancelRequestedAt: expect.any(String),
+                  }),
+                );
+                await expect(
+                  prisma.task.findUniqueOrThrow({
+                    where: { id: queuedTask.id },
+                  }),
+                ).resolves.toEqual(
+                  expect.objectContaining({
+                    id: queuedTask.id,
+                    status: TaskStatus.QUEUED,
+                    cancelRequestedAt: expect.any(Date),
+                  }),
+                );
+              } finally {
+                getJobSpy.mockRestore();
+              }
+            },
+            {
+              STORAGE_ROOT: storageRoot,
+            },
+          );
+        } finally {
+          await rm(storageRoot, { recursive: true, force: true });
+        }
+      },
+      {
+        seed: true,
+        seedEnv: {
+          DEFAULT_ADMIN_PASSWORD: "AdminPass123!",
+          DEFAULT_ADMIN_USERNAME: "admin-auth-tests",
+        },
+      },
+    );
+  });
+
+  it("returns zero storage usage instead of failing when STORAGE_ROOT does not exist yet", async () => {
+    await withTestDatabase(
+      async ({ databaseUrl, prisma }) => {
+        const baseRoot = await mkdtemp(path.join(os.tmpdir(), "lan-admin-missing-root-"));
+        const missingStorageRoot = path.join(baseRoot, "missing-storage-root");
+
+        try {
+          await withAdminQueueTestEnv(
+            databaseUrl,
+            async () => {
+              const admin = await prisma.user.update({
+                where: { username: "admin-auth-tests" },
+                data: { forcePasswordChange: false },
+              });
+              const adminSession = await insertSessionForUser(prisma, admin.id);
+              const { GET } = await loadRouteModule<{
+                GET: () => Promise<Response>;
+              }>("src/app/api/admin/storage/route.ts", {
+                sessionToken: adminSession.token,
+              });
+
+              const response = await GET();
+
+              expect(response.status).toBe(200);
+              await expect(response.json()).resolves.toEqual(
+                expect.objectContaining({
+                  uploadsBytes: 0,
+                  imagesBytes: 0,
+                  videosBytes: 0,
+                  exportsBytes: 0,
+                  totalBytes: expect.any(Number),
+                  freeBytes: expect.any(Number),
+                }),
+              );
+            },
+            {
+              STORAGE_ROOT: missingStorageRoot,
+            },
+          );
+        } finally {
+          await rm(baseRoot, { recursive: true, force: true });
+        }
+      },
+      {
+        seed: true,
+        seedEnv: {
+          DEFAULT_ADMIN_PASSWORD: "AdminPass123!",
+          DEFAULT_ADMIN_USERNAME: "admin-auth-tests",
+        },
+      },
+    );
+  });
+
   it("reports storage usage and cleans up unreferenced files older than 30 days", async () => {
     await withTestDatabase(
       async ({ databaseUrl, prisma }) => {
