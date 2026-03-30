@@ -11,6 +11,7 @@ import { ServiceError } from "@/lib/services/errors";
 import { writeTempFile, promoteTempFile } from "@/lib/storage/fs-storage";
 import { getStorageRoot } from "@/lib/storage/paths";
 import { bullmqConnection } from "@/lib/redis";
+import { cancelTaskIfRequested } from "@/worker/processors/cancellation";
 
 type ImagePayload = {
   projectId: string;
@@ -242,6 +243,16 @@ async function succeedJob(
   return result;
 }
 
+function createCanceledResult(traceId: string): ImageWorkerResult {
+  return {
+    ok: true,
+    traceId,
+    outputAssetId: "",
+    modelProviderKey: "",
+    modelName: "",
+  };
+}
+
 export async function processImageJob(
   job: Job<ImageWorkerJobData, ImageWorkerResult, string>,
 ): Promise<ImageWorkerResult> {
@@ -254,6 +265,10 @@ export async function processImageJob(
       startedAt: new Date(),
       errorText: null,
     });
+
+    if (await cancelTaskIfRequested(job.data)) {
+      return createCanceledResult(job.data.traceId);
+    }
 
     const modelSummary = await getDefaultModelSummary(modelTaskType);
     if (!modelSummary?.model) {
@@ -275,6 +290,10 @@ export async function processImageJob(
         ...(payload.sourceAssetId ? { sourceAssetId: payload.sourceAssetId } : {}),
       },
     });
+
+    if (await cancelTaskIfRequested(job.data)) {
+      return createCanceledResult(job.data.traceId);
+    }
 
     if (modelResult.status !== "ok") {
       throw new Error(modelResult.errorMessage ?? "Image model request failed");

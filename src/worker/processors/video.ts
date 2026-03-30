@@ -11,6 +11,7 @@ import { bullmqConnection } from "@/lib/redis";
 import { ServiceError } from "@/lib/services/errors";
 import { promoteTempFile, writeTempFile } from "@/lib/storage/fs-storage";
 import { getStorageRoot } from "@/lib/storage/paths";
+import { cancelTaskIfRequested } from "@/worker/processors/cancellation";
 
 type VideoPayload = {
   projectId: string;
@@ -276,6 +277,17 @@ async function succeedJob(
   return result;
 }
 
+function createCanceledResult(traceId: string, referenceAssetIds: string[]): VideoWorkerResult {
+  return {
+    ok: true,
+    traceId,
+    outputAssetId: "",
+    modelProviderKey: "",
+    modelName: "",
+    referenceAssetIds,
+  };
+}
+
 export async function processVideoJob(
   job: Job<VideoWorkerJobData, VideoWorkerResult, string>,
 ): Promise<VideoWorkerResult> {
@@ -288,6 +300,10 @@ export async function processVideoJob(
       errorText: null,
       logMessage: "Started video generation",
     });
+
+    if (await cancelTaskIfRequested(job.data)) {
+      return createCanceledResult(job.data.traceId, payload.referenceAssetIds);
+    }
 
     const modelSummary = await getDefaultModelSummary("video_generate");
     if (!modelSummary?.model) {
@@ -308,6 +324,10 @@ export async function processVideoJob(
         referenceAssetIds: payload.referenceAssetIds,
       },
     });
+
+    if (await cancelTaskIfRequested(job.data)) {
+      return createCanceledResult(job.data.traceId, payload.referenceAssetIds);
+    }
 
     if (modelResult.status !== "ok") {
       throw new Error(modelResult.errorMessage ?? "Video model request failed");

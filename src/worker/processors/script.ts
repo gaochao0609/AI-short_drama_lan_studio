@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { callProxyModel } from "@/lib/models/proxy-client";
 import { getDefaultModelSummary } from "@/lib/models/provider-registry";
 import { bullmqConnection } from "@/lib/redis";
+import { cancelTaskIfRequested } from "@/worker/processors/cancellation";
 
 type ScriptFinalizePayload = {
   sessionId: string;
@@ -223,6 +224,15 @@ async function succeedJob(
   return result;
 }
 
+function createCanceledResult(traceId: string): ScriptWorkerResult {
+  return {
+    ok: true,
+    traceId,
+    scriptVersionId: "",
+    body: "",
+  };
+}
+
 export async function processScriptFinalizeJob(
   job: Job<ScriptWorkerJobData, ScriptWorkerResult, string>,
 ): Promise<ScriptWorkerResult> {
@@ -234,6 +244,10 @@ export async function processScriptFinalizeJob(
       startedAt: new Date(),
       errorText: null,
     });
+
+    if (await cancelTaskIfRequested(job.data)) {
+      return createCanceledResult(job.data.traceId);
+    }
 
     if (!sessionId) {
       throw new Error("Missing sessionId for script finalize job");
@@ -305,6 +319,10 @@ export async function processScriptFinalizeJob(
         sessionId: session.id,
       },
     });
+
+    if (await cancelTaskIfRequested(job.data)) {
+      return createCanceledResult(job.data.traceId);
+    }
 
     if (modelResult.status !== "ok" || !modelResult.textOutput?.trim()) {
       throw new Error(
@@ -380,7 +398,9 @@ export async function processScriptFinalizeJob(
         await prisma.scriptSession.updateMany({
           where: {
             id: sessionId,
-            status: ScriptSessionStatus.FINALIZING,
+            status: {
+              in: [ScriptSessionStatus.FINALIZING, ScriptSessionStatus.ACTIVE],
+            },
           },
           data: {
             status: ScriptSessionStatus.ACTIVE,
