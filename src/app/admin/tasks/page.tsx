@@ -38,6 +38,16 @@ type TasksPayload = {
   tasks: AdminTask[];
 };
 
+type AdminTaskActionPayload =
+  | {
+      taskId: string;
+      status: TaskStatus;
+      cancelRequestedAt: string | null;
+    }
+  | {
+      error?: string;
+    };
+
 const STATUS_ORDER: TaskStatus[] = ["FAILED", "RUNNING", "QUEUED", "SUCCEEDED", "CANCELED"];
 
 function formatStatus(status: TaskStatus) {
@@ -155,13 +165,28 @@ export default function AdminTasksPage() {
       const response = await fetch(`/api/admin/tasks/${taskId}/cancel`, {
         method: "POST",
       });
-      const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+      const payload = (await response.json().catch(() => null)) as AdminTaskActionPayload | null;
+      const errorMessage =
+        payload && "error" in payload ? payload.error : undefined;
 
       if (!response.ok) {
-        throw new Error(payload?.error ?? "Failed to cancel task");
+        throw new Error(errorMessage ?? "Failed to cancel task");
       }
 
-      setMessage(`Cancel request submitted for ${taskId}.`);
+      if (!payload || !("status" in payload)) {
+        setMessage(`Cancel request submitted for ${taskId}.`);
+        await loadTasks();
+        return;
+      }
+
+      if (payload.status === "RUNNING" || payload.status === "QUEUED") {
+        setMessage(`Cancel request submitted for ${payload.taskId}.`);
+      } else if (payload.status === "CANCELED") {
+        setMessage(`Task ${payload.taskId} canceled.`);
+      } else {
+        setMessage(`Task ${payload.taskId} already finished as ${formatStatus(payload.status)}.`);
+      }
+
       await loadTasks();
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Failed to cancel task");
