@@ -12,9 +12,7 @@ function normalizePrompt(prompt: string) {
 }
 
 const INLINE_IMAGE_PREVIEW_MAX_BYTES = 64 * 1024;
-const INLINE_VIDEO_PREVIEW_MAX_BYTES = 8 * 1024 * 1024;
 const PREVIEWABLE_IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
-const PREVIEWABLE_VIDEO_MIME_TYPES = new Set(["video/mp4", "video/webm", "video/quicktime"]);
 
 type AssetSummary = {
   id: string;
@@ -41,6 +39,7 @@ async function toAssetSummary(
     allowedMimeTypes: Set<string>;
     inlinePreviewCapBytes: number;
     previewUrl?: string;
+    allowInlinePreview?: boolean;
   },
 ): Promise<AssetSummary> {
   const base = {
@@ -52,6 +51,13 @@ async function toAssetSummary(
     createdAt: asset.createdAt.toISOString(),
     previewUrl: input.previewUrl ?? null,
   };
+
+  if (input.allowInlinePreview === false) {
+    return {
+      ...base,
+      previewDataUrl: null,
+    };
+  }
 
   if (
     !input.allowedMimeTypes.has(asset.mimeType) ||
@@ -179,9 +185,10 @@ export async function getVideosWorkspaceData(projectId: string, userId: string) 
     videoAssets: await Promise.all(
       videoAssets.map((asset) =>
         toAssetSummary(asset, {
-          allowedMimeTypes: PREVIEWABLE_VIDEO_MIME_TYPES,
-          inlinePreviewCapBytes: INLINE_VIDEO_PREVIEW_MAX_BYTES,
+          allowedMimeTypes: new Set<string>(),
+          inlinePreviewCapBytes: 0,
           previewUrl: `/api/videos?projectId=${project.id}&assetId=${asset.id}`,
+          allowInlinePreview: false,
         }),
       ),
     ),
@@ -230,11 +237,10 @@ export async function readOwnedVideoAsset(input: {
   const filePath = path.isAbsolute(asset.storagePath)
     ? asset.storagePath
     : path.join(storageRoot, asset.storagePath);
-  const bytes = await readFile(filePath);
 
   return {
     ...asset,
-    bytes,
+    filePath,
   };
 }
 

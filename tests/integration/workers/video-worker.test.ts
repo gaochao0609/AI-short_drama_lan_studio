@@ -111,10 +111,9 @@ const ONE_BY_ONE_PNG_BYTES = Buffer.from(
 );
 
 const SAMPLE_MP4_BYTES = Buffer.from("000000186674797069736F6D0000020069736F6D69736F32", "hex");
-const LARGE_MP4_BYTES = Buffer.alloc(8 * 1024 * 1024 + 1, 7);
 
 describe("video workflow", () => {
-  it("exposes a route-backed preview URL for large generated videos", async () => {
+  it("serves route-backed video previews with range support and no inline video payload", async () => {
     await withTestDatabase(async ({ databaseUrl, prisma }) => {
       const storageRoot = await mkdtemp(path.join(os.tmpdir(), "lan-studio-video-preview-"));
 
@@ -129,19 +128,19 @@ describe("video workflow", () => {
                 title: "Video Preview Project",
               },
             });
-            const relativePath = path.join("assets", project.id, "generated", "large.mp4");
+            const relativePath = path.join("assets", project.id, "generated", "preview.mp4");
             const absolutePath = path.join(storageRoot, relativePath);
             await mkdir(path.dirname(absolutePath), { recursive: true });
-            await writeFile(absolutePath, LARGE_MP4_BYTES);
+            await writeFile(absolutePath, SAMPLE_MP4_BYTES);
 
             const asset = await prisma.asset.create({
               data: {
                 projectId: project.id,
                 kind: "video_generated",
                 storagePath: relativePath,
-                originalName: "large.mp4",
+                originalName: "preview.mp4",
                 mimeType: "video/mp4",
-                sizeBytes: LARGE_MP4_BYTES.length,
+                sizeBytes: SAMPLE_MP4_BYTES.length,
               },
             });
 
@@ -151,7 +150,7 @@ describe("video workflow", () => {
               expect.objectContaining({
                 id: asset.id,
                 mimeType: "video/mp4",
-                sizeBytes: LARGE_MP4_BYTES.length,
+                sizeBytes: SAMPLE_MP4_BYTES.length,
                 previewDataUrl: null,
                 previewUrl: `/api/videos?projectId=${project.id}&assetId=${asset.id}`,
               }),
@@ -168,15 +167,23 @@ describe("video workflow", () => {
             const response = await route.GET(
               new Request(`http://localhost/api/videos?projectId=${project.id}&assetId=${asset.id}`, {
                 method: "GET",
+                headers: {
+                  range: "bytes=0-3",
+                },
               }),
             );
 
-            expect(response.status).toBe(200);
+            expect(response.status).toBe(206);
             expect(response.headers.get("content-type")).toBe("video/mp4");
+            expect(response.headers.get("accept-ranges")).toBe("bytes");
+            expect(response.headers.get("content-range")).toBe(
+              `bytes 0-3/${SAMPLE_MP4_BYTES.length}`,
+            );
+            expect(response.headers.get("content-length")).toBe("4");
             await expect(response.arrayBuffer()).resolves.toEqual(
-              LARGE_MP4_BYTES.buffer.slice(
-                LARGE_MP4_BYTES.byteOffset,
-                LARGE_MP4_BYTES.byteOffset + LARGE_MP4_BYTES.byteLength,
+              SAMPLE_MP4_BYTES.buffer.slice(
+                SAMPLE_MP4_BYTES.byteOffset,
+                SAMPLE_MP4_BYTES.byteOffset + 4,
               ),
             );
           },
