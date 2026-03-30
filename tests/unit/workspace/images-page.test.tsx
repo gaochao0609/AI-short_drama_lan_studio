@@ -222,4 +222,78 @@ describe("project images page", () => {
 
     expect(screen.queryByText("Image generated.")).not.toBeInTheDocument();
   });
+
+  it("ignores stale workspace responses when projectId changes mid-flight", async () => {
+    const pendingResponses = new Map<string, (value: Response) => void>();
+
+    function deferredJsonResponse(url: string) {
+      let resolve!: (value: Response) => void;
+      const promise = new Promise<Response>((res) => {
+        resolve = res;
+      });
+      pendingResponses.set(url, resolve);
+      return promise;
+    }
+
+    useParamsMock.mockReturnValue({
+      projectId: "project-a",
+    });
+
+    fetchMock.mockImplementation(async (input) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+
+      if (url === "/api/images?projectId=project-a") {
+        return deferredJsonResponse(url);
+      }
+
+      if (url === "/api/images?projectId=project-b") {
+        return jsonResponse(
+          {
+            project: { id: "project-b", title: "Project B", idea: null },
+            maxUploadMb: 25,
+            assets: [],
+          },
+          200,
+        );
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    const pageModule = await import("@/app/(workspace)/projects/[projectId]/images/page");
+    const { rerender } = render(<pageModule.default />);
+
+    // Navigate before the first workspace request resolves.
+    useParamsMock.mockReturnValue({
+      projectId: "project-b",
+    });
+    rerender(<pageModule.default />);
+
+    expect(await screen.findByRole("heading", { name: "Project B" })).toBeInTheDocument();
+
+    const resolveA = pendingResponses.get("/api/images?projectId=project-a");
+    expect(resolveA).toBeDefined();
+
+    resolveA!(
+      jsonResponse(
+        {
+          project: { id: "project-a", title: "Project A", idea: null },
+          maxUploadMb: 25,
+          assets: [],
+        },
+        200,
+      ),
+    );
+
+    // Allow any state updates to flush; stale A response must not overwrite B.
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Project B" })).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("heading", { name: "Project A" })).not.toBeInTheDocument();
+  });
 });

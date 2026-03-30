@@ -1,7 +1,7 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -60,12 +60,16 @@ export default function ProjectImagesPage() {
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { task, error: pollingError } = useTaskPolling(activeTaskId);
+  const workspaceRequestSeq = useRef(0);
 
   useEffect(() => {
     setProjectId(params.projectId ?? "");
   }, [params]);
 
   async function reloadWorkspace(nextProjectId: string) {
+    // Bump request id so slower earlier responses cannot overwrite newer state.
+    const requestId = (workspaceRequestSeq.current += 1);
+
     const response = await fetch(`/api/images?projectId=${encodeURIComponent(nextProjectId)}`, {
       cache: "no-store",
     });
@@ -78,6 +82,11 @@ export default function ProjectImagesPage() {
       throw new Error(
         payload && "error" in payload ? payload.error ?? "Failed to load images" : "Failed to load images",
       );
+    }
+
+    // Ignore responses that are no longer the latest request.
+    if (requestId !== workspaceRequestSeq.current) {
+      return;
     }
 
     setWorkspace(payload);
