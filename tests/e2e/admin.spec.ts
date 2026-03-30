@@ -59,6 +59,8 @@ test("admin flow covers approval, task monitoring, retry, cancel, storage stats,
   let oldImagePath = "";
   let oldVideoPath = "";
   let keepImagePath = "";
+  let persistedImageAssetPath = "";
+  let persistedVideoAssetPath = "";
 
   try {
     const adminPasswordHash = await hash(adminPassword, 12);
@@ -232,12 +234,28 @@ test("admin flow covers approval, task monitoring, retry, cancel, storage stats,
     oldVideoPath = path.join(storageRoot, "generated-videos", failedProject.id, "task-c", "preview.mp4");
     const exportsPath = path.join(storageRoot, "exports", failedProject.id, "package.zip");
     keepImagePath = path.join(storageRoot, "generated-images", failedProject.id, "task-d", "keep.png");
+    persistedImageAssetPath = path.join(
+      storageRoot,
+      "assets",
+      failedProject.id,
+      "references",
+      "persisted-reference.png",
+    );
+    persistedVideoAssetPath = path.join(
+      storageRoot,
+      "assets",
+      failedProject.id,
+      "task-e",
+      "persisted-output.mp4",
+    );
 
     await createFileWithAge(uploadsPath, "upload-data", new Date());
     await createFileWithAge(oldImagePath, "old-image-cache", oldDate);
     await createFileWithAge(oldVideoPath, "old-video-cache", oldDate);
     await createFileWithAge(exportsPath, "export-data", new Date());
     await createFileWithAge(keepImagePath, "keep-image", oldDate);
+    await createFileWithAge(persistedImageAssetPath, "asset-image", new Date());
+    await createFileWithAge(persistedVideoAssetPath, "asset-video", new Date());
 
     await prisma.asset.create({
       data: {
@@ -247,6 +265,26 @@ test("admin flow covers approval, task monitoring, retry, cancel, storage stats,
         originalName: "keep.png",
         mimeType: "image/png",
         sizeBytes: Buffer.byteLength("keep-image"),
+      },
+    });
+    await prisma.asset.create({
+      data: {
+        projectId: failedProject.id,
+        kind: "image_reference",
+        storagePath: path.relative(storageRoot, persistedImageAssetPath),
+        originalName: "persisted-reference.png",
+        mimeType: "image/png",
+        sizeBytes: Buffer.byteLength("asset-image"),
+      },
+    });
+    await prisma.asset.create({
+      data: {
+        projectId: failedProject.id,
+        kind: "video_generated",
+        storagePath: path.relative(storageRoot, persistedVideoAssetPath),
+        originalName: "persisted-output.mp4",
+        mimeType: "video/mp4",
+        sizeBytes: Buffer.byteLength("asset-video"),
       },
     });
 
@@ -365,6 +403,12 @@ test("admin flow covers approval, task monitoring, retry, cancel, storage stats,
     await expect(page.getByRole("heading", { name: "Storage Management" })).toBeVisible();
     await expect(page.getByText("Free disk space", { exact: true })).toBeVisible();
     await expect(page.getByText("generated-images")).toBeVisible();
+    await expect(
+      page.locator("article").filter({ hasText: "generated-images" }).getByText("36 B", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.locator("article").filter({ hasText: "generated-videos" }).getByText("26 B", { exact: true }),
+    ).toBeVisible();
     const cleanupResponsePromise = page.waitForResponse((response) => {
       return (
         response.url().includes("/api/admin/storage/cleanup") &&
@@ -400,6 +444,10 @@ test("admin flow covers approval, task monitoring, retry, cancel, storage stats,
         force: true,
       });
       await rm(path.join(storageRoot, "exports", storageProjectId), {
+        recursive: true,
+        force: true,
+      });
+      await rm(path.join(storageRoot, "assets", storageProjectId), {
         recursive: true,
         force: true,
       });

@@ -125,7 +125,8 @@ export default function AdminStoragePage() {
         <h2 style={titleStyle}>Storage Management</h2>
         <p style={copyStyle}>
           Track directory usage, keep an eye on free disk space, and remove 30-day-old cache and
-          intermediate artifacts without touching referenced assets.
+          intermediate artifacts without touching referenced assets. Image and video totals include
+          persisted project files stored under <code>storage/assets</code>.
         </p>
       </header>
 

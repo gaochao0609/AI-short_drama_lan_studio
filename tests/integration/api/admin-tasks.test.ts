@@ -530,12 +530,28 @@ describe("admin tasks and storage api", () => {
                 "task-d",
                 "keep.png",
               );
+              const persistedImageAssetPath = path.join(
+                storageRoot,
+                "assets",
+                project.id,
+                "references",
+                "persisted-reference.png",
+              );
+              const persistedVideoAssetPath = path.join(
+                storageRoot,
+                "assets",
+                project.id,
+                "task-e",
+                "persisted-output.mp4",
+              );
 
               await createFileWithAge(uploadsPath, Buffer.from("upload-data"), now);
               await createFileWithAge(imagesPath, Buffer.from("image-cache"), oldDate);
               await createFileWithAge(videosPath, Buffer.from("video-cache"), oldDate);
               await createFileWithAge(exportsPath, Buffer.from("export-data"), now);
               await createFileWithAge(referencedOldImagePath, Buffer.from("keep-image"), oldDate);
+              await createFileWithAge(persistedImageAssetPath, Buffer.from("asset-image"), now);
+              await createFileWithAge(persistedVideoAssetPath, Buffer.from("asset-video"), now);
 
               await prisma.asset.create({
                 data: {
@@ -546,6 +562,28 @@ describe("admin tasks and storage api", () => {
                   originalName: "keep.png",
                   mimeType: "image/png",
                   sizeBytes: Buffer.byteLength("keep-image"),
+                },
+              });
+              await prisma.asset.create({
+                data: {
+                  projectId: project.id,
+                  taskId: null,
+                  kind: "image_reference",
+                  storagePath: path.relative(storageRoot, persistedImageAssetPath),
+                  originalName: "persisted-reference.png",
+                  mimeType: "image/png",
+                  sizeBytes: Buffer.byteLength("asset-image"),
+                },
+              });
+              await prisma.asset.create({
+                data: {
+                  projectId: project.id,
+                  taskId: null,
+                  kind: "video_generated",
+                  storagePath: path.relative(storageRoot, persistedVideoAssetPath),
+                  originalName: "persisted-output.mp4",
+                  mimeType: "video/mp4",
+                  sizeBytes: Buffer.byteLength("asset-video"),
                 },
               });
 
@@ -560,8 +598,11 @@ describe("admin tasks and storage api", () => {
               await expect(statsResponse.json()).resolves.toEqual(
                 expect.objectContaining({
                   uploadsBytes: Buffer.byteLength("upload-data"),
-                  imagesBytes: Buffer.byteLength("image-cache") + Buffer.byteLength("keep-image"),
-                  videosBytes: Buffer.byteLength("video-cache"),
+                  imagesBytes:
+                    Buffer.byteLength("image-cache") +
+                    Buffer.byteLength("keep-image") +
+                    Buffer.byteLength("asset-image"),
+                  videosBytes: Buffer.byteLength("video-cache") + Buffer.byteLength("asset-video"),
                   exportsBytes: Buffer.byteLength("export-data"),
                   totalBytes: expect.any(Number),
                   freeBytes: expect.any(Number),

@@ -47,7 +47,13 @@ async function countDirectoryBytes(directoryPath: string): Promise<number> {
     return 0;
   }
 
-  const entries = await readdir(directoryPath, { withFileTypes: true });
+  const entries = await readdir(directoryPath, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") {
+      return [];
+    }
+
+    throw error;
+  });
   let total = 0;
 
   for (const entry of entries) {
@@ -59,7 +65,15 @@ async function countDirectoryBytes(directoryPath: string): Promise<number> {
     }
 
     if (entry.isFile()) {
-      total += (await stat(entryPath)).size;
+      const fileStats = await stat(entryPath).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") {
+          return null;
+        }
+
+        throw error;
+      });
+
+      total += fileStats?.size ?? 0;
     }
   }
 
@@ -71,7 +85,13 @@ async function listFiles(directoryPath: string): Promise<string[]> {
     return [];
   }
 
-  const entries = await readdir(directoryPath, { withFileTypes: true });
+  const entries = await readdir(directoryPath, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") {
+      return [];
+    }
+
+    throw error;
+  });
   const files: string[] = [];
 
   for (const entry of entries) {
@@ -88,6 +108,33 @@ async function listFiles(directoryPath: string): Promise<string[]> {
   }
 
   return files;
+}
+
+export async function getDirectoryFileStats(directoryPath: string) {
+  const files = await listFiles(directoryPath);
+
+  const fileStats = await Promise.all(
+    files.map(async (filePath) => {
+      const nextStats = await stat(filePath).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") {
+          return null;
+        }
+
+        throw error;
+      });
+
+      if (!nextStats) {
+        return null;
+      }
+
+      return {
+        path: filePath,
+        sizeBytes: nextStats.size,
+      };
+    }),
+  );
+
+  return fileStats.filter((entry): entry is { path: string; sizeBytes: number } => entry !== null);
 }
 
 async function removeEmptyDirectories(directoryPath: string, stopAtPath: string) {
