@@ -13,6 +13,16 @@ import {
 } from "@/lib/services/videos";
 import { parseJsonBody } from "@/lib/http/validation";
 
+type RangeParseResult =
+  | {
+      ok: true;
+      start: number;
+      end: number;
+    }
+  | {
+      ok: false;
+    };
+
 function parseRangeHeader(rangeHeader: string | null, sizeBytes: number) {
   if (!rangeHeader) {
     return null;
@@ -20,7 +30,7 @@ function parseRangeHeader(rangeHeader: string | null, sizeBytes: number) {
 
   const match = /^bytes=(\d*)-(\d*)$/i.exec(rangeHeader.trim());
   if (!match) {
-    throw new ServiceError(409, "Invalid Range header");
+    return { ok: false } satisfies RangeParseResult;
   }
 
   const [, startText, endText] = match;
@@ -28,13 +38,13 @@ function parseRangeHeader(rangeHeader: string | null, sizeBytes: number) {
   let end: number;
 
   if (startText === "" && endText === "") {
-    throw new ServiceError(409, "Invalid Range header");
+    return { ok: false } satisfies RangeParseResult;
   }
 
   if (startText === "") {
     const suffixLength = Number(endText);
     if (!Number.isInteger(suffixLength) || suffixLength <= 0) {
-      throw new ServiceError(409, "Invalid Range header");
+      return { ok: false } satisfies RangeParseResult;
     }
 
     start = Math.max(sizeBytes - suffixLength, 0);
@@ -51,13 +61,14 @@ function parseRangeHeader(rangeHeader: string | null, sizeBytes: number) {
     end < start ||
     start >= sizeBytes
   ) {
-    throw new ServiceError(409, "Requested Range Not Satisfiable");
+    return { ok: false } satisfies RangeParseResult;
   }
 
   return {
+    ok: true,
     start,
     end: Math.min(end, sizeBytes - 1),
-  };
+  } satisfies RangeParseResult;
 }
 
 const CreateVideoBodySchema = z.object({
@@ -87,6 +98,17 @@ export async function GET(request: Request) {
       });
       const fileStat = await stat(asset.filePath);
       const range = parseRangeHeader(request.headers.get("range"), fileStat.size);
+      if (range && !range.ok) {
+        return new Response(null, {
+          status: 416,
+          headers: {
+            "accept-ranges": "bytes",
+            "cache-control": "private, max-age=60",
+            "content-range": `bytes */${fileStat.size}`,
+          },
+        });
+      }
+
       const start = range?.start ?? 0;
       const end = range?.end ?? fileStat.size - 1;
       const contentLength = end - start + 1;

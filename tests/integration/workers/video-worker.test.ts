@@ -186,6 +186,40 @@ describe("video workflow", () => {
                 SAMPLE_MP4_BYTES.byteOffset + 4,
               ),
             );
+
+            const suffixRangeResponse = await route.GET(
+              new Request(`http://localhost/api/videos?projectId=${project.id}&assetId=${asset.id}`, {
+                method: "GET",
+                headers: {
+                  range: "bytes=-4",
+                },
+              }),
+            );
+
+            expect(suffixRangeResponse.status).toBe(206);
+            expect(suffixRangeResponse.headers.get("content-range")).toBe(
+              `bytes ${SAMPLE_MP4_BYTES.length - 4}-${SAMPLE_MP4_BYTES.length - 1}/${SAMPLE_MP4_BYTES.length}`,
+            );
+            await expect(suffixRangeResponse.arrayBuffer()).resolves.toEqual(
+              SAMPLE_MP4_BYTES.buffer.slice(
+                SAMPLE_MP4_BYTES.byteOffset + SAMPLE_MP4_BYTES.length - 4,
+                SAMPLE_MP4_BYTES.byteOffset + SAMPLE_MP4_BYTES.length,
+              ),
+            );
+
+            const invalidRangeResponse = await route.GET(
+              new Request(`http://localhost/api/videos?projectId=${project.id}&assetId=${asset.id}`, {
+                method: "GET",
+                headers: {
+                  range: `bytes=${SAMPLE_MP4_BYTES.length}-`,
+                },
+              }),
+            );
+
+            expect(invalidRangeResponse.status).toBe(416);
+            expect(invalidRangeResponse.headers.get("content-range")).toBe(
+              `bytes */${SAMPLE_MP4_BYTES.length}`,
+            );
           },
           {
             STORAGE_ROOT: storageRoot,
