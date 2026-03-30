@@ -204,19 +204,10 @@ describe("storyboards api", () => {
   it("keeps a failed storyboard task durable when enqueueing fails", async () => {
     await withTestDatabase(async ({ databaseUrl, prisma }) => {
       await withApiTestEnv(databaseUrl, async () => {
-        enqueueTaskMock.mockImplementationOnce(async (taskId: string) => {
-          await prisma.task.update({
-            where: {
-              id: taskId,
-            },
-            data: {
-              status: "FAILED",
-              finishedAt: new Date(),
-              errorText: "queue unavailable",
-            },
-          });
-
-          throw new Error("queue unavailable");
+        enqueueTaskMock.mockRejectedValueOnce(new Error("queue unavailable"));
+        enqueueTaskMock.mockResolvedValueOnce({
+          jobId: "job-storyboard-retry",
+          queueName: "storyboard-queue",
         });
 
         const user = await createActiveUser(prisma, "storyboard-request-failure");
@@ -262,43 +253,56 @@ describe("storyboards api", () => {
             { method: "POST" },
           ),
         );
-
-        expect(response.status).toBe(500);
-        await expect(response.json()).resolves.toEqual({
-          error: "Internal server error",
-        });
-
-        const task = await prisma.task.findFirstOrThrow({
+        const firstTask = await prisma.task.findFirstOrThrow({
           where: {
             projectId: project.id,
             createdById: user.id,
             type: TaskType.STORYBOARD,
           },
         });
+        const retryResponse = await storyboardRoute.POST(
+          jsonRequest(
+            "http://localhost/api/storyboards",
+            {
+              projectId: project.id,
+              scriptVersionId: scriptVersion.id,
+            },
+            { method: "POST" },
+          ),
+        );
+        const retryPayload = (await retryResponse.json()) as { taskId: string };
+
+        expect(response.status).toBe(500);
+        await expect(response.json()).resolves.toEqual({
+          error: "Internal server error",
+        });
+        expect(retryResponse.status).toBe(202);
+        expect(retryPayload.taskId).not.toBe(firstTask.id);
+        expect(enqueueTaskMock).toHaveBeenCalledTimes(2);
 
         await expect(
           prisma.task.findUniqueOrThrow({
             where: {
-              id: task.id,
+              id: firstTask.id,
             },
           }),
         ).resolves.toEqual(
           expect.objectContaining({
-            id: task.id,
+            id: firstTask.id,
             status: "FAILED",
             errorText: "queue unavailable",
           }),
         );
 
         const taskResponse = await taskRoute.GET(
-          new Request(`http://localhost/api/tasks/${task.id}`),
-          { params: { taskId: task.id } },
+          new Request(`http://localhost/api/tasks/${firstTask.id}`),
+          { params: { taskId: firstTask.id } },
         );
 
         expect(taskResponse.status).toBe(200);
         await expect(taskResponse.json()).resolves.toEqual(
           expect.objectContaining({
-            id: task.id,
+            id: firstTask.id,
             status: "FAILED",
             errorText: "queue unavailable",
           }),

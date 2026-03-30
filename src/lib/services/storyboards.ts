@@ -190,11 +190,58 @@ export async function createStoryboardTask(input: {
     };
   }
 
-  await enqueueTask(task.task.id, TaskType.STORYBOARD, {
-    projectId: input.projectId,
-    scriptVersionId: scriptVersion.id,
-    userId: input.userId,
-  });
+  try {
+    await enqueueTask(task.task.id, TaskType.STORYBOARD, {
+      projectId: input.projectId,
+      scriptVersionId: scriptVersion.id,
+      userId: input.userId,
+    });
+  } catch (error) {
+    const errorText =
+      error instanceof Error ? error.message : "Failed to enqueue storyboard task";
+
+    await prisma.$transaction(async (tx) => {
+      await tx.task.updateMany({
+        where: {
+          id: task.task.id,
+          status: TaskStatus.QUEUED,
+        },
+        data: {
+          status: TaskStatus.FAILED,
+          finishedAt: new Date(),
+          errorText,
+        },
+      });
+
+      const latestTaskStep = await tx.taskStep.findFirst({
+        where: {
+          taskId: task.task.id,
+        },
+        orderBy: {
+          createdAt: "desc",
+        },
+        select: {
+          id: true,
+          status: true,
+        },
+      });
+
+      if (latestTaskStep?.status === TaskStatus.QUEUED) {
+        await tx.taskStep.updateMany({
+          where: {
+            id: latestTaskStep.id,
+            status: TaskStatus.QUEUED,
+          },
+          data: {
+            status: TaskStatus.FAILED,
+            errorText,
+          },
+        });
+      }
+    });
+
+    throw error;
+  }
 
   return {
     taskId: task.task.id,
