@@ -64,6 +64,7 @@ export default function ProjectImagesPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { task, error: pollingError } = useTaskPolling(activeTaskId);
   const workspaceRequestSeq = useRef(0);
+  const submitRequestSeq = useRef(0);
 
   useEffect(() => {
     setProjectId(params.projectId ?? "");
@@ -238,6 +239,7 @@ export default function ProjectImagesPage() {
     }
 
     const submitRouteProjectId = latestRouteProjectIdRef.current;
+    const submitRequestId = (submitRequestSeq.current += 1);
     const trimmedPrompt = prompt.trim();
     if (!trimmedPrompt) {
       setError("Enter a prompt before generating an image");
@@ -300,7 +302,13 @@ export default function ProjectImagesPage() {
       setStatusMessage(null);
       setError(submitError instanceof Error ? submitError.message : "Failed to enqueue image task");
     } finally {
-      setIsSubmitting(false);
+      // Prevent older in-flight enqueues from flipping the submitting state on a newer project/request.
+      if (
+        submitRequestId === submitRequestSeq.current &&
+        latestRouteProjectIdRef.current === submitRouteProjectId
+      ) {
+        setIsSubmitting(false);
+      }
     }
   }
 

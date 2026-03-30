@@ -662,4 +662,110 @@ describe("project images page", () => {
     expect(screen.queryByText("Image task queued.")).not.toBeInTheDocument();
     expect(screen.queryByText(/Task: task-a/i)).not.toBeInTheDocument();
   });
+
+  it("does not let a stale enqueue finally clear the new project's submitting state", async () => {
+    const pendingPostResolvers: Array<(value: Response) => void> = [];
+
+    function deferredPost() {
+      let resolve!: (value: Response) => void;
+      const promise = new Promise<Response>((res) => {
+        resolve = res;
+      });
+      pendingPostResolvers.push(resolve);
+      return promise;
+    }
+
+    useParamsMock.mockReturnValue({
+      projectId: "project-a",
+    });
+
+    fetchMock.mockImplementation(async (input, init) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+
+      if (url === "/api/images?projectId=project-a") {
+        return jsonResponse(
+          {
+            project: { id: "project-a", title: "Project A", idea: null },
+            maxUploadMb: 25,
+            assets: [],
+          },
+          200,
+        );
+      }
+
+      if (url === "/api/images?projectId=project-b") {
+        return jsonResponse(
+          {
+            project: { id: "project-b", title: "Project B", idea: null },
+            maxUploadMb: 25,
+            assets: [],
+          },
+          200,
+        );
+      }
+
+      if (url === "/api/images" && init?.method === "POST") {
+        return deferredPost();
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    const pageModule = await import("@/app/(workspace)/projects/[projectId]/images/page");
+    const { rerender } = render(<pageModule.default />);
+
+    expect(await screen.findByRole("heading", { name: "Project A" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Image prompt input"), {
+      target: { value: "Generate A." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate image" }));
+
+    await waitFor(() => {
+      expect(pendingPostResolvers.length).toBe(1);
+    });
+
+    useParamsMock.mockReturnValue({
+      projectId: "project-b",
+    });
+    rerender(<pageModule.default />);
+
+    expect(await screen.findByRole("heading", { name: "Project B" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Image prompt input"), {
+      target: { value: "Generate B." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate image" }));
+
+    await waitFor(() => {
+      expect(pendingPostResolvers.length).toBe(2);
+    });
+
+    const submitButton = screen.getByRole("button", { name: "Generate image" });
+    expect(submitButton).toBeDisabled();
+
+    // Resolve A first (stale). This must not clear B's submitting state.
+    pendingPostResolvers[0]!(jsonResponse({ taskId: "task-a" }, 202));
+
+    // With the bug, A's finally sets isSubmitting(false) and the button becomes enabled
+    // while B's request is still pending. That must never happen.
+    await expect(async () => {
+      await waitFor(
+        () => {
+          expect(screen.getByRole("button", { name: "Generate image" })).toBeEnabled();
+        },
+        { timeout: 150 },
+      );
+    }).rejects.toThrow();
+
+    // Now resolve B and ensure the task is applied to B.
+    pendingPostResolvers[1]!(jsonResponse({ taskId: "task-b" }, 202));
+
+    expect(await screen.findByText(/Task: task-b/i)).toBeInTheDocument();
+  });
 });
