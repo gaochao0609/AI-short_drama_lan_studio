@@ -200,4 +200,110 @@ describe("storyboards api", () => {
       });
     });
   });
+
+  it("keeps a failed storyboard task durable when enqueueing fails", async () => {
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      await withApiTestEnv(databaseUrl, async () => {
+        enqueueTaskMock.mockImplementationOnce(async (taskId: string) => {
+          await prisma.task.update({
+            where: {
+              id: taskId,
+            },
+            data: {
+              status: "FAILED",
+              finishedAt: new Date(),
+              errorText: "queue unavailable",
+            },
+          });
+
+          throw new Error("queue unavailable");
+        });
+
+        const user = await createActiveUser(prisma, "storyboard-request-failure");
+        const session = await insertSessionForUser(prisma, user.id);
+        const project = await prisma.project.create({
+          data: {
+            ownerId: user.id,
+            title: "Storyboard Failure Project",
+          },
+        });
+        const scriptVersion = await prisma.scriptVersion.create({
+          data: {
+            projectId: project.id,
+            creatorId: user.id,
+            versionNumber: 1,
+            body: "INT. TRAIN PLATFORM - NIGHT",
+            scriptJson: {
+              body: "INT. TRAIN PLATFORM - NIGHT",
+            },
+          },
+        });
+        const storyboardRoute = await loadRouteModule<{
+          POST: (request: Request) => Promise<Response>;
+        }>("src/app/api/storyboards/route.ts", {
+          sessionToken: session.token,
+        });
+        const taskRoute = await loadRouteModule<{
+          GET: (
+            request: Request,
+            context: { params: Promise<{ taskId: string }> | { taskId: string } },
+          ) => Promise<Response>;
+        }>("src/app/api/tasks/[taskId]/route.ts", {
+          sessionToken: session.token,
+        });
+
+        const response = await storyboardRoute.POST(
+          jsonRequest(
+            "http://localhost/api/storyboards",
+            {
+              projectId: project.id,
+              scriptVersionId: scriptVersion.id,
+            },
+            { method: "POST" },
+          ),
+        );
+
+        expect(response.status).toBe(500);
+        await expect(response.json()).resolves.toEqual({
+          error: "Internal server error",
+        });
+
+        const task = await prisma.task.findFirstOrThrow({
+          where: {
+            projectId: project.id,
+            createdById: user.id,
+            type: TaskType.STORYBOARD,
+          },
+        });
+
+        await expect(
+          prisma.task.findUniqueOrThrow({
+            where: {
+              id: task.id,
+            },
+          }),
+        ).resolves.toEqual(
+          expect.objectContaining({
+            id: task.id,
+            status: "FAILED",
+            errorText: "queue unavailable",
+          }),
+        );
+
+        const taskResponse = await taskRoute.GET(
+          new Request(`http://localhost/api/tasks/${task.id}`),
+          { params: { taskId: task.id } },
+        );
+
+        expect(taskResponse.status).toBe(200);
+        await expect(taskResponse.json()).resolves.toEqual(
+          expect.objectContaining({
+            id: task.id,
+            status: "FAILED",
+            errorText: "queue unavailable",
+          }),
+        );
+      });
+    });
+  });
 });

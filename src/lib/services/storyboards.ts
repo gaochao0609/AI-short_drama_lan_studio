@@ -190,24 +190,11 @@ export async function createStoryboardTask(input: {
     };
   }
 
-  try {
-    await enqueueTask(task.task.id, TaskType.STORYBOARD, {
-      projectId: input.projectId,
-      scriptVersionId: scriptVersion.id,
-      userId: input.userId,
-    });
-  } catch (error) {
-    await prisma.task.deleteMany({
-      where: {
-        id: task.task.id,
-        projectId: input.projectId,
-        createdById: input.userId,
-        type: TaskType.STORYBOARD,
-      },
-    });
-
-    throw error;
-  }
+  await enqueueTask(task.task.id, TaskType.STORYBOARD, {
+    projectId: input.projectId,
+    scriptVersionId: scriptVersion.id,
+    userId: input.userId,
+  });
 
   return {
     taskId: task.task.id,
