@@ -145,4 +145,81 @@ describe("project images page", () => {
       expect(form.get("projectId")).toBe("project-1");
     });
   });
+
+  it("surfaces refresh failures after a succeeded task instead of claiming success", async () => {
+    let workspaceFetchCount = 0;
+
+    useTaskPollingMock.mockImplementation((taskId?: string | null) => ({
+      task:
+        taskId === "task-1"
+          ? {
+              id: "task-1",
+              status: "SUCCEEDED",
+              outputJson: { ok: true, outputAssetId: "asset-2" },
+            }
+          : undefined,
+      error: undefined,
+      isLoading: false,
+      mutate: vi.fn(),
+      isFinished: false,
+    }));
+
+    fetchMock.mockImplementation(async (input, init) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+
+      if (url === "/api/images?projectId=project-1") {
+        workspaceFetchCount += 1;
+
+        if (workspaceFetchCount >= 2) {
+          return jsonResponse({ error: "Failed to load images" }, 500);
+        }
+
+        return jsonResponse({
+          project: {
+            id: "project-1",
+            title: "Project One",
+            idea: "Idea",
+          },
+          maxUploadMb: 25,
+          assets: [],
+        });
+      }
+
+      if (url === "/api/images" && init?.method === "POST") {
+        return jsonResponse({ taskId: "task-1" }, 202);
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    const pageModule = await import("@/app/(workspace)/projects/[projectId]/images/page");
+
+    render(<pageModule.default />);
+
+    await screen.findByRole("heading", { name: "Project One" });
+
+    fireEvent.change(screen.getByLabelText("Image prompt input"), {
+      target: { value: "Generate key art." },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Generate image" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/images",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/failed to refresh/i)).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText("Image generated.")).not.toBeInTheDocument();
+  });
 });

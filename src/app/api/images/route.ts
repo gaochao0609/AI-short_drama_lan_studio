@@ -8,7 +8,7 @@ import { prisma } from "@/lib/db";
 import { ServiceError, toErrorResponse } from "@/lib/services/errors";
 import { enqueueImageGeneration, getImagesWorkspaceData } from "@/lib/services/images";
 import { getProject } from "@/lib/services/projects";
-import { writeTempFile, promoteTempFile } from "@/lib/storage/fs-storage";
+import { deleteFile, promoteTempFile, writeTempFile } from "@/lib/storage/fs-storage";
 import { getStorageRoot } from "@/lib/storage/paths";
 
 const MULTIPART_OVERHEAD_BYTES = 256 * 1024;
@@ -137,44 +137,55 @@ export async function POST(request: Request) {
         "references",
         `${randomUUID()}.${extension}`,
       );
-      const tempPath = await writeTempFile(bytes);
-      await promoteTempFile(tempPath, destinationPath);
-      const storedAsset = await prisma.asset.create({
-        data: {
+
+      let tempPath: string | null = null;
+      let storedAssetId: string | null = null;
+
+      try {
+        tempPath = await writeTempFile(bytes);
+        await promoteTempFile(tempPath, destinationPath);
+        tempPath = null;
+
+        const storedAsset = await prisma.asset.create({
+          data: {
+            projectId,
+            taskId: null,
+            kind: "image_reference",
+            storagePath: path.relative(storageRoot, destinationPath),
+            originalName: sourceFile.name || null,
+            mimeType: sourceFile.type,
+            sizeBytes: bytes.length,
+            metadata: {
+              role: "reference",
+              uploadedBy: user.userId,
+            } as Prisma.InputJsonValue,
+          },
+          select: {
+            id: true,
+          },
+        });
+        storedAssetId = storedAsset.id;
+
+        const result = await enqueueImageGeneration({
           projectId,
-          taskId: null,
-          kind: "image_reference",
-          storagePath: path.relative(storageRoot, destinationPath),
-          originalName: sourceFile.name || null,
-          mimeType: sourceFile.type,
-          sizeBytes: bytes.length,
-          metadata: {
-            role: "reference",
-            uploadedBy: user.userId,
-          } as Prisma.InputJsonValue,
-        },
-        select: {
-          id: true,
-        },
-      });
+          prompt,
+          sourceAssetId: storedAsset.id,
+          userId: user.userId,
+        });
 
-      const result = await enqueueImageGeneration({
-        projectId,
-        prompt,
-        sourceAssetId: storedAsset.id,
-        userId: user.userId,
-      });
+        return Response.json(result, { status: 202 });
+      } catch (error) {
+        // Best-effort cleanup. Never let cleanup errors mask the root failure.
+        await Promise.allSettled([
+          tempPath ? deleteFile(tempPath) : Promise.resolve(),
+          storedAssetId
+            ? prisma.asset.deleteMany({ where: { id: storedAssetId } })
+            : Promise.resolve(),
+          deleteFile(destinationPath),
+        ]);
 
-      await prisma.asset.update({
-        where: {
-          id: storedAsset.id,
-        },
-        data: {
-          taskId: result.taskId,
-        },
-      });
-
-      return Response.json(result, { status: 202 });
+        throw error;
+      }
     }
 
     const result = await enqueueImageGeneration({

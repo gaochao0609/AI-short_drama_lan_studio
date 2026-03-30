@@ -1,5 +1,5 @@
 import path from "node:path";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { Prisma, TaskType } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { enqueueTask } from "@/lib/queues/enqueue";
@@ -12,6 +12,7 @@ function normalizePrompt(prompt: string) {
 }
 
 const ALLOWED_PREVIEW_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
+const INLINE_PREVIEW_MAX_BYTES = 64 * 1024;
 
 function getMaxUploadMb() {
   const maxUploadMb = Number(process.env.MAX_UPLOAD_MB ?? "25");
@@ -29,7 +30,7 @@ function getMaxUploadBytes() {
 
 export async function getImagesWorkspaceData(projectId: string, userId: string) {
   const project = await getProject(projectId, userId);
-  const maxUploadBytes = getMaxUploadBytes();
+  const inlinePreviewCapBytes = Math.min(INLINE_PREVIEW_MAX_BYTES, getMaxUploadBytes());
   const storageRoot = getStorageRoot();
 
   const assets = await prisma.asset.findMany({
@@ -65,7 +66,10 @@ export async function getImagesWorkspaceData(projectId: string, userId: string) 
         createdAt: asset.createdAt.toISOString(),
       };
 
-      if (!ALLOWED_PREVIEW_MIME_TYPES.has(asset.mimeType) || asset.sizeBytes > maxUploadBytes) {
+      if (
+        !ALLOWED_PREVIEW_MIME_TYPES.has(asset.mimeType) ||
+        asset.sizeBytes > inlinePreviewCapBytes
+      ) {
         return {
           ...base,
           previewDataUrl: null as string | null,
@@ -76,9 +80,16 @@ export async function getImagesWorkspaceData(projectId: string, userId: string) 
         const filePath = path.isAbsolute(asset.storagePath)
           ? asset.storagePath
           : path.join(storageRoot, asset.storagePath);
+        const fileStat = await stat(filePath);
+        if (fileStat.size > inlinePreviewCapBytes) {
+          return {
+            ...base,
+            previewDataUrl: null as string | null,
+          };
+        }
         const bytes = await readFile(filePath);
 
-        if (bytes.length > maxUploadBytes) {
+        if (bytes.length > inlinePreviewCapBytes) {
           return {
             ...base,
             previewDataUrl: null as string | null,

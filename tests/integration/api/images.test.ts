@@ -1,5 +1,5 @@
 import path from "node:path";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { UserRole, UserStatus, type PrismaClient } from "@prisma/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -22,6 +22,23 @@ afterEach(() => {
   vi.doUnmock("next/headers");
   vi.resetModules();
 });
+
+async function listFilesRecursively(root: string) {
+  const items = await readdir(root, { withFileTypes: true }).catch(() => []);
+  const files: string[] = [];
+
+  for (const item of items) {
+    const fullPath = path.join(root, item.name);
+
+    if (item.isDirectory()) {
+      files.push(...(await listFilesRecursively(fullPath)));
+    } else if (item.isFile()) {
+      files.push(fullPath);
+    }
+  }
+
+  return files;
+}
 
 describe("images workspace api", () => {
   it("returns project image assets with previews for owned projects", async () => {
@@ -170,6 +187,78 @@ describe("images workspace api", () => {
     });
   });
 
+  it("does not inline previews for large image assets", async () => {
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      const storageRoot = await mkdtemp(path.join(os.tmpdir(), "lan-studio-images-api-preview-cap-"));
+
+      try {
+        await withApiTestEnv(
+          databaseUrl,
+          async () => {
+            const user = await createActiveUser(prisma, "images-preview-cap-owner");
+            const project = await prisma.project.create({
+              data: {
+                ownerId: user.id,
+                title: "Images Preview Cap",
+              },
+            });
+
+            const largeBytes = Buffer.alloc(300 * 1024, 1);
+            const relativePath = path.join("assets", project.id, "large.png");
+            await mkdir(path.join(storageRoot, "assets", project.id), { recursive: true });
+            await writeFile(path.join(storageRoot, relativePath), largeBytes);
+            await prisma.asset.create({
+              data: {
+                projectId: project.id,
+                kind: "image_generated",
+                storagePath: relativePath,
+                originalName: "large.png",
+                mimeType: "image/png",
+                sizeBytes: largeBytes.length,
+              },
+            });
+
+            const session = await insertSessionForUser(prisma, user.id);
+            vi.resetModules();
+            const route = await loadRouteModule<{
+              GET: (request: Request) => Promise<Response>;
+            }>("src/app/api/images/route.ts", {
+              sessionToken: session.token,
+            });
+
+            const response = await route.GET(
+              new Request(`http://localhost/api/images?projectId=${project.id}`, {
+                method: "GET",
+              }),
+            );
+
+            expect(response.status).toBe(200);
+            const payload = await response.json();
+            expect(payload.assets).toEqual([
+              expect.objectContaining({
+                mimeType: "image/png",
+                sizeBytes: largeBytes.length,
+                previewDataUrl: null,
+              }),
+            ]);
+
+            const { getImagesWorkspaceData } = await import("@/lib/services/images");
+            const servicePayload = await getImagesWorkspaceData(project.id, user.id);
+            expect(servicePayload.assets[0]?.previewDataUrl ?? null).toBeNull();
+
+            const filePath = path.join(storageRoot, relativePath);
+            await expect(stat(filePath)).resolves.toEqual(expect.objectContaining({ size: largeBytes.length }));
+          },
+          {
+            STORAGE_ROOT: storageRoot,
+          },
+        );
+      } finally {
+        await rm(storageRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
   it("persists uploaded reference images as assets and associates them to the image task", async () => {
     await withTestDatabase(async ({ databaseUrl, prisma }) => {
       const storageRoot = await mkdtemp(path.join(os.tmpdir(), "lan-studio-images-api-upload-"));
@@ -242,7 +331,6 @@ describe("images workspace api", () => {
             expect(asset).toEqual(
               expect.objectContaining({
                 projectId: project.id,
-                taskId: payload.taskId!,
                 kind: "image_reference",
                 originalName: "reference.png",
                 mimeType: "image/png",
@@ -318,6 +406,85 @@ describe("images workspace api", () => {
                 },
               }),
             ).toBe(0);
+          },
+          {
+            STORAGE_ROOT: storageRoot,
+          },
+        );
+      } finally {
+        await rm(storageRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it("cleans up uploaded reference assets if enqueueing fails", async () => {
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      const storageRoot = await mkdtemp(path.join(os.tmpdir(), "lan-studio-images-api-enqueue-fail-"));
+
+      try {
+        await withApiTestEnv(
+          databaseUrl,
+          async () => {
+            const user = await createActiveUser(prisma, "images-enqueue-fail-owner");
+            const project = await prisma.project.create({
+              data: {
+                ownerId: user.id,
+                title: "Images Enqueue Fail",
+              },
+            });
+            const session = await insertSessionForUser(prisma, user.id);
+
+            const enqueueError = new Error("enqueue failed");
+            const enqueueMock = vi.fn(async () => {
+              throw enqueueError;
+            });
+
+            vi.resetModules();
+            vi.doMock("@/lib/services/images", () => ({
+              enqueueImageGeneration: enqueueMock,
+              getImagesWorkspaceData: vi.fn(),
+            }));
+
+            const route = await loadRouteModule<{
+              POST: (request: Request) => Promise<Response>;
+            }>("src/app/api/images/route.ts", {
+              sessionToken: session.token,
+            });
+
+            const referenceBytes = Buffer.from("reference-png-bytes");
+            const referenceFile = new File([referenceBytes], "reference.png", {
+              type: "image/png",
+            });
+            const form = new FormData();
+            form.set("projectId", project.id);
+            form.set("prompt", "Transform this.");
+            form.set("sourceFile", referenceFile);
+
+            const response = await route.POST(
+              {
+                url: "http://localhost/api/images",
+                headers: new Headers({
+                  "content-type": "multipart/form-data; boundary=----vitest",
+                  "content-length": String(referenceBytes.length),
+                }),
+                formData: async () => form,
+              } as unknown as Request,
+            );
+
+            expect(response.status).toBe(500);
+
+            expect(
+              await prisma.asset.count({
+                where: {
+                  projectId: project.id,
+                  kind: "image_reference",
+                },
+              }),
+            ).toBe(0);
+
+            const referencesDir = path.join(storageRoot, "assets", project.id, "references");
+            const files = await listFilesRecursively(referencesDir);
+            expect(files).toEqual([]);
           },
           {
             STORAGE_ROOT: storageRoot,

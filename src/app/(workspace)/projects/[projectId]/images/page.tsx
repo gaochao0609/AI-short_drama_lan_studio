@@ -142,12 +142,29 @@ export default function ProjectImagesPage() {
     }
 
     if (polledTask.status === "SUCCEEDED") {
-      setStatusMessage("Image generated.");
       setError(null);
       setActiveTaskId(null);
-      if (projectId) {
-        void reloadWorkspace(projectId).catch(() => undefined);
+
+      if (!projectId) {
+        setStatusMessage("Image generated.");
+        return;
       }
+
+      setStatusMessage("Refreshing results...");
+
+      void (async () => {
+        try {
+          await reloadWorkspace(projectId);
+          setStatusMessage("Image generated.");
+        } catch (refreshError) {
+          setStatusMessage(null);
+          const message =
+            refreshError instanceof Error
+              ? refreshError.message
+              : "Failed to load images";
+          setError(`Image generated, but failed to refresh results: ${message}`);
+        }
+      })();
       return;
     }
 
