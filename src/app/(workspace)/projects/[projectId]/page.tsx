@@ -33,6 +33,9 @@ export default async function ProjectDetailPage({ params }: PageProps) {
           <Link href={`/projects/${project.id}/script`} style={primaryLinkStyle}>
             Open script workflow
           </Link>
+          <Link href={`/projects/${project.id}/storyboard`} style={secondaryLinkStyle}>
+            Open storyboard workflow
+          </Link>
         </div>
       </header>
 
@@ -66,6 +69,12 @@ export default async function ProjectDetailPage({ params }: PageProps) {
           </Link>
           <p style={workflowMetaStyle}>
             Use the guided Q&A flow to turn the project idea into a script task.
+          </p>
+          <Link href={`/projects/${project.id}/storyboard`} style={workflowLinkStyle}>
+            Storyboard workflow
+          </Link>
+          <p style={workflowMetaStyle}>
+            Split the latest script version into storyboard segments and copy prompts.
           </p>
         </div>
       </article>
