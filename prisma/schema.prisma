@@ -26,7 +26,6 @@ enum TaskStatus {
 }
 
 enum TaskType {
-  SCRIPT_QUESTION
   SCRIPT_FINALIZE
   STORYBOARD
   IMAGE
@@ -35,6 +34,7 @@ enum TaskType {
 
 enum ScriptSessionStatus {
   ACTIVE
+  FINALIZING
   COMPLETED
   CANCELED
 }
@@ -205,6 +205,7 @@ model Task {
   inputJson         Json               @map("input_json")
   outputJson        Json?              @map("output_json")
   errorText         String?            @map("error_text")
+  cancelRequestedAt DateTime?          @map("cancel_requested_at")
   startedAt         DateTime?          @map("started_at")
   finishedAt        DateTime?          @map("finished_at")
   createdAt         DateTime           @default(now()) @map("created_at")
@@ -239,19 +240,22 @@ model TaskStep {
 }
 
 model ModelProvider {
-  id           String   @id @default(cuid())
-  key          String   @unique
-  label        String
-  providerName String   @map("provider_name")
-  modelName    String?  @map("model_name")
-  baseUrl      String?  @map("base_url")
-  apiKey       String?  @map("api_key")
-  timeoutMs    Int      @default(30000) @map("timeout_ms")
-  maxRetries   Int      @default(2) @map("max_retries")
-  configJson   Json?    @map("config_json")
-  enabled      Boolean  @default(true)
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  id               String   @id @default(cuid())
+  key              String   @unique
+  label            String
+  providerName     String   @map("provider_name")
+  modelName        String?  @map("model_name")
+  baseUrl          String?  @map("base_url")
+  apiKeyCiphertext String?  @map("api_key_ciphertext")
+  apiKeyIv         String?  @map("api_key_iv")
+  apiKeyAuthTag    String?  @map("api_key_auth_tag")
+  apiKeyMaskedTail String?  @map("api_key_masked_tail")
+  timeoutMs        Int      @default(30000) @map("timeout_ms")
+  maxRetries       Int      @default(2) @map("max_retries")
+  configJson       Json?    @map("config_json")
+  enabled          Boolean  @default(true)
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
 
   @@map("model_providers")
 }

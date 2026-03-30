@@ -24,7 +24,6 @@ async function withQueueTestEnv<T>(databaseUrl: string, callback: () => Promise<
         return await callback();
       } finally {
         await closeQueues();
-        await connection.flushdb();
         await connection.quit();
       }
     },
@@ -72,11 +71,6 @@ async function createOwnedTask(
 
 describe("queue bootstrap", () => {
   it.each([
-    {
-      taskType: TaskType.SCRIPT_QUESTION,
-      expectedQueueName: "script-queue",
-      expectedAttempts: 3,
-    },
     {
       taskType: TaskType.SCRIPT_FINALIZE,
       expectedQueueName: "script-queue",

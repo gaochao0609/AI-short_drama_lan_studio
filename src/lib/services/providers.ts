@@ -7,6 +7,7 @@ import {
   UpdateProviderInputSchema,
   type UpdateProviderInput,
 } from "@/lib/models/contracts";
+import { encryptApiKey } from "@/lib/security/secrets";
 import {
   getProviderTaskTypes,
   hasExplicitDefaultTasks,
@@ -16,6 +17,10 @@ import {
 import { ServiceError } from "@/lib/services/errors";
 
 type ProviderMutationInput = CreateProviderInput | UpdateProviderInput;
+type EncryptedApiKeyUpdate = Pick<
+  Prisma.ModelProviderUncheckedCreateInput,
+  "apiKeyCiphertext" | "apiKeyIv" | "apiKeyAuthTag" | "apiKeyMaskedTail"
+>;
 
 function toConfigJson(value: ProviderMutationInput["configJson"]) {
   return value as Prisma.InputJsonValue;
@@ -32,6 +37,19 @@ function toOptionalUpdate<T>(
 
 function toStoredConfig(config: ProviderConfig) {
   return config as Prisma.InputJsonValue;
+}
+
+function toEncryptedApiKeyUpdate(apiKey: string | null): EncryptedApiKeyUpdate {
+  if (apiKey === null) {
+    return {
+      apiKeyCiphertext: null,
+      apiKeyIv: null,
+      apiKeyAuthTag: null,
+      apiKeyMaskedTail: null,
+    };
+  }
+
+  return encryptApiKey(apiKey);
 }
 
 function arrayShallowEqual(left: string[], right: string[]) {
@@ -100,11 +118,11 @@ export async function createProvider(rawInput: unknown) {
           providerName: input.providerName,
           modelName: input.modelName,
           baseUrl: input.baseUrl,
-          apiKey: input.apiKey,
           timeoutMs: input.timeoutMs,
           maxRetries: input.maxRetries,
           enabled: input.enabled,
           configJson: toConfigJson(input.configJson),
+          ...toEncryptedApiKeyUpdate(input.apiKey),
         },
       });
 
@@ -167,7 +185,12 @@ export async function updateProvider(rawInput: unknown) {
       data.baseUrl = value;
     });
     toOptionalUpdate(input.apiKey, (value) => {
-      data.apiKey = value;
+      const encryptedApiKey = toEncryptedApiKeyUpdate(value);
+
+      data.apiKeyCiphertext = encryptedApiKey.apiKeyCiphertext;
+      data.apiKeyIv = encryptedApiKey.apiKeyIv;
+      data.apiKeyAuthTag = encryptedApiKey.apiKeyAuthTag;
+      data.apiKeyMaskedTail = encryptedApiKey.apiKeyMaskedTail;
     });
     toOptionalUpdate(input.timeoutMs, (value) => {
       data.timeoutMs = value;

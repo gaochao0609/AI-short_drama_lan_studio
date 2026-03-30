@@ -25,15 +25,6 @@ test("main auth flow covers request approval login and forced password change", 
   try {
     const adminPasswordHash = await hash(adminPassword, 12);
 
-    await prisma.session.deleteMany({
-      where: {
-        user: {
-          username: {
-            in: [adminUsername, requesterUsername],
-          },
-        },
-      },
-    });
     await prisma.accountRequest.deleteMany({
       where: {
         username: requesterUsername,
@@ -140,15 +131,6 @@ test("main auth flow covers request approval login and forced password change", 
       }),
     );
   } finally {
-    await prisma.session.deleteMany({
-      where: {
-        user: {
-          username: {
-            in: [adminUsername, requesterUsername],
-          },
-        },
-      },
-    });
     await prisma.accountRequest.deleteMany({
       where: {
         username: requesterUsername,

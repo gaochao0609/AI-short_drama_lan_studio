@@ -1,7 +1,7 @@
 import { headers } from "next/headers";
-import { createSession, SESSION_COOKIE_NAME } from "@/lib/auth/session";
+import { createSession, getSessionCookieOptions, SESSION_COOKIE_NAME } from "@/lib/auth/session";
 import { createJsonObjectSchema, JsonStringSchema, JsonTrimmedStringSchema, parseJsonBody } from "@/lib/http/validation";
-import { toErrorResponse, shouldUseSecureCookies } from "@/lib/services/errors";
+import { toErrorResponse } from "@/lib/services/errors";
 import { authenticateUser } from "@/lib/services/users";
 
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -13,12 +13,14 @@ const LoginBodySchema = createJsonObjectSchema({
 });
 
 function buildSessionCookie(token: string, expiresAt: Date) {
+  const cookieOptions = getSessionCookieOptions(process.env.APP_URL ?? "");
+
   return [
     `${SESSION_COOKIE_NAME}=${token}`,
-    "Path=/",
+    `Path=${cookieOptions.path}`,
     "HttpOnly",
     "SameSite=Lax",
-    ...(shouldUseSecureCookies() ? ["Secure"] : []),
+    ...(cookieOptions.secure ? ["Secure"] : []),
     `Expires=${expiresAt.toUTCString()}`,
   ].join("; ");
 }

@@ -64,7 +64,7 @@ describe("admin providers api", () => {
                 timeoutMs: 45000,
                 maxRetries: 3,
                 enabled: true,
-                hasApiKey: true,
+                apiKeyMaskedTail: "****oken",
                 configJson: {
                   defaultForTasks: ["script_question_generate", "script_finalize"],
                 },
@@ -98,7 +98,7 @@ describe("admin providers api", () => {
                 modelName: "gpt-4.1-mini",
                 timeoutMs: 60000,
                 enabled: false,
-                hasApiKey: true,
+                apiKeyMaskedTail: "****oken",
                 configJson: {
                   defaultForTasks: ["script_finalize"],
                 },
@@ -117,6 +117,19 @@ describe("admin providers api", () => {
                 modelName: "gpt-4.1-mini",
                 timeoutMs: 60000,
                 enabled: false,
+                apiKeyCiphertext: expect.any(String),
+                apiKeyIv: expect.any(String),
+                apiKeyAuthTag: expect.any(String),
+                apiKeyMaskedTail: "****oken",
+              }),
+            );
+            await expect(
+              prisma.modelProvider.findUniqueOrThrow({
+                where: { key: "script-premium" },
+              }),
+            ).resolves.not.toEqual(
+              expect.objectContaining({
+                apiKeyCiphertext: "secret-token",
               }),
             );
           },
@@ -142,6 +155,7 @@ describe("admin providers api", () => {
         await withApiTestEnv(
           databaseUrl,
           async () => {
+            const { encryptApiKey } = await import("@/lib/security/secrets");
             const admin = await prisma.user.update({
               where: { username: "admin-providers-tests" },
               data: { forcePasswordChange: false },
@@ -149,7 +163,7 @@ describe("admin providers api", () => {
             await prisma.modelProvider.update({
               where: { key: "script" },
               data: {
-                apiKey: "initial-secret",
+                ...encryptApiKey("initial-secret"),
               },
             });
             const adminSession = await insertSessionForUser(prisma, admin.id);
@@ -169,7 +183,7 @@ describe("admin providers api", () => {
             expect(scriptProvider).toEqual(
               expect.objectContaining({
                 key: "script",
-                hasApiKey: true,
+                apiKeyMaskedTail: "****cret",
               }),
             );
             expect(scriptProvider).not.toHaveProperty("apiKey");
@@ -194,7 +208,10 @@ describe("admin providers api", () => {
               expect.objectContaining({
                 key: "script",
                 label: "Script Keep Secret",
-                apiKey: "initial-secret",
+                apiKeyCiphertext: expect.any(String),
+                apiKeyIv: expect.any(String),
+                apiKeyAuthTag: expect.any(String),
+                apiKeyMaskedTail: "****cret",
               }),
             );
 
@@ -217,7 +234,10 @@ describe("admin providers api", () => {
             ).resolves.toEqual(
               expect.objectContaining({
                 key: "script",
-                apiKey: "replacement-secret",
+                apiKeyCiphertext: expect.any(String),
+                apiKeyIv: expect.any(String),
+                apiKeyAuthTag: expect.any(String),
+                apiKeyMaskedTail: "****cret",
               }),
             );
 
@@ -236,7 +256,7 @@ describe("admin providers api", () => {
             await expect(clearResponse.json()).resolves.toEqual({
               provider: expect.objectContaining({
                 key: "script",
-                hasApiKey: false,
+                apiKeyMaskedTail: null,
               }),
             });
             await expect(
@@ -246,7 +266,10 @@ describe("admin providers api", () => {
             ).resolves.toEqual(
               expect.objectContaining({
                 key: "script",
-                apiKey: null,
+                apiKeyCiphertext: null,
+                apiKeyIv: null,
+                apiKeyAuthTag: null,
+                apiKeyMaskedTail: null,
               }),
             );
           },

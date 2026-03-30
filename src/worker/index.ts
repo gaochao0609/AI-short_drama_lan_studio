@@ -1,4 +1,7 @@
+import process from "node:process";
+import { fileURLToPath } from "node:url";
 import { Worker } from "bullmq";
+import { waitForDatabase } from "@/lib/db";
 import { bootstrapWorkerEnv } from "@/worker/env";
 
 export type WorkerRuntime = {
@@ -11,6 +14,7 @@ export type WorkerRuntime = {
 
 export async function startWorkerRuntime(): Promise<WorkerRuntime> {
   bootstrapWorkerEnv();
+  await waitForDatabase();
 
   const [
     { createScriptWorker },
@@ -75,4 +79,29 @@ async function waitForWorkerStartup(workers: Worker[]) {
       }
     }
   }
+}
+
+function isWorkerEntrypoint() {
+  if (!process.argv[1]) {
+    return false;
+  }
+
+  return fileURLToPath(import.meta.url) === process.argv[1];
+}
+
+if (isWorkerEntrypoint()) {
+  void (async () => {
+    const runtime = await startWorkerRuntime();
+
+    const shutdown = async () => {
+      await runtime.close();
+      process.exit(0);
+    };
+
+    process.once("SIGINT", shutdown);
+    process.once("SIGTERM", shutdown);
+  })().catch((error: unknown) => {
+    console.error(error);
+    process.exit(1);
+  });
 }

@@ -32,8 +32,16 @@ const requiredColumns = {
     "model_metadata_json",
   ],
   storyboard_versions: ["model_provider_key", "model_name", "model_metadata_json"],
+  tasks: ["cancel_requested_at"],
   task_steps: ["retry_count", "log", "raw_response_summary"],
-  model_providers: ["timeout_ms", "max_retries"],
+  model_providers: [
+    "timeout_ms",
+    "max_retries",
+    "api_key_ciphertext",
+    "api_key_iv",
+    "api_key_auth_tag",
+    "api_key_masked_tail",
+  ],
 } as const;
 
 describe("database schema", () => {
@@ -58,7 +66,14 @@ describe("database schema", () => {
         SELECT table_name, column_name
         FROM information_schema.columns
         WHERE table_schema = 'public'
-          AND table_name IN ('script_sessions', 'script_versions', 'storyboard_versions', 'task_steps', 'model_providers')
+          AND table_name IN ('script_sessions', 'script_versions', 'storyboard_versions', 'tasks', 'task_steps', 'model_providers')
+      `;
+      const enumRows = await prisma.$queryRaw<Array<{ enumlabel: string }>>`
+        SELECT e.enumlabel
+        FROM pg_type t
+        JOIN pg_enum e
+          ON e.enumtypid = t.oid
+        WHERE t.typname = 'TaskType'
       `;
       const foreignKeyRows = await prisma.$queryRaw<
         Array<{
@@ -104,6 +119,34 @@ describe("database schema", () => {
             foreign_table_name: "script_versions",
             foreign_column_name: "id",
           }),
+        ]),
+      );
+      expect(enumRows.map((row) => row.enumlabel).sort()).toEqual([
+        "IMAGE",
+        "SCRIPT_FINALIZE",
+        "STORYBOARD",
+        "VIDEO",
+      ]);
+    });
+  });
+
+  it("does not retain the plaintext model provider api_key column after all migrations", async () => {
+    await withTestDatabase(async ({ prisma }) => {
+      const rows = await prisma.$queryRaw<Array<{ column_name: string }>>`
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'model_providers'
+      `;
+      const columnNames = rows.map((row) => row.column_name);
+
+      expect(columnNames).not.toContain("api_key");
+      expect(columnNames).toEqual(
+        expect.arrayContaining([
+          "api_key_ciphertext",
+          "api_key_iv",
+          "api_key_auth_tag",
+          "api_key_masked_tail",
         ]),
       );
     });

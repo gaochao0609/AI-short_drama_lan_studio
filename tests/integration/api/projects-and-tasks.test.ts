@@ -376,4 +376,48 @@ describe("projects and tasks api", () => {
       });
     });
   });
+
+  it("does not allow accessing another user's task", async () => {
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      await withApiTestEnv(databaseUrl, async () => {
+        const owner = await createActiveUser(prisma, "task-owner-private");
+        const otherUser = await createActiveUser(prisma, "task-owner-private-other");
+        const otherSession = await insertSessionForUser(prisma, otherUser.id);
+        const project = await prisma.project.create({
+          data: {
+            ownerId: owner.id,
+            title: "Private Task Project",
+          },
+        });
+        const task = await prisma.task.create({
+          data: {
+            projectId: project.id,
+            createdById: owner.id,
+            type: TaskType.IMAGE,
+            inputJson: {
+              prompt: "Keep this private",
+            },
+          },
+        });
+        const { GET } = await loadRouteModule<{
+          GET: (
+            request: Request,
+            context: { params: Promise<{ taskId: string }> | { taskId: string } },
+          ) => Promise<Response>;
+        }>("src/app/api/tasks/[taskId]/route.ts", {
+          sessionToken: otherSession.token,
+        });
+
+        const response = await GET(
+          new Request(`http://localhost/api/tasks/${task.id}`),
+          { params: { taskId: task.id } },
+        );
+
+        expect(response.status).toBe(404);
+        await expect(response.json()).resolves.toEqual({
+          error: "Task not found",
+        });
+      });
+    });
+  });
 });

@@ -1,17 +1,19 @@
 import { cookies } from "next/headers";
 import { requireUser } from "@/lib/auth/guards";
-import { hashSessionToken, SESSION_COOKIE_NAME } from "@/lib/auth/session";
+import { getSessionCookieOptions, hashSessionToken, SESSION_COOKIE_NAME } from "@/lib/auth/session";
 import { prisma } from "@/lib/db";
-import { shouldUseSecureCookies, toErrorResponse } from "@/lib/services/errors";
+import { toErrorResponse } from "@/lib/services/errors";
 import { logoutBySession } from "@/lib/services/users";
 
 function buildClearedSessionCookie() {
+  const cookieOptions = getSessionCookieOptions(process.env.APP_URL ?? "");
+
   return [
     `${SESSION_COOKIE_NAME}=`,
-    "Path=/",
+    `Path=${cookieOptions.path}`,
     "HttpOnly",
     "SameSite=Lax",
-    ...(shouldUseSecureCookies() ? ["Secure"] : []),
+    ...(cookieOptions.secure ? ["Secure"] : []),
     "Max-Age=0",
     "Expires=Thu, 01 Jan 1970 00:00:00 GMT",
   ].join("; ");

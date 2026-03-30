@@ -58,18 +58,21 @@ describe("database seed", () => {
           });
 
           for (const key of defaultModelKeys) {
-            await prisma.modelProvider.update({
-              where: { key },
-              data: {
-                label: `${key}-custom-label`,
-                providerName: `${key}-provider`,
-                modelName: `${key}-model`,
-                baseUrl: `https://${key}.example.test`,
-                apiKey: `${key}-secret-ref`,
-                configJson: { key, preserved: true },
-                enabled: false,
-              },
-            });
+              await prisma.modelProvider.update({
+                where: { key },
+                data: {
+                  label: `${key}-custom-label`,
+                  providerName: `${key}-provider`,
+                  modelName: `${key}-model`,
+                  baseUrl: `https://${key}.example.test`,
+                  apiKeyCiphertext: `${key}-ciphertext`,
+                  apiKeyIv: `${key}-iv`,
+                  apiKeyAuthTag: `${key}-tag`,
+                  apiKeyMaskedTail: `****-${key.slice(-3)}`,
+                  configJson: { key, preserved: true },
+                  enabled: false,
+                },
+              });
           }
 
           runSeed(databaseUrl, {
@@ -97,7 +100,10 @@ describe("database seed", () => {
                   providerName: `${key}-provider`,
                   modelName: `${key}-model`,
                   baseUrl: `https://${key}.example.test`,
-                  apiKey: `${key}-secret-ref`,
+                  apiKeyCiphertext: `${key}-ciphertext`,
+                  apiKeyIv: `${key}-iv`,
+                  apiKeyAuthTag: `${key}-tag`,
+                  apiKeyMaskedTail: `****-${key.slice(-3)}`,
                   configJson: { key, preserved: true },
                   enabled: false,
                 }),
@@ -119,7 +125,10 @@ describe("database seed", () => {
                   providerName: originalProvider.providerName,
                   modelName: originalProvider.modelName,
                   baseUrl: originalProvider.baseUrl,
-                  apiKey: originalProvider.apiKey,
+                  apiKeyCiphertext: originalProvider.apiKeyCiphertext,
+                  apiKeyIv: originalProvider.apiKeyIv,
+                  apiKeyAuthTag: originalProvider.apiKeyAuthTag,
+                  apiKeyMaskedTail: originalProvider.apiKeyMaskedTail,
                   configJson:
                     originalProvider.configJson === null
                       ? Prisma.JsonNull

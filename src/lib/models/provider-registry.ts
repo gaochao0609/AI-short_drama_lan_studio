@@ -24,7 +24,7 @@ export type ProviderRecord = {
   providerName: string;
   modelName: string | null;
   baseUrl: string | null;
-  hasApiKey: boolean;
+  apiKeyMaskedTail: string | null;
   timeoutMs: number;
   maxRetries: number;
   enabled: boolean;
@@ -34,7 +34,9 @@ export type ProviderRecord = {
 };
 
 export type ProviderRuntimeRecord = ProviderRecord & {
-  apiKey: string | null;
+  apiKeyCiphertext: string | null;
+  apiKeyIv: string | null;
+  apiKeyAuthTag: string | null;
 };
 
 export type DefaultModelSummary = {
@@ -94,7 +96,7 @@ export function toProviderRecord(provider: ModelProvider): ProviderRecord {
     providerName: provider.providerName,
     modelName: provider.modelName,
     baseUrl: provider.baseUrl,
-    hasApiKey: provider.apiKey !== null,
+    apiKeyMaskedTail: provider.apiKeyMaskedTail,
     timeoutMs: provider.timeoutMs,
     maxRetries: provider.maxRetries,
     enabled: provider.enabled,
@@ -110,7 +112,9 @@ export function toProviderRecord(provider: ModelProvider): ProviderRecord {
 function toProviderRuntimeRecord(provider: ModelProvider): ProviderRuntimeRecord {
   return {
     ...toProviderRecord(provider),
-    apiKey: provider.apiKey,
+    apiKeyCiphertext: provider.apiKeyCiphertext,
+    apiKeyIv: provider.apiKeyIv,
+    apiKeyAuthTag: provider.apiKeyAuthTag,
   };
 }
 
