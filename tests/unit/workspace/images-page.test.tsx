@@ -296,4 +296,185 @@ describe("project images page", () => {
     });
     expect(screen.queryByRole("heading", { name: "Project A" })).not.toBeInTheDocument();
   });
+
+  it("ignores stale workspace failures when projectId changes mid-flight", async () => {
+    const pendingRejects = new Map<string, (error: Error) => void>();
+
+    function deferredFailure(url: string) {
+      let reject!: (error: Error) => void;
+      const promise = new Promise<Response>((_, rej) => {
+        reject = rej;
+      });
+      pendingRejects.set(url, reject);
+      return promise;
+    }
+
+    useParamsMock.mockReturnValue({
+      projectId: "project-a",
+    });
+
+    fetchMock.mockImplementation(async (input) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+
+      if (url === "/api/images?projectId=project-a") {
+        return deferredFailure(url);
+      }
+
+      if (url === "/api/images?projectId=project-b") {
+        return jsonResponse(
+          {
+            project: { id: "project-b", title: "Project B", idea: null },
+            maxUploadMb: 25,
+            assets: [],
+          },
+          200,
+        );
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    const pageModule = await import("@/app/(workspace)/projects/[projectId]/images/page");
+    const { rerender } = render(<pageModule.default />);
+
+    // Navigate before A fails.
+    useParamsMock.mockReturnValue({
+      projectId: "project-b",
+    });
+    rerender(<pageModule.default />);
+
+    expect(await screen.findByRole("heading", { name: "Project B" })).toBeInTheDocument();
+
+    const rejectA = pendingRejects.get("/api/images?projectId=project-a");
+    expect(rejectA).toBeDefined();
+    rejectA!(new Error("Network timeout"));
+
+    // Allow any state updates to flush; stale A failure must not overwrite B state.
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Project B" })).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/network timeout/i)).not.toBeInTheDocument();
+  });
+
+  it("ignores stale refresh failures after success when projectId changes", async () => {
+    const pendingResponses = new Map<string, (value: Response) => void>();
+
+    function deferredResponse(url: string) {
+      let resolve!: (value: Response) => void;
+      const promise = new Promise<Response>((res) => {
+        resolve = res;
+      });
+      pendingResponses.set(url, resolve);
+      return promise;
+    }
+
+    useParamsMock.mockReturnValue({
+      projectId: "project-a",
+    });
+
+    useTaskPollingMock.mockImplementation((taskId?: string | null) => ({
+      task:
+        taskId === "task-a"
+          ? {
+              id: "task-a",
+              status: "SUCCEEDED",
+              outputJson: { ok: true, outputAssetId: "asset-a2" },
+            }
+          : undefined,
+      error: undefined,
+      isLoading: false,
+      mutate: vi.fn(),
+      isFinished: false,
+    }));
+
+    let requestCountA = 0;
+
+    fetchMock.mockImplementation(async (input, init) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+
+      if (url === "/api/images?projectId=project-a") {
+        requestCountA += 1;
+
+        if (requestCountA === 1) {
+          return jsonResponse(
+            {
+              project: { id: "project-a", title: "Project A", idea: null },
+              maxUploadMb: 25,
+              assets: [],
+            },
+            200,
+          );
+        }
+
+        // Second request is the post-success refresh: resolve later with failure.
+        return deferredResponse(url);
+      }
+
+      if (url === "/api/images?projectId=project-b") {
+        return jsonResponse(
+          {
+            project: { id: "project-b", title: "Project B", idea: null },
+            maxUploadMb: 25,
+            assets: [],
+          },
+          200,
+        );
+      }
+
+      if (url === "/api/images" && init?.method === "POST") {
+        return jsonResponse({ taskId: "task-a" }, 202);
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    const pageModule = await import("@/app/(workspace)/projects/[projectId]/images/page");
+    const { rerender } = render(<pageModule.default />);
+
+    expect(await screen.findByRole("heading", { name: "Project A" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Image prompt input"), {
+      target: { value: "Generate." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate image" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/images",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+
+    // Wait until the post-success refresh request for project-a is in-flight.
+    await waitFor(() => {
+      expect(pendingResponses.has("/api/images?projectId=project-a")).toBe(true);
+    });
+
+    // Navigate while the refresh for project-a is still pending.
+    useParamsMock.mockReturnValue({
+      projectId: "project-b",
+    });
+    rerender(<pageModule.default />);
+
+    expect(await screen.findByRole("heading", { name: "Project B" })).toBeInTheDocument();
+
+    const resolveRefreshA = pendingResponses.get("/api/images?projectId=project-a");
+    expect(resolveRefreshA).toBeDefined();
+    resolveRefreshA!(jsonResponse({ error: "Refresh failed" }, 500));
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Project B" })).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/refresh failed/i)).not.toBeInTheDocument();
+  });
 });

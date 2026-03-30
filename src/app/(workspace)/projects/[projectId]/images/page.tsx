@@ -66,30 +66,47 @@ export default function ProjectImagesPage() {
     setProjectId(params.projectId ?? "");
   }, [params]);
 
-  async function reloadWorkspace(nextProjectId: string) {
+  async function reloadWorkspace(nextProjectId: string): Promise<boolean> {
     // Bump request id so slower earlier responses cannot overwrite newer state.
     const requestId = (workspaceRequestSeq.current += 1);
 
-    const response = await fetch(`/api/images?projectId=${encodeURIComponent(nextProjectId)}`, {
-      cache: "no-store",
-    });
-    const payload = (await response.json().catch(() => null)) as
-      | ImagesWorkspaceResponse
-      | { error?: string }
-      | null;
+    try {
+      const response = await fetch(`/api/images?projectId=${encodeURIComponent(nextProjectId)}`, {
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | ImagesWorkspaceResponse
+        | { error?: string }
+        | null;
 
-    if (!response.ok || !payload || !("project" in payload)) {
-      throw new Error(
-        payload && "error" in payload ? payload.error ?? "Failed to load images" : "Failed to load images",
-      );
+      if (!response.ok || !payload || !("project" in payload)) {
+        // Ignore failures from stale requests.
+        if (requestId !== workspaceRequestSeq.current) {
+          return false;
+        }
+
+        throw new Error(
+          payload && "error" in payload
+            ? payload.error ?? "Failed to load images"
+            : "Failed to load images",
+        );
+      }
+
+      // Ignore responses that are no longer the latest request.
+      if (requestId !== workspaceRequestSeq.current) {
+        return false;
+      }
+
+      setWorkspace(payload);
+      return true;
+    } catch (error) {
+      // Ignore failures from stale requests.
+      if (requestId !== workspaceRequestSeq.current) {
+        return false;
+      }
+
+      throw error;
     }
-
-    // Ignore responses that are no longer the latest request.
-    if (requestId !== workspaceRequestSeq.current) {
-      return;
-    }
-
-    setWorkspace(payload);
   }
 
   useEffect(() => {
@@ -104,9 +121,9 @@ export default function ProjectImagesPage() {
       setError(null);
 
       try {
-        await reloadWorkspace(projectId);
+        const applied = await reloadWorkspace(projectId);
 
-        if (!cancelled) {
+        if (!cancelled && applied) {
           setSourceAssetId("");
         }
       } catch (loadError) {
@@ -163,7 +180,10 @@ export default function ProjectImagesPage() {
 
       void (async () => {
         try {
-          await reloadWorkspace(projectId);
+          const applied = await reloadWorkspace(projectId);
+          if (!applied) {
+            return;
+          }
           setStatusMessage("Image generated.");
         } catch (refreshError) {
           setStatusMessage(null);
