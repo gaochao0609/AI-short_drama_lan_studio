@@ -2,6 +2,7 @@
 
 import type { CSSProperties } from "react";
 import { useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import useTaskPolling from "@/hooks/useTaskPolling";
@@ -37,6 +38,8 @@ type TaskPollResponse = {
 };
 
 type Mode = "text" | "image";
+
+const EMPTY_ASSETS: ImageAssetSummary[] = [];
 
 function getMaxUploadBytes(maxUploadMb: number) {
   const parsed = Number(maxUploadMb);
@@ -156,7 +159,7 @@ export default function ProjectImagesPage() {
   }, [activeTaskId, projectId, task]);
 
   const maxUploadBytes = getMaxUploadBytes(workspace?.maxUploadMb ?? 25);
-  const assets = workspace?.assets ?? [];
+  const assets = workspace?.assets ?? EMPTY_ASSETS;
 
   const selectableAssets = useMemo(() => {
     return assets.filter((asset) => asset.mimeType.startsWith("image/"));
@@ -296,9 +299,12 @@ export default function ProjectImagesPage() {
             </select>
             {selectedAsset?.previewDataUrl ? (
               <figure style={previewFigureStyle}>
-                <img
+                <Image
                   src={selectedAsset.previewDataUrl}
                   alt="Reference preview"
+                  width={420}
+                  height={220}
+                  unoptimized
                   style={previewImageStyle}
                 />
               </figure>
@@ -350,9 +356,12 @@ export default function ProjectImagesPage() {
             {assets.map((asset) => (
               <figure key={asset.id} style={assetCardStyle}>
                 {asset.previewDataUrl ? (
-                  <img
+                  <Image
                     src={asset.previewDataUrl}
                     alt={`Asset ${asset.id}`}
+                    width={320}
+                    height={180}
+                    unoptimized
                     style={assetImageStyle}
                   />
                 ) : (
@@ -363,7 +372,7 @@ export default function ProjectImagesPage() {
                 <figcaption style={assetCaptionStyle}>
                   <strong style={assetIdStyle}>{asset.id}</strong>
                   <span style={assetMetaStyle}>
-                    {asset.mimeType} · {Math.round(asset.sizeBytes / 1024)} KB
+                    {asset.mimeType} - {Math.round(asset.sizeBytes / 1024)} KB
                   </span>
                 </figcaption>
               </figure>
@@ -604,4 +613,3 @@ const previewImageStyle = {
   borderRadius: "18px",
   border: "1px solid rgba(31, 27, 22, 0.12)",
 } satisfies CSSProperties;
-
