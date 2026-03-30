@@ -35,7 +35,16 @@ type ScriptVersionSummary = {
   createdAt: string;
 };
 
-type ProjectResponse = {
+type StoryboardWorkspaceResponse = {
+  project: {
+    id: string;
+    title: string;
+    idea?: string | null;
+  };
+  scriptVersions: ScriptVersionSummary[];
+};
+
+type StoryboardPageData = {
   id: string;
   title: string;
   idea?: string | null;
@@ -45,7 +54,7 @@ type ProjectResponse = {
 export default function ProjectStoryboardPage() {
   const params = useParams<{ projectId: string }>();
   const [projectId, setProjectId] = useState("");
-  const [project, setProject] = useState<ProjectResponse | null>(null);
+  const [project, setProject] = useState<StoryboardPageData | null>(null);
   const [selectedScriptVersionId, setSelectedScriptVersionId] = useState<string | null>(null);
   const [storyboardResult, setStoryboardResult] = useState<StoryboardTaskOutput | null>(null);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
@@ -71,11 +80,11 @@ export default function ProjectStoryboardPage() {
       setIsLoadingProject(true);
 
       try {
-        const response = await fetch(`/api/projects/${projectId}`, {
+        const response = await fetch(`/api/storyboards?projectId=${projectId}`, {
           cache: "no-store",
         });
         const payload = (await response.json().catch(() => null)) as
-          | ProjectResponse
+          | StoryboardWorkspaceResponse
           | { error?: string }
           | null;
 
@@ -87,8 +96,13 @@ export default function ProjectStoryboardPage() {
           );
         }
 
-        if (!cancelled && payload && "scriptVersions" in payload) {
-          setProject(payload);
+        if (!cancelled && payload && "project" in payload) {
+          setProject({
+            id: payload.project.id,
+            title: payload.project.title,
+            idea: payload.project.idea ?? null,
+            scriptVersions: payload.scriptVersions,
+          });
           setSelectedScriptVersionId((current) => {
             const currentVersionStillExists =
               current &&

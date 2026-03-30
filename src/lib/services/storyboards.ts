@@ -1,4 +1,4 @@
-import { Prisma, TaskType } from "@prisma/client";
+import { Prisma, TaskStatus, TaskType } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { enqueueTask } from "@/lib/queues/enqueue";
@@ -15,7 +15,28 @@ export const StoryboardSegmentSchema = z.object({
   videoPrompt: z.string().trim().min(1),
 });
 
-export const StoryboardSegmentsSchema = z.array(StoryboardSegmentSchema).min(1);
+const StoryboardSegmentsBaseSchema = z.array(StoryboardSegmentSchema).min(1);
+
+export const StoryboardSegmentsSchema = StoryboardSegmentsBaseSchema.superRefine(
+  (segments, ctx) => {
+    const seenIndices = new Set<number>();
+
+    for (let index = 0; index < segments.length; index += 1) {
+      const segment = segments[index];
+      const expectedIndex = index + 1;
+
+      if (segment.index !== expectedIndex || seenIndices.has(segment.index)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Storyboard segment indices must be unique and sequential starting at 1",
+          path: [index, "index"],
+        });
+      }
+
+      seenIndices.add(segment.index);
+    }
+  },
+);
 
 export type StoryboardSegment = z.infer<typeof StoryboardSegmentSchema>;
 
@@ -76,36 +97,101 @@ export async function listProjectScriptVersions(projectId: string, userId: strin
   });
 }
 
+export async function getStoryboardWorkspaceData(projectId: string, userId: string) {
+  const [project, scriptVersions] = await Promise.all([
+    getProject(projectId, userId),
+    listProjectScriptVersions(projectId, userId),
+  ]);
+
+  return {
+    project,
+    scriptVersions,
+  };
+}
+
 export async function createStoryboardTask(input: {
   projectId: string;
   scriptVersionId: string;
   userId: string;
 }) {
-  await getProject(input.projectId, input.userId);
   const scriptVersion = await getOwnedScriptVersion(
     input.projectId,
     input.scriptVersionId,
     input.userId,
   );
+  const lockKey = [
+    "storyboard",
+    input.projectId,
+    scriptVersion.id,
+    input.userId,
+  ].join(":");
 
-  const task = await prisma.task.create({
-    data: {
-      projectId: input.projectId,
-      createdById: input.userId,
-      type: TaskType.STORYBOARD,
-      inputJson: {
+  const task = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`
+      SELECT pg_advisory_xact_lock(
+        hashtext(${lockKey}),
+        hashtext(${`${lockKey}:dedupe`})
+      )
+    `;
+
+    const existingTask = await tx.task.findFirst({
+      where: {
         projectId: input.projectId,
-        scriptVersionId: scriptVersion.id,
-        userId: input.userId,
-      } as Prisma.InputJsonValue,
-    },
-    select: {
-      id: true,
-    },
+        createdById: input.userId,
+        type: TaskType.STORYBOARD,
+        inputJson: {
+          equals: {
+            projectId: input.projectId,
+            scriptVersionId: scriptVersion.id,
+            userId: input.userId,
+          },
+        },
+        status: {
+          notIn: [TaskStatus.FAILED, TaskStatus.CANCELED],
+        },
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    if (existingTask) {
+      return {
+        task: existingTask,
+        isNew: false,
+      };
+    }
+
+    const createdTask = await tx.task.create({
+      data: {
+        projectId: input.projectId,
+        createdById: input.userId,
+        type: TaskType.STORYBOARD,
+        inputJson: {
+          projectId: input.projectId,
+          scriptVersionId: scriptVersion.id,
+          userId: input.userId,
+        } as Prisma.InputJsonValue,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    return {
+      task: createdTask,
+      isNew: true,
+    };
   });
 
+  if (!task.isNew) {
+    return {
+      taskId: task.task.id,
+    };
+  }
+
   try {
-    await enqueueTask(task.id, TaskType.STORYBOARD, {
+    await enqueueTask(task.task.id, TaskType.STORYBOARD, {
       projectId: input.projectId,
       scriptVersionId: scriptVersion.id,
       userId: input.userId,
@@ -113,7 +199,7 @@ export async function createStoryboardTask(input: {
   } catch (error) {
     await prisma.task.deleteMany({
       where: {
-        id: task.id,
+        id: task.task.id,
         projectId: input.projectId,
         createdById: input.userId,
         type: TaskType.STORYBOARD,
@@ -124,6 +210,6 @@ export async function createStoryboardTask(input: {
   }
 
   return {
-    taskId: task.id,
+    taskId: task.task.id,
   };
 }

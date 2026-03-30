@@ -2,7 +2,6 @@ import { requireUser } from "@/lib/auth/guards";
 import { createJsonObjectSchema, JsonOptionalTrimmedStringSchema, parseJsonBody } from "@/lib/http/validation";
 import { getProject, updateProject } from "@/lib/services/projects";
 import { toErrorResponse } from "@/lib/services/errors";
-import { listProjectScriptVersions } from "@/lib/services/storyboards";
 
 type ProjectRouteContext = {
   params: Promise<{ projectId: string }> | { projectId: string };
@@ -28,18 +27,9 @@ export async function GET(_request: Request, context: ProjectRouteContext) {
   try {
     const user = await requireUser();
     const projectId = await readProjectId(context);
-    const [project, scriptVersions] = await Promise.all([
-      getProject(projectId, user.userId),
-      listProjectScriptVersions(projectId, user.userId),
-    ]);
+    const project = await getProject(projectId, user.userId);
 
-    return Response.json(
-      {
-        ...project,
-        scriptVersions,
-      },
-      { status: 200 },
-    );
+    return Response.json(project, { status: 200 });
   } catch (error) {
     return toErrorResponse(error);
   }
