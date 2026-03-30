@@ -10,6 +10,7 @@ import {
 } from "@/lib/services/storyboards";
 import { ServiceError } from "@/lib/services/errors";
 import { bullmqConnection } from "@/lib/redis";
+import { cancelTaskIfRequested } from "@/worker/processors/cancellation";
 
 type StoryboardPayload = {
   projectId: string;
@@ -143,6 +144,17 @@ async function succeedJob(
   return result;
 }
 
+function createCanceledResult(traceId: string): StoryboardWorkerResult {
+  return {
+    ok: true,
+    traceId,
+    storyboardVersionId: "",
+    segments: [],
+    modelProviderKey: "",
+    modelName: "",
+  };
+}
+
 async function getExistingStoryboardVersion(taskId: string) {
   const task = await prisma.task.findUnique({
     where: {
@@ -197,6 +209,10 @@ export async function processStoryboardJob(
       errorText: null,
     });
 
+    if (await cancelTaskIfRequested(job.data)) {
+      return createCanceledResult(job.data.traceId);
+    }
+
     const existingStoryboardVersion = await getExistingStoryboardVersion(job.data.taskId);
     if (existingStoryboardVersion) {
       const segments = StoryboardSegmentsSchema.parse(existingStoryboardVersion.framesJson);
@@ -247,6 +263,10 @@ export async function processStoryboardJob(
         userId: payload.userId,
       },
     });
+
+    if (await cancelTaskIfRequested(job.data)) {
+      return createCanceledResult(job.data.traceId);
+    }
 
     if (modelResult.status !== "ok" || !modelResult.textOutput?.trim()) {
       throw new Error(

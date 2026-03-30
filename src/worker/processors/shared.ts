@@ -3,6 +3,7 @@ import type { Job, Worker } from "bullmq";
 import { Worker as BullmqWorker } from "bullmq";
 import { prisma } from "@/lib/db";
 import { bullmqConnection } from "@/lib/redis";
+import { cancelTaskIfRequested } from "@/worker/processors/cancellation";
 
 export type MinimalWorkerJobData = {
   taskId: string;
@@ -76,6 +77,10 @@ export async function runMinimalTask(
       startedAt: new Date(),
       errorText: null,
     });
+
+    if (await cancelTaskIfRequested(job.data)) {
+      return result;
+    }
 
     await writeTaskState(job.data, {
       status: TaskStatus.SUCCEEDED,
