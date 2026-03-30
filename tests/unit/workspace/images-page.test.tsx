@@ -576,4 +576,90 @@ describe("project images page", () => {
 
     expect(await screen.findByRole("heading", { name: "Project B" })).toBeInTheDocument();
   });
+
+  it("ignores stale enqueue responses when navigating to a new project", async () => {
+    const pendingPosts = new Map<string, (value: Response) => void>();
+
+    function deferredPost(url: string) {
+      let resolve!: (value: Response) => void;
+      const promise = new Promise<Response>((res) => {
+        resolve = res;
+      });
+      pendingPosts.set(url, resolve);
+      return promise;
+    }
+
+    useParamsMock.mockReturnValue({
+      projectId: "project-a",
+    });
+
+    fetchMock.mockImplementation(async (input, init) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+
+      if (url === "/api/images?projectId=project-a") {
+        return jsonResponse(
+          {
+            project: { id: "project-a", title: "Project A", idea: null },
+            maxUploadMb: 25,
+            assets: [],
+          },
+          200,
+        );
+      }
+
+      if (url === "/api/images?projectId=project-b") {
+        return jsonResponse(
+          {
+            project: { id: "project-b", title: "Project B", idea: null },
+            maxUploadMb: 25,
+            assets: [],
+          },
+          200,
+        );
+      }
+
+      if (url === "/api/images" && init?.method === "POST") {
+        return deferredPost(url);
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    const pageModule = await import("@/app/(workspace)/projects/[projectId]/images/page");
+    const { rerender } = render(<pageModule.default />);
+
+    expect(await screen.findByRole("heading", { name: "Project A" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Image prompt input"), {
+      target: { value: "Generate." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate image" }));
+
+    await waitFor(() => {
+      expect(pendingPosts.has("/api/images")).toBe(true);
+    });
+
+    useParamsMock.mockReturnValue({
+      projectId: "project-b",
+    });
+    rerender(<pageModule.default />);
+
+    expect(await screen.findByRole("heading", { name: "Project B" })).toBeInTheDocument();
+
+    const resolvePost = pendingPosts.get("/api/images");
+    expect(resolvePost).toBeDefined();
+    resolvePost!(jsonResponse({ taskId: "task-a" }, 202));
+
+    // Allow any state updates to flush; stale A enqueue must not appear on B.
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "Project B" })).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Image task queued.")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Task: task-a/i)).not.toBeInTheDocument();
+  });
 });

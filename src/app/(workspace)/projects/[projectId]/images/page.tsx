@@ -49,6 +49,9 @@ function getMaxUploadBytes(maxUploadMb: number) {
 
 export default function ProjectImagesPage() {
   const params = useParams<{ projectId: string }>();
+  const routeProjectId = params.projectId ?? "";
+  const latestRouteProjectIdRef = useRef(routeProjectId);
+  latestRouteProjectIdRef.current = routeProjectId;
   const [projectId, setProjectId] = useState("");
   const [workspace, setWorkspace] = useState<ImagesWorkspaceResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -234,6 +237,7 @@ export default function ProjectImagesPage() {
       return;
     }
 
+    const submitRouteProjectId = latestRouteProjectIdRef.current;
     const trimmedPrompt = prompt.trim();
     if (!trimmedPrompt) {
       setError("Enter a prompt before generating an image");
@@ -280,9 +284,19 @@ export default function ProjectImagesPage() {
         throw new Error(payload?.error ?? "Failed to enqueue image task");
       }
 
+      // Suppress late enqueue responses after navigation.
+      if (latestRouteProjectIdRef.current !== submitRouteProjectId) {
+        return;
+      }
+
       setActiveTaskId(payload.taskId);
       setStatusMessage("Image task queued.");
     } catch (submitError) {
+      // Suppress late enqueue failures after navigation.
+      if (latestRouteProjectIdRef.current !== submitRouteProjectId) {
+        return;
+      }
+
       setStatusMessage(null);
       setError(submitError instanceof Error ? submitError.message : "Failed to enqueue image task");
     } finally {
