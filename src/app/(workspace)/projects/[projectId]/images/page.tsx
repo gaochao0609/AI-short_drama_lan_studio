@@ -118,7 +118,13 @@ export default function ProjectImagesPage() {
 
     async function load() {
       setIsLoading(true);
+      // Project-scoped state must not linger across navigation while the new workspace loads.
+      setWorkspace(null);
+      setActiveTaskId(null);
+      setStatusMessage(null);
       setError(null);
+      setIsSubmitting(false);
+      setSourceAssetId("");
 
       try {
         const applied = await reloadWorkspace(projectId);

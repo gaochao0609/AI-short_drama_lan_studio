@@ -477,4 +477,103 @@ describe("project images page", () => {
     });
     expect(screen.queryByText(/refresh failed/i)).not.toBeInTheDocument();
   });
+
+  it("clears prior project state when navigating to a new project", async () => {
+    const pendingResponses = new Map<string, (value: Response) => void>();
+
+    function deferredResponse(url: string) {
+      let resolve!: (value: Response) => void;
+      const promise = new Promise<Response>((res) => {
+        resolve = res;
+      });
+      pendingResponses.set(url, resolve);
+      return promise;
+    }
+
+    useParamsMock.mockReturnValue({
+      projectId: "project-a",
+    });
+
+    fetchMock.mockImplementation(async (input, init) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+
+      if (url === "/api/images?projectId=project-a") {
+        return jsonResponse(
+          {
+            project: { id: "project-a", title: "Project A", idea: null },
+            maxUploadMb: 25,
+            assets: [
+              {
+                id: "asset-a1",
+                kind: "image_generated",
+                mimeType: "image/png",
+                sizeBytes: 1234,
+                previewDataUrl: "data:image/png;base64,abcd",
+                createdAt: new Date().toISOString(),
+                taskId: "task-1",
+              },
+            ],
+          },
+          200,
+        );
+      }
+
+      if (url === "/api/images?projectId=project-b") {
+        return deferredResponse(url);
+      }
+
+      if (url === "/api/images" && init?.method === "POST") {
+        return jsonResponse({ taskId: "task-a" }, 202);
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    const pageModule = await import("@/app/(workspace)/projects/[projectId]/images/page");
+    const { rerender } = render(<pageModule.default />);
+
+    expect(await screen.findByRole("heading", { name: "Project A" })).toBeInTheDocument();
+    expect(screen.getByText("asset-a1")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Image prompt input"), {
+      target: { value: "Generate." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Generate image" }));
+
+    expect(await screen.findByText("Image task queued.")).toBeInTheDocument();
+    expect(screen.getByText(/Task: task-a/i)).toBeInTheDocument();
+
+    useParamsMock.mockReturnValue({
+      projectId: "project-b",
+    });
+    rerender(<pageModule.default />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Loading project...")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText("asset-a1")).not.toBeInTheDocument();
+    expect(screen.queryByText("Image task queued.")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Task: task-a/i)).not.toBeInTheDocument();
+
+    const resolveB = pendingResponses.get("/api/images?projectId=project-b");
+    expect(resolveB).toBeDefined();
+    resolveB!(
+      jsonResponse(
+        {
+          project: { id: "project-b", title: "Project B", idea: null },
+          maxUploadMb: 25,
+          assets: [],
+        },
+        200,
+      ),
+    );
+
+    expect(await screen.findByRole("heading", { name: "Project B" })).toBeInTheDocument();
+  });
 });
