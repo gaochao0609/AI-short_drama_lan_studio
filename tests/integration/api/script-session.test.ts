@@ -209,7 +209,13 @@ describe("script session api", () => {
             providerKey: "script",
             model: "gpt-4.1-mini",
             traceId: expect.any(String),
+            inputText: expect.stringContaining(
+              "Use Socratic questioning to clarify the concept step by step.",
+            ),
           }),
+        );
+        expect(streamProxyModelMock.mock.calls[0]?.[0]?.inputText).toContain(
+          "Prioritize whichever story element is still vague: characters, core conflict, structure, emotional arc, then ending.",
         );
 
         await expect(
@@ -341,7 +347,13 @@ describe("script session api", () => {
           expect.objectContaining({
             taskType: "script_question_generate",
             traceId: expect.any(String),
+            inputText: expect.stringContaining(
+              "Use Socratic questioning to clarify the concept step by step.",
+            ),
           }),
+        );
+        expect(streamProxyModelMock.mock.calls[0]?.[0]?.inputText).toContain(
+          "Ask about only one missing element at a time and avoid repeating details the user already clarified.",
         );
 
         await expect(

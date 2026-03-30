@@ -163,8 +163,11 @@ function buildQuestionPrompt(
   const qaRecords = parseQaRecords(session.qaRecordsJson);
   const lines = [
     "You are helping a user clarify a short-drama concept.",
+    "Use Socratic questioning to clarify the concept step by step.",
     "Ask exactly one concise next question.",
     "Do not answer for the user.",
+    "Prioritize whichever story element is still vague: characters, core conflict, structure, emotional arc, then ending.",
+    "Ask about only one missing element at a time and avoid repeating details the user already clarified.",
     `Session idea: ${session.idea}`,
   ];
 
