@@ -16,7 +16,7 @@ export async function POST(_request: Request, context: TaskCancelRouteContext) {
     await requireAdmin();
     const taskId = await readTaskId(context);
     const result = await cancelAdminTask(taskId);
-    const status = result.status === "CANCELED" ? 200 : 202;
+    const status = result.status === "RUNNING" || result.status === "QUEUED" ? 202 : 200;
 
     return Response.json(result, { status });
   } catch (error) {

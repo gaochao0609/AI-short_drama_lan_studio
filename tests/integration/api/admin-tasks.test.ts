@@ -354,6 +354,146 @@ describe("admin tasks and storage api", () => {
     );
   });
 
+  it("allows only one admin retry to win when two retry requests race", async () => {
+    await withTestDatabase(
+      async ({ databaseUrl, prisma }) => {
+        const storageRoot = await mkdtemp(path.join(os.tmpdir(), "lan-admin-retry-race-storage-"));
+
+        try {
+          await withAdminQueueTestEnv(
+            databaseUrl,
+            async () => {
+              const admin = await prisma.user.update({
+                where: { username: "admin-auth-tests" },
+                data: { forcePasswordChange: false },
+              });
+              const adminSession = await insertSessionForUser(prisma, admin.id);
+              const user = await createActiveUser(prisma, "admin-retry-race-target");
+              const task = await createTaskFixture(prisma, {
+                ownerId: user.id,
+                title: "Retry race project",
+                type: TaskType.IMAGE,
+                status: TaskStatus.FAILED,
+                errorText: "temporary error",
+                finishedAt: new Date(),
+                taskSteps: [
+                  {
+                    status: TaskStatus.FAILED,
+                    retryCount: 1,
+                    errorText: "temporary error",
+                  },
+                ],
+              });
+
+              const [{ POST }, { prisma: runtimePrisma }, { queues }] = await Promise.all([
+                loadRouteModule<{
+                  POST: (
+                    request: Request,
+                    context: { params: Promise<{ taskId: string }> | { taskId: string } },
+                  ) => Promise<Response>;
+                }>("src/app/api/admin/tasks/[taskId]/retry/route.ts", {
+                  sessionToken: adminSession.token,
+                }),
+                import("@/lib/db"),
+                import("@/lib/queues"),
+              ]);
+
+              const originalFindUnique = runtimePrisma.task.findUnique.bind(runtimePrisma.task);
+              let releaseValidationReads: (() => void) | null = null;
+              const validationReadsReached = new Promise<void>((resolve) => {
+                releaseValidationReads = resolve;
+              });
+              let heldValidationReads = 0;
+              const findUniqueSpy = vi
+                .spyOn(runtimePrisma.task, "findUnique")
+                .mockImplementation(
+                  (async (...args: Parameters<typeof runtimePrisma.task.findUnique>) => {
+                    const query = args[0] as
+                      | { where?: { id?: string }; select?: { inputJson?: boolean } }
+                      | undefined;
+                    const isValidationRead =
+                      query?.where?.id === task.id && query?.select?.inputJson === true;
+
+                    if (isValidationRead) {
+                      heldValidationReads += 1;
+
+                      if (heldValidationReads === 2) {
+                        releaseValidationReads?.();
+                      }
+
+                      await validationReadsReached;
+                    }
+
+                    return originalFindUnique(...args);
+                  }) as unknown as typeof runtimePrisma.task.findUnique,
+                );
+
+              try {
+                const [firstResponse, secondResponse] = await Promise.all([
+                  POST(
+                    jsonRequest(`http://localhost/api/admin/tasks/${task.id}/retry`, undefined, {
+                      method: "POST",
+                    }),
+                    { params: { taskId: task.id } },
+                  ),
+                  POST(
+                    jsonRequest(`http://localhost/api/admin/tasks/${task.id}/retry`, undefined, {
+                      method: "POST",
+                    }),
+                    { params: { taskId: task.id } },
+                  ),
+                ]);
+
+                const statuses = [firstResponse.status, secondResponse.status].sort((left, right) => {
+                  return left - right;
+                });
+                expect(statuses).toEqual([202, 409]);
+
+                const failedResponse =
+                  firstResponse.status === 409 ? firstResponse : secondResponse;
+                await expect(failedResponse.json()).resolves.toEqual({
+                  error: "Task retry is already in progress",
+                });
+
+                const updatedTask = await prisma.task.findUniqueOrThrow({
+                  where: { id: task.id },
+                  include: {
+                    steps: {
+                      orderBy: {
+                        createdAt: "asc",
+                      },
+                    },
+                  },
+                });
+
+                expect(updatedTask.status).toBe(TaskStatus.QUEUED);
+                expect(updatedTask.steps).toHaveLength(2);
+
+                const queuedSteps = updatedTask.steps.filter((step) => step.status === TaskStatus.QUEUED);
+                expect(queuedSteps).toHaveLength(1);
+                await expect(queues.image.getJob(queuedSteps[0].id)).resolves.toBeTruthy();
+              } finally {
+                findUniqueSpy.mockRestore();
+              }
+            },
+            {
+              STORAGE_ROOT: storageRoot,
+            },
+          );
+        } finally {
+          await rm(storageRoot, { recursive: true, force: true });
+        }
+      },
+      {
+        seed: true,
+        seedEnv: {
+          DEFAULT_ADMIN_PASSWORD: "AdminPass123!",
+          DEFAULT_ADMIN_USERNAME: "admin-auth-tests",
+        },
+      },
+    );
+  });
+
   it("cancels queued jobs immediately and marks running jobs as cancel requested", async () => {
     await withTestDatabase(
       async ({ databaseUrl, prisma }) => {
@@ -565,6 +705,224 @@ describe("admin tasks and storage api", () => {
                 );
               } finally {
                 getJobSpy.mockRestore();
+              }
+            },
+            {
+              STORAGE_ROOT: storageRoot,
+            },
+          );
+        } finally {
+          await rm(storageRoot, { recursive: true, force: true });
+        }
+      },
+      {
+        seed: true,
+        seedEnv: {
+          DEFAULT_ADMIN_PASSWORD: "AdminPass123!",
+          DEFAULT_ADMIN_USERNAME: "admin-auth-tests",
+        },
+      },
+    );
+  });
+
+  it("does not write stale cancelRequestedAt when queued removal loses a race to task completion", async () => {
+    await withTestDatabase(
+      async ({ databaseUrl, prisma }) => {
+        const storageRoot = await mkdtemp(path.join(os.tmpdir(), "lan-admin-cancel-finished-queued-"));
+
+        try {
+          await withAdminQueueTestEnv(
+            databaseUrl,
+            async () => {
+              const admin = await prisma.user.update({
+                where: { username: "admin-auth-tests" },
+                data: { forcePasswordChange: false },
+              });
+              const adminSession = await insertSessionForUser(prisma, admin.id);
+              const user = await createActiveUser(prisma, "admin-cancel-finished-queued-target");
+              const queuedTask = await createTaskFixture(prisma, {
+                ownerId: user.id,
+                title: "Queued completion race project",
+                type: TaskType.VIDEO,
+                status: TaskStatus.QUEUED,
+                taskSteps: [
+                  {
+                    status: TaskStatus.QUEUED,
+                    retryCount: 0,
+                  },
+                ],
+              });
+
+              const { queues } = await import("@/lib/queues");
+              const getJobSpy = vi.spyOn(queues.video, "getJob").mockResolvedValue({
+                remove: vi.fn().mockImplementation(async () => {
+                  await prisma.task.update({
+                    where: { id: queuedTask.id },
+                    data: {
+                      status: TaskStatus.SUCCEEDED,
+                      finishedAt: new Date(),
+                      errorText: null,
+                    },
+                  });
+                  throw new Error("Job is locked");
+                }),
+              } as never);
+              const { POST } = await loadRouteModule<{
+                POST: (
+                  request: Request,
+                  context: { params: Promise<{ taskId: string }> | { taskId: string } },
+                ) => Promise<Response>;
+              }>("src/app/api/admin/tasks/[taskId]/cancel/route.ts", {
+                sessionToken: adminSession.token,
+              });
+
+              try {
+                const response = await POST(
+                  jsonRequest(`http://localhost/api/admin/tasks/${queuedTask.id}/cancel`, undefined, {
+                    method: "POST",
+                  }),
+                  { params: { taskId: queuedTask.id } },
+                );
+
+                expect(response.status).toBe(200);
+                await expect(response.json()).resolves.toEqual({
+                  taskId: queuedTask.id,
+                  status: TaskStatus.SUCCEEDED,
+                  cancelRequestedAt: null,
+                });
+                await expect(
+                  prisma.task.findUniqueOrThrow({
+                    where: { id: queuedTask.id },
+                  }),
+                ).resolves.toEqual(
+                  expect.objectContaining({
+                    id: queuedTask.id,
+                    status: TaskStatus.SUCCEEDED,
+                    cancelRequestedAt: null,
+                  }),
+                );
+              } finally {
+                getJobSpy.mockRestore();
+              }
+            },
+            {
+              STORAGE_ROOT: storageRoot,
+            },
+          );
+        } finally {
+          await rm(storageRoot, { recursive: true, force: true });
+        }
+      },
+      {
+        seed: true,
+        seedEnv: {
+          DEFAULT_ADMIN_PASSWORD: "AdminPass123!",
+          DEFAULT_ADMIN_USERNAME: "admin-auth-tests",
+        },
+      },
+    );
+  });
+
+  it("does not write stale cancelRequestedAt when a running task finishes before cancel is stored", async () => {
+    await withTestDatabase(
+      async ({ databaseUrl, prisma }) => {
+        const storageRoot = await mkdtemp(path.join(os.tmpdir(), "lan-admin-cancel-finished-running-"));
+
+        try {
+          await withAdminQueueTestEnv(
+            databaseUrl,
+            async () => {
+              const admin = await prisma.user.update({
+                where: { username: "admin-auth-tests" },
+                data: { forcePasswordChange: false },
+              });
+              const adminSession = await insertSessionForUser(prisma, admin.id);
+              const user = await createActiveUser(prisma, "admin-cancel-finished-running-target");
+              const runningTask = await createTaskFixture(prisma, {
+                ownerId: user.id,
+                title: "Running completion race project",
+                type: TaskType.STORYBOARD,
+                status: TaskStatus.RUNNING,
+                startedAt: new Date(),
+                taskSteps: [
+                  {
+                    status: TaskStatus.RUNNING,
+                    retryCount: 0,
+                  },
+                ],
+              });
+
+              const { prisma: runtimePrisma } = await import("@/lib/db");
+              const originalFindUnique = runtimePrisma.task.findUnique.bind(runtimePrisma.task);
+              let injectedCompletion = false;
+              const findUniqueSpy = vi
+                .spyOn(runtimePrisma.task, "findUnique")
+                .mockImplementation(
+                  (async (...args: Parameters<typeof runtimePrisma.task.findUnique>) => {
+                    const query = args[0] as
+                      | {
+                          where?: { id?: string };
+                          select?: { steps?: unknown; cancelRequestedAt?: boolean };
+                        }
+                      | undefined;
+                    const isInitialCancelRead =
+                      !injectedCompletion &&
+                      query?.where?.id === runningTask.id &&
+                      query?.select?.steps !== undefined &&
+                      query?.select?.cancelRequestedAt === true;
+                    const result = await originalFindUnique(...args);
+
+                    if (isInitialCancelRead) {
+                      injectedCompletion = true;
+                      await prisma.task.update({
+                        where: { id: runningTask.id },
+                        data: {
+                          status: TaskStatus.SUCCEEDED,
+                          finishedAt: new Date(),
+                          errorText: null,
+                        },
+                      });
+                    }
+
+                    return result;
+                  }) as unknown as typeof runtimePrisma.task.findUnique,
+                );
+              const { POST } = await loadRouteModule<{
+                POST: (
+                  request: Request,
+                  context: { params: Promise<{ taskId: string }> | { taskId: string } },
+                ) => Promise<Response>;
+              }>("src/app/api/admin/tasks/[taskId]/cancel/route.ts", {
+                sessionToken: adminSession.token,
+              });
+
+              try {
+                const response = await POST(
+                  jsonRequest(`http://localhost/api/admin/tasks/${runningTask.id}/cancel`, undefined, {
+                    method: "POST",
+                  }),
+                  { params: { taskId: runningTask.id } },
+                );
+
+                expect(response.status).toBe(200);
+                await expect(response.json()).resolves.toEqual({
+                  taskId: runningTask.id,
+                  status: TaskStatus.SUCCEEDED,
+                  cancelRequestedAt: null,
+                });
+                await expect(
+                  prisma.task.findUniqueOrThrow({
+                    where: { id: runningTask.id },
+                  }),
+                ).resolves.toEqual(
+                  expect.objectContaining({
+                    id: runningTask.id,
+                    status: TaskStatus.SUCCEEDED,
+                    cancelRequestedAt: null,
+                  }),
+                );
+              } finally {
+                findUniqueSpy.mockRestore();
               }
             },
             {

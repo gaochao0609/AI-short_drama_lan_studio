@@ -203,8 +203,8 @@ export default function AdminTasksPage() {
           <div>
             <h3 style={panelTitleStyle}>Recent 100 tasks</h3>
             <p style={copyStyle}>
-              Showing the newest 100 tasks, with failed jobs first so retries and cancellations are easy
-              to reach.
+              Showing the newest 100 tasks so recent queue activity, completions, and failures stay in
+              one view.
             </p>
           </div>
           <button type="button" style={secondaryButtonStyle} onClick={() => void loadTasks()}>

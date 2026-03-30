@@ -223,6 +223,25 @@ function isQueueRemoveRace(error: unknown) {
   return message.includes("lock") || message.includes("locked") || message.includes("active");
 }
 
+async function readCurrentTaskStatus(taskId: string) {
+  const task = await prisma.task.findUnique({
+    where: {
+      id: taskId,
+    },
+    select: {
+      id: true,
+      status: true,
+      cancelRequestedAt: true,
+    },
+  });
+
+  if (!task) {
+    throw new ServiceError(404, "Task not found");
+  }
+
+  return task;
+}
+
 export async function retryAdminTask(taskId: string) {
   const task = await prisma.task.findUnique({
     where: {
@@ -244,9 +263,12 @@ export async function retryAdminTask(taskId: string) {
     throw new ServiceError(409, "Only failed or canceled tasks can be retried");
   }
 
-  await prisma.task.update({
+  const updateResult = await prisma.task.updateMany({
     where: {
       id: task.id,
+      status: {
+        in: [TaskStatus.FAILED, TaskStatus.CANCELED],
+      },
     },
     data: {
       status: TaskStatus.QUEUED,
@@ -257,6 +279,16 @@ export async function retryAdminTask(taskId: string) {
       finishedAt: null,
     },
   });
+
+  if (updateResult.count !== 1) {
+    const currentTask = await readCurrentTaskStatus(task.id);
+
+    if (currentTask.status === TaskStatus.QUEUED || currentTask.status === TaskStatus.RUNNING) {
+      throw new ServiceError(409, "Task retry is already in progress");
+    }
+
+    throw new ServiceError(409, "Only failed or canceled tasks can be retried");
+  }
 
   const enqueueResult = await enqueueTask(task.id, task.type, task.inputJson);
 
@@ -318,14 +350,25 @@ export async function cancelAdminTask(taskId: string) {
           throw error;
         }
 
-        await prisma.task.update({
+        const updateResult = await prisma.task.updateMany({
           where: {
             id: task.id,
+            status: TaskStatus.QUEUED,
           },
           data: {
             cancelRequestedAt: now,
           },
         });
+
+        if (updateResult.count !== 1) {
+          const currentTask = await readCurrentTaskStatus(task.id);
+
+          return {
+            taskId: currentTask.id,
+            status: currentTask.status,
+            cancelRequestedAt: currentTask.cancelRequestedAt,
+          };
+        }
 
         return {
           taskId: task.id,
@@ -335,10 +378,11 @@ export async function cancelAdminTask(taskId: string) {
       }
     }
 
-    await prisma.$transaction([
-      prisma.task.update({
+    const [taskUpdateResult] = await prisma.$transaction([
+      prisma.task.updateMany({
         where: {
           id: task.id,
+          status: TaskStatus.QUEUED,
         },
         data: {
           status: TaskStatus.CANCELED,
@@ -348,9 +392,10 @@ export async function cancelAdminTask(taskId: string) {
           errorText: "Canceled by admin",
         },
       }),
-      prisma.taskStep.update({
+      prisma.taskStep.updateMany({
         where: {
           id: latestStep.id,
+          status: TaskStatus.QUEUED,
         },
         data: {
           status: TaskStatus.CANCELED,
@@ -358,6 +403,16 @@ export async function cancelAdminTask(taskId: string) {
         },
       }),
     ]);
+
+    if (taskUpdateResult.count !== 1) {
+      const currentTask = await readCurrentTaskStatus(task.id);
+
+      return {
+        taskId: currentTask.id,
+        status: currentTask.status,
+        cancelRequestedAt: currentTask.cancelRequestedAt,
+      };
+    }
 
     return {
       taskId: task.id,
@@ -367,25 +422,43 @@ export async function cancelAdminTask(taskId: string) {
   }
 
   if (task.status === TaskStatus.RUNNING) {
-    const cancelRequestedAt = task.cancelRequestedAt ?? new Date();
+    if (task.cancelRequestedAt) {
+      const currentTask = await readCurrentTaskStatus(task.id);
 
-    if (!task.cancelRequestedAt) {
-      await prisma.task.update({
-        where: {
-          id: task.id,
-        },
-        data: {
-          cancelRequestedAt,
-        },
-      });
+      return {
+        taskId: currentTask.id,
+        status: currentTask.status,
+        cancelRequestedAt: currentTask.cancelRequestedAt,
+      };
     }
 
-  return {
-    taskId: task.id,
-    status: TaskStatus.RUNNING,
-    cancelRequestedAt,
-  };
-}
+    const cancelRequestedAt = new Date();
+    const updateResult = await prisma.task.updateMany({
+      where: {
+        id: task.id,
+        status: TaskStatus.RUNNING,
+      },
+      data: {
+        cancelRequestedAt,
+      },
+    });
+
+    if (updateResult.count !== 1) {
+      const currentTask = await readCurrentTaskStatus(task.id);
+
+      return {
+        taskId: currentTask.id,
+        status: currentTask.status,
+        cancelRequestedAt: currentTask.cancelRequestedAt,
+      };
+    }
+
+    return {
+      taskId: task.id,
+      status: TaskStatus.RUNNING,
+      cancelRequestedAt,
+    };
+  }
 
   throw new ServiceError(409, "Only queued or running tasks can be canceled");
 }
