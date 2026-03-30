@@ -1,5 +1,5 @@
 import path from "node:path";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { UserRole, UserStatus, type PrismaClient } from "@prisma/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -159,6 +159,165 @@ describe("images workspace api", () => {
             );
 
             expect(response.status).toBe(404);
+          },
+          {
+            STORAGE_ROOT: storageRoot,
+          },
+        );
+      } finally {
+        await rm(storageRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it("persists uploaded reference images as assets and associates them to the image task", async () => {
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      const storageRoot = await mkdtemp(path.join(os.tmpdir(), "lan-studio-images-api-upload-"));
+
+      try {
+        await withApiTestEnv(
+          databaseUrl,
+          async () => {
+            const user = await createActiveUser(prisma, "images-upload-owner");
+            const project = await prisma.project.create({
+              data: {
+                ownerId: user.id,
+                title: "Images Upload Project",
+              },
+            });
+            const session = await insertSessionForUser(prisma, user.id);
+            vi.resetModules();
+            const route = await loadRouteModule<{
+              POST: (request: Request) => Promise<Response>;
+            }>("src/app/api/images/route.ts", {
+              sessionToken: session.token,
+            });
+
+            const referenceBytes = Buffer.from("reference-png-bytes");
+            const referenceFile = new File([referenceBytes], "reference.png", {
+              type: "image/png",
+            });
+            const form = new FormData();
+            form.set("projectId", project.id);
+            form.set("prompt", "Transform this image into a watercolor poster.");
+            form.set("sourceFile", referenceFile);
+
+            const response = await route.POST(
+              {
+                url: "http://localhost/api/images",
+                headers: new Headers({
+                  "content-type": "multipart/form-data; boundary=----vitest",
+                  "content-length": String(referenceBytes.length),
+                }),
+                formData: async () => form,
+              } as unknown as Request,
+            );
+
+            expect(response.status).toBe(202);
+            const payload = (await response.json()) as { taskId?: string };
+            expect(payload.taskId).toEqual(expect.any(String));
+
+            const task = await prisma.task.findUniqueOrThrow({
+              where: {
+                id: payload.taskId!,
+              },
+            });
+
+            expect(task.inputJson).toEqual(
+              expect.objectContaining({
+                projectId: project.id,
+                prompt: expect.any(String),
+                mode: "image_edit",
+                sourceAssetId: expect.any(String),
+              }),
+            );
+
+            const sourceAssetId = (task.inputJson as { sourceAssetId?: string }).sourceAssetId!;
+            const asset = await prisma.asset.findUniqueOrThrow({
+              where: {
+                id: sourceAssetId,
+              },
+            });
+
+            expect(asset).toEqual(
+              expect.objectContaining({
+                projectId: project.id,
+                taskId: payload.taskId!,
+                kind: "image_reference",
+                originalName: "reference.png",
+                mimeType: "image/png",
+                sizeBytes: referenceBytes.length,
+              }),
+            );
+
+            const filePath = path.isAbsolute(asset.storagePath)
+              ? asset.storagePath
+              : path.join(storageRoot, asset.storagePath);
+            await expect(readFile(filePath)).resolves.toEqual(referenceBytes);
+          },
+          {
+            STORAGE_ROOT: storageRoot,
+          },
+        );
+      } finally {
+        await rm(storageRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it("rejects multipart requests without content-length before parsing formData", async () => {
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      const storageRoot = await mkdtemp(path.join(os.tmpdir(), "lan-studio-images-api-bound-"));
+
+      try {
+        await withApiTestEnv(
+          databaseUrl,
+          async () => {
+            const user = await createActiveUser(prisma, "images-bound-owner");
+            const project = await prisma.project.create({
+              data: {
+                ownerId: user.id,
+                title: "Images Bound Project",
+              },
+            });
+            const session = await insertSessionForUser(prisma, user.id);
+            vi.resetModules();
+            const route = await loadRouteModule<{
+              POST: (request: Request) => Promise<Response>;
+            }>("src/app/api/images/route.ts", {
+              sessionToken: session.token,
+            });
+
+            const formDataSpy = vi.fn(async () => {
+              throw new Error("formData should not be called");
+            });
+
+            const response = await route.POST(
+              {
+                url: "http://localhost/api/images",
+                headers: new Headers({
+                  "content-type": "multipart/form-data; boundary=----vitest",
+                }),
+                formData: formDataSpy,
+              } as unknown as Request,
+            );
+
+            expect(response.status).toBe(413);
+            expect(formDataSpy).not.toHaveBeenCalled();
+
+            await expect(response.json()).resolves.toEqual(
+              expect.objectContaining({
+                error: expect.stringMatching(/content-length/i),
+              }),
+            );
+
+            expect(
+              await prisma.task.count({
+                where: {
+                  projectId: project.id,
+                },
+              }),
+            ).toBe(0);
           },
           {
             STORAGE_ROOT: storageRoot,

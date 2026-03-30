@@ -1,8 +1,18 @@
 export const runtime = "nodejs";
 
+import path from "node:path";
+import { randomUUID } from "node:crypto";
+import { Prisma } from "@prisma/client";
 import { requireUser } from "@/lib/auth/guards";
+import { prisma } from "@/lib/db";
 import { ServiceError, toErrorResponse } from "@/lib/services/errors";
 import { enqueueImageGeneration, getImagesWorkspaceData } from "@/lib/services/images";
+import { getProject } from "@/lib/services/projects";
+import { writeTempFile, promoteTempFile } from "@/lib/storage/fs-storage";
+import { getStorageRoot } from "@/lib/storage/paths";
+
+const MULTIPART_OVERHEAD_BYTES = 256 * 1024;
+const ALLOWED_IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 function getMaxUploadBytes() {
   const maxUploadMb = Number(process.env.MAX_UPLOAD_MB ?? "25");
@@ -21,6 +31,27 @@ function toPayloadTooLargeResponse(message = "Payload Too Large") {
     },
     { status: 413 },
   );
+}
+
+function isMultipartRequest(request: Request) {
+  const contentType = request.headers.get("content-type") ?? "";
+  return contentType.toLowerCase().includes("multipart/form-data");
+}
+
+function getFileExtension(mimeType: string) {
+  if (mimeType === "image/png") {
+    return "png";
+  }
+
+  if (mimeType === "image/jpeg") {
+    return "jpg";
+  }
+
+  if (mimeType === "image/webp") {
+    return "webp";
+  }
+
+  return "bin";
 }
 
 export async function GET(request: Request) {
@@ -45,12 +76,22 @@ export async function POST(request: Request) {
     const user = await requireUser();
     const maxBytes = getMaxUploadBytes();
 
+    if (!isMultipartRequest(request)) {
+      throw new ServiceError(400, "multipart/form-data is required");
+    }
+
     const contentLengthHeader = request.headers.get("content-length");
-    if (contentLengthHeader) {
-      const parsed = Number(contentLengthHeader);
-      if (Number.isFinite(parsed) && parsed > maxBytes + 64 * 1024) {
-        return toPayloadTooLargeResponse("Payload too large");
-      }
+    if (!contentLengthHeader) {
+      return toPayloadTooLargeResponse("Payload too large (missing content-length)");
+    }
+
+    const parsedLength = Number(contentLengthHeader);
+    if (!Number.isFinite(parsedLength) || parsedLength <= 0) {
+      return toPayloadTooLargeResponse("Payload too large (invalid content-length)");
+    }
+
+    if (parsedLength > maxBytes + MULTIPART_OVERHEAD_BYTES) {
+      return toPayloadTooLargeResponse("Payload too large");
     }
 
     const form = await request.formData();
@@ -67,6 +108,8 @@ export async function POST(request: Request) {
       throw new ServiceError(400, "prompt is required");
     }
 
+    await getProject(projectId, user.userId);
+
     if (sourceAssetId && sourceFile) {
       throw new ServiceError(400, "Provide either sourceAssetId or sourceFile, not both");
     }
@@ -75,6 +118,63 @@ export async function POST(request: Request) {
       if (sourceFile.size > maxBytes) {
         return toPayloadTooLargeResponse("Payload too large");
       }
+
+      if (!ALLOWED_IMAGE_MIME_TYPES.has(sourceFile.type)) {
+        throw new ServiceError(409, "Unsupported source image type");
+      }
+
+      const bytes = Buffer.from(await sourceFile.arrayBuffer());
+      if (bytes.length > maxBytes) {
+        return toPayloadTooLargeResponse("Payload too large");
+      }
+
+      const storageRoot = getStorageRoot();
+      const extension = getFileExtension(sourceFile.type);
+      const destinationPath = path.join(
+        storageRoot,
+        "assets",
+        projectId,
+        "references",
+        `${randomUUID()}.${extension}`,
+      );
+      const tempPath = await writeTempFile(bytes);
+      await promoteTempFile(tempPath, destinationPath);
+      const storedAsset = await prisma.asset.create({
+        data: {
+          projectId,
+          taskId: null,
+          kind: "image_reference",
+          storagePath: path.relative(storageRoot, destinationPath),
+          originalName: sourceFile.name || null,
+          mimeType: sourceFile.type,
+          sizeBytes: bytes.length,
+          metadata: {
+            role: "reference",
+            uploadedBy: user.userId,
+          } as Prisma.InputJsonValue,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      const result = await enqueueImageGeneration({
+        projectId,
+        prompt,
+        sourceAssetId: storedAsset.id,
+        userId: user.userId,
+      });
+
+      await prisma.asset.update({
+        where: {
+          id: storedAsset.id,
+        },
+        data: {
+          taskId: result.taskId,
+        },
+      });
+
+      return Response.json(result, { status: 202 });
     }
 
     const result = await enqueueImageGeneration({
