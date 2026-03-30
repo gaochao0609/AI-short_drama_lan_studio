@@ -24,6 +24,7 @@ type AssetSummary = {
   taskId: string | null;
   createdAt: string;
   previewDataUrl: string | null;
+  previewUrl?: string | null;
 };
 
 async function toAssetSummary(
@@ -39,6 +40,7 @@ async function toAssetSummary(
   input: {
     allowedMimeTypes: Set<string>;
     inlinePreviewCapBytes: number;
+    previewUrl?: string;
   },
 ): Promise<AssetSummary> {
   const base = {
@@ -48,6 +50,7 @@ async function toAssetSummary(
     sizeBytes: asset.sizeBytes,
     taskId: asset.taskId,
     createdAt: asset.createdAt.toISOString(),
+    previewUrl: input.previewUrl ?? null,
   };
 
   if (
@@ -178,6 +181,7 @@ export async function getVideosWorkspaceData(projectId: string, userId: string) 
         toAssetSummary(asset, {
           allowedMimeTypes: PREVIEWABLE_VIDEO_MIME_TYPES,
           inlinePreviewCapBytes: INLINE_VIDEO_PREVIEW_MAX_BYTES,
+          previewUrl: `/api/videos?projectId=${project.id}&assetId=${asset.id}`,
         }),
       ),
     ),
@@ -188,6 +192,49 @@ export async function getVideosWorkspaceData(projectId: string, userId: string) 
       errorText: task.errorText,
       outputJson: task.outputJson,
     })),
+  };
+}
+
+export async function readOwnedVideoAsset(input: {
+  projectId: string;
+  assetId: string;
+  userId: string;
+}) {
+  await getProject(input.projectId, input.userId);
+
+  const asset = await prisma.asset.findFirst({
+    where: {
+      id: input.assetId,
+      projectId: input.projectId,
+      project: {
+        ownerId: input.userId,
+      },
+      mimeType: {
+        startsWith: "video/",
+      },
+    },
+    select: {
+      id: true,
+      mimeType: true,
+      sizeBytes: true,
+      storagePath: true,
+      originalName: true,
+    },
+  });
+
+  if (!asset) {
+    throw new ServiceError(404, "Video asset not found");
+  }
+
+  const storageRoot = getStorageRoot();
+  const filePath = path.isAbsolute(asset.storagePath)
+    ? asset.storagePath
+    : path.join(storageRoot, asset.storagePath);
+  const bytes = await readFile(filePath);
+
+  return {
+    ...asset,
+    bytes,
   };
 }
 

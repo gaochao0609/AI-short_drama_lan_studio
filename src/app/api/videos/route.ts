@@ -3,7 +3,11 @@ export const runtime = "nodejs";
 import { z } from "zod";
 import { requireUser } from "@/lib/auth/guards";
 import { ServiceError, toErrorResponse } from "@/lib/services/errors";
-import { getVideosWorkspaceData, enqueueVideoGeneration } from "@/lib/services/videos";
+import {
+  enqueueVideoGeneration,
+  getVideosWorkspaceData,
+  readOwnedVideoAsset,
+} from "@/lib/services/videos";
 import { parseJsonBody } from "@/lib/http/validation";
 
 const CreateVideoBodySchema = z.object({
@@ -17,10 +21,30 @@ const CreateVideoBodySchema = z.object({
 export async function GET(request: Request) {
   try {
     const user = await requireUser();
-    const projectId = new URL(request.url).searchParams.get("projectId")?.trim();
+    const url = new URL(request.url);
+    const projectId = url.searchParams.get("projectId")?.trim();
+    const assetId = url.searchParams.get("assetId")?.trim();
 
     if (!projectId) {
       throw new ServiceError(400, "projectId is required");
+    }
+
+    if (assetId) {
+      const asset = await readOwnedVideoAsset({
+        projectId,
+        assetId,
+        userId: user.userId,
+      });
+
+      return new Response(asset.bytes, {
+        status: 200,
+        headers: {
+          "cache-control": "private, max-age=60",
+          "content-length": String(asset.bytes.length),
+          "content-type": asset.mimeType,
+          "content-disposition": `inline; filename="${asset.originalName ?? `${asset.id}.bin`}"`,
+        },
+      });
     }
 
     const payload = await getVideosWorkspaceData(projectId, user.userId);

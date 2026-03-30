@@ -93,9 +93,25 @@ async function writeTaskState(
     finishedAt?: Date;
     outputJson?: VideoWorkerResult | Prisma.NullTypes.DbNull;
     errorText?: string | null;
+    logMessage?: string;
     retryCount?: number;
   },
 ) {
+  const existingTaskStep = await prisma.taskStep.findUnique({
+    where: {
+      id: jobData.taskStepId,
+    },
+    select: {
+      log: true,
+    },
+  });
+  const nextLog =
+    input.logMessage === undefined
+      ? undefined
+      : [existingTaskStep?.log, `[${new Date().toISOString()}] ${input.logMessage}`]
+          .filter((value): value is string => Boolean(value))
+          .join("\n");
+
   await prisma.$transaction([
     prisma.task.update({
       where: {
@@ -118,6 +134,7 @@ async function writeTaskState(
         retryCount: input.retryCount,
         outputJson: input.outputJson,
         errorText: input.errorText,
+        ...(nextLog === undefined ? {} : { log: nextLog }),
       },
     }),
   ]);
@@ -252,6 +269,7 @@ async function succeedJob(
     finishedAt: new Date(),
     outputJson: result,
     errorText: null,
+    logMessage: `Saved generated video asset ${input.outputAssetId} and completed video generation`,
     retryCount: input.retryCount,
   });
 
@@ -268,6 +286,7 @@ export async function processVideoJob(
       status: TaskStatus.RUNNING,
       startedAt: new Date(),
       errorText: null,
+      logMessage: "Started video generation",
     });
 
     const modelSummary = await getDefaultModelSummary("video_generate");
@@ -359,6 +378,7 @@ export async function processVideoJob(
         finishedAt: status === TaskStatus.FAILED ? new Date() : undefined,
         outputJson: status === TaskStatus.FAILED ? Prisma.DbNull : undefined,
         errorText,
+        logMessage: `Video generation failed: ${errorText}`,
         retryCount,
       });
     } catch {

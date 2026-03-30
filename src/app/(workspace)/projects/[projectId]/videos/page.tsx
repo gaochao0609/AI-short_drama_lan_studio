@@ -15,6 +15,7 @@ type AssetSummary = {
   taskId?: string | null;
   createdAt: string;
   previewDataUrl?: string | null;
+  previewUrl?: string | null;
 };
 
 type VideoTaskSummary = {
@@ -369,7 +370,7 @@ export default function ProjectVideosPage() {
                     <span style={referenceMetaStyle}>
                       {asset.id}
                       <br />
-                      {asset.kind} · {Math.round(asset.sizeBytes / 1024)} KB
+                      {asset.kind} - {Math.round(asset.sizeBytes / 1024)} KB
                     </span>
                   </button>
                 );
@@ -416,7 +417,7 @@ export default function ProjectVideosPage() {
                 <div key={taskItem.id} style={taskCardStyle}>
                   <strong>{taskItem.id}</strong>
                   <span style={taskMetaStyle}>
-                    {taskItem.status} · {new Date(taskItem.createdAt).toLocaleString()}
+                    {taskItem.status} - {new Date(taskItem.createdAt).toLocaleString()}
                   </span>
                   {taskItem.errorText ? <span style={taskErrorStyle}>{taskItem.errorText}</span> : null}
                 </div>
@@ -433,15 +434,20 @@ export default function ProjectVideosPage() {
             <div style={videoGridStyle}>
               {videoAssets.map((asset) => (
                 <figure key={asset.id} style={videoCardStyle}>
-                  {asset.previewDataUrl ? (
-                    <video controls preload="metadata" style={videoPreviewStyle} src={asset.previewDataUrl} />
+                  {asset.previewUrl || asset.previewDataUrl ? (
+                    <video
+                      controls
+                      preload="metadata"
+                      style={videoPreviewStyle}
+                      src={asset.previewUrl ?? asset.previewDataUrl ?? undefined}
+                    />
                   ) : (
                     <div style={videoPlaceholderStyle}>Preview unavailable</div>
                   )}
                   <figcaption style={assetCaptionStyle}>
                     <strong style={assetIdStyle}>{asset.id}</strong>
                     <span style={assetMetaStyle}>
-                      {asset.mimeType} · {Math.round(asset.sizeBytes / 1024)} KB
+                      {asset.mimeType} - {Math.round(asset.sizeBytes / 1024)} KB
                     </span>
                   </figcaption>
                 </figure>

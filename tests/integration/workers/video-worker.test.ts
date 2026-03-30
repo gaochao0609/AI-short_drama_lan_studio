@@ -10,7 +10,7 @@ import {
 } from "@prisma/client";
 import { QueueEvents } from "bullmq";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { withApiTestEnv } from "../api/test-api";
+import { insertSessionForUser, loadRouteModule, withApiTestEnv } from "../api/test-api";
 import { withTestDatabase } from "../db/test-database";
 
 const { callProxyModelMock, getDefaultModelSummaryMock } = vi.hoisted(() => ({
@@ -111,8 +111,85 @@ const ONE_BY_ONE_PNG_BYTES = Buffer.from(
 );
 
 const SAMPLE_MP4_BYTES = Buffer.from("000000186674797069736F6D0000020069736F6D69736F32", "hex");
+const LARGE_MP4_BYTES = Buffer.alloc(8 * 1024 * 1024 + 1, 7);
 
 describe("video workflow", () => {
+  it("exposes a route-backed preview URL for large generated videos", async () => {
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      const storageRoot = await mkdtemp(path.join(os.tmpdir(), "lan-studio-video-preview-"));
+
+      try {
+        await withApiTestEnv(
+          databaseUrl,
+          async () => {
+            const user = await createActiveUser(prisma, "video-preview-owner");
+            const project = await prisma.project.create({
+              data: {
+                ownerId: user.id,
+                title: "Video Preview Project",
+              },
+            });
+            const relativePath = path.join("assets", project.id, "generated", "large.mp4");
+            const absolutePath = path.join(storageRoot, relativePath);
+            await mkdir(path.dirname(absolutePath), { recursive: true });
+            await writeFile(absolutePath, LARGE_MP4_BYTES);
+
+            const asset = await prisma.asset.create({
+              data: {
+                projectId: project.id,
+                kind: "video_generated",
+                storagePath: relativePath,
+                originalName: "large.mp4",
+                mimeType: "video/mp4",
+                sizeBytes: LARGE_MP4_BYTES.length,
+              },
+            });
+
+            const { getVideosWorkspaceData } = await import("@/lib/services/videos");
+            const workspace = await getVideosWorkspaceData(project.id, user.id);
+            expect(workspace.videoAssets).toEqual([
+              expect.objectContaining({
+                id: asset.id,
+                mimeType: "video/mp4",
+                sizeBytes: LARGE_MP4_BYTES.length,
+                previewDataUrl: null,
+                previewUrl: `/api/videos?projectId=${project.id}&assetId=${asset.id}`,
+              }),
+            ]);
+
+            const session = await insertSessionForUser(prisma, user.id);
+            vi.resetModules();
+            const route = await loadRouteModule<{
+              GET: (request: Request) => Promise<Response>;
+            }>("src/app/api/videos/route.ts", {
+              sessionToken: session.token,
+            });
+
+            const response = await route.GET(
+              new Request(`http://localhost/api/videos?projectId=${project.id}&assetId=${asset.id}`, {
+                method: "GET",
+              }),
+            );
+
+            expect(response.status).toBe(200);
+            expect(response.headers.get("content-type")).toBe("video/mp4");
+            await expect(response.arrayBuffer()).resolves.toEqual(
+              LARGE_MP4_BYTES.buffer.slice(
+                LARGE_MP4_BYTES.byteOffset,
+                LARGE_MP4_BYTES.byteOffset + LARGE_MP4_BYTES.byteLength,
+              ),
+            );
+          },
+          {
+            STORAGE_ROOT: storageRoot,
+          },
+        );
+      } finally {
+        await rm(storageRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
   it("creates VIDEO tasks with prompt and project-scoped reference images", async () => {
     await withTestDatabase(async ({ databaseUrl, prisma }) => {
       const storageRoot = await mkdtemp(path.join(os.tmpdir(), "lan-studio-video-enqueue-"));
@@ -297,6 +374,18 @@ describe("video workflow", () => {
                   }),
                 }),
               );
+
+              await expect(
+                prisma.taskStep.findFirstOrThrow({
+                  where: { taskId },
+                  orderBy: { createdAt: "desc" },
+                }),
+              ).resolves.toEqual(
+                expect.objectContaining({
+                  taskId,
+                  log: expect.stringMatching(/saved generated video asset/i),
+                }),
+              );
             } finally {
               await runtime.close();
               await queueEvents.close();
@@ -391,6 +480,7 @@ describe("video workflow", () => {
                   taskId,
                   status: TaskStatus.FAILED,
                   errorText: expect.stringMatching(/video model unavailable/i),
+                  log: expect.stringMatching(/video generation failed/i),
                 }),
               );
             } finally {
