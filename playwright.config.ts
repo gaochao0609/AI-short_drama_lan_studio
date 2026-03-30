@@ -5,6 +5,7 @@ process.env.APP_URL ??= "http://localhost:3000";
 process.env.SESSION_SECRET ??= "12345678901234567890123456789012";
 process.env.DEFAULT_ADMIN_USERNAME ??= "admin";
 process.env.DEFAULT_ADMIN_PASSWORD ??= "replace-with-a-strong-password";
+process.env.STORAGE_ROOT ??= "./storage";
 
 export default defineConfig({
   testDir: "./tests/e2e",

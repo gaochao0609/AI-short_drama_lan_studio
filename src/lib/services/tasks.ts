@@ -86,3 +86,32 @@ export async function getTask(taskId: string, ownerId: string) {
 
   return task;
 }
+
+export async function listProjectTaskHistory(projectId: string, ownerId: string) {
+  await getOwnedProject(projectId, ownerId);
+
+  return prisma.task.findMany({
+    where: {
+      projectId,
+      project: {
+        ownerId,
+      },
+    },
+    orderBy: [
+      {
+        createdAt: "desc",
+      },
+      {
+        id: "desc",
+      },
+    ],
+    select: {
+      id: true,
+      type: true,
+      status: true,
+      createdAt: true,
+      finishedAt: true,
+      errorText: true,
+    },
+  });
+}
