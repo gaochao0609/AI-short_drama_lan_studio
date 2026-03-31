@@ -10,22 +10,6 @@ export class ServiceError extends Error {
   }
 }
 
-export function shouldUseSecureCookies() {
-  const appUrl = process.env.APP_URL;
-
-  // Cookie security follows the deployment URL scheme. LAN installs may run on plain HTTP,
-  // and forcing Secure there would make the session cookie unusable.
-  if (!appUrl) {
-    return process.env.NODE_ENV === "production";
-  }
-
-  try {
-    return new URL(appUrl).protocol === "https:";
-  } catch {
-    return process.env.NODE_ENV === "production";
-  }
-}
-
 export function toErrorResponse(error: unknown) {
   if (error instanceof ServiceError || error instanceof AuthGuardError) {
     return Response.json(

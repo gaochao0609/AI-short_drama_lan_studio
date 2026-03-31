@@ -43,6 +43,7 @@ function buildSession(overrides: {
   expiresAt?: Date;
   revokedAt?: Date | null;
   role?: "ADMIN" | "USER";
+  status?: "ACTIVE" | "PENDING" | "DISABLED";
   forcePasswordChange?: boolean;
 } = {}) {
   return {
@@ -52,6 +53,7 @@ function buildSession(overrides: {
     user: {
       id: "user-1",
       role: overrides.role ?? "USER",
+      status: overrides.status ?? "ACTIVE",
       forcePasswordChange: overrides.forcePasswordChange ?? false,
     },
   };
@@ -121,6 +123,17 @@ describe("auth guards", () => {
     );
 
     await expect(requireAdmin()).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("throws 403 when the user account is disabled", async () => {
+    setSessionCookie("disabled-user-token");
+    findUniqueMock.mockResolvedValue(
+      buildSession({
+        status: "DISABLED",
+      }),
+    );
+
+    await expect(requireUser()).rejects.toMatchObject({ status: 403 });
   });
 
   it("allows force-password-change users through requireUser", async () => {

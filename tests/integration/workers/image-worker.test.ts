@@ -41,10 +41,11 @@ async function withQueueTestEnv<T>(
   return withApiTestEnv(
     databaseUrl,
     async () => {
-      const [{ closeQueues }, { connection }] = await Promise.all([
+      const [{ closeQueues }, { getRedisClient }] = await Promise.all([
         import("@/lib/queues"),
         import("@/lib/redis"),
       ]);
+      const connection = getRedisClient();
 
       await connection.flushdb();
 

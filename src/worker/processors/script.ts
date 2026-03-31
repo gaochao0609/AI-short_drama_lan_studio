@@ -355,13 +355,13 @@ export async function processScriptFinalizeJob(
     }
 
     const body = modelResult.textOutput.trim();
-    const versionNumber =
-      (await prisma.scriptVersion.count({
-        where: {
-          projectId: session.projectId,
-        },
-      })) + 1;
     const scriptVersion = await prisma.$transaction(async (tx) => {
+      const versionNumber =
+        (await tx.scriptVersion.count({
+          where: {
+            projectId: session.projectId,
+          },
+        })) + 1;
       const createdScriptVersion = await tx.scriptVersion.create({
         data: {
           projectId: session.projectId,

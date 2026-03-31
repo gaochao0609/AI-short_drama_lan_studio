@@ -193,21 +193,36 @@ function toAdminTaskSummary(task: Prisma.TaskGetPayload<{ select: typeof ADMIN_T
   };
 }
 
-export async function listAdminTasks() {
-  const tasks = await prisma.task.findMany({
-    orderBy: [
-      {
-        createdAt: "desc",
-      },
-      {
-        id: "desc",
-      },
-    ],
-    select: ADMIN_TASK_SELECT,
-    take: 100,
-  });
+export async function listAdminTasks(input?: { page?: number; pageSize?: number }) {
+  const page = Math.max(1, input?.page ?? 1);
+  const pageSize = Math.min(100, Math.max(1, input?.pageSize ?? 50));
 
-  return tasks.map(toAdminTaskSummary);
+  const [tasks, total] = await Promise.all([
+    prisma.task.findMany({
+      orderBy: [
+        {
+          createdAt: "desc",
+        },
+        {
+          id: "desc",
+        },
+      ],
+      select: ADMIN_TASK_SELECT,
+      take: pageSize,
+      skip: (page - 1) * pageSize,
+    }),
+    prisma.task.count(),
+  ]);
+
+  return {
+    tasks: tasks.map(toAdminTaskSummary),
+    pagination: {
+      page,
+      pageSize,
+      total,
+      totalPages: Math.ceil(total / pageSize),
+    },
+  };
 }
 
 function canRetryTask(status: TaskStatus) {
