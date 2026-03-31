@@ -32,6 +32,7 @@ async function getAuthenticatedUser() {
         select: {
           id: true,
           role: true,
+          status: true,
           forcePasswordChange: true,
         },
       },
@@ -40,6 +41,10 @@ async function getAuthenticatedUser() {
 
   if (!session || session.revokedAt || session.expiresAt <= new Date()) {
     throw new AuthGuardError(401, "Unauthorized");
+  }
+
+  if (session.user.status !== "ACTIVE") {
+    throw new AuthGuardError(403, "Account is disabled");
   }
 
   return {

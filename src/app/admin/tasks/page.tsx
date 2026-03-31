@@ -34,8 +34,16 @@ type AdminTask = {
   }>;
 };
 
+type PaginationInfo = {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+};
+
 type TasksPayload = {
   tasks: AdminTask[];
+  pagination: PaginationInfo;
 };
 
 type AdminTaskActionPayload =
@@ -80,12 +88,13 @@ function formatTimestamp(value: string | null) {
 
 export default function AdminTasksPage() {
   const [tasks, setTasks] = useState<AdminTask[]>([]);
+  const [pagination, setPagination] = useState<PaginationInfo>({ page: 1, pageSize: 50, total: 0, totalPages: 0 });
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingActionTaskId, setPendingActionTaskId] = useState<string | null>(null);
 
-  async function fetchTasks() {
-    const response = await fetch("/api/admin/tasks", { cache: "no-store" });
+  async function fetchTasks(page = 1) {
+    const response = await fetch(`/api/admin/tasks?page=${page}&pageSize=50`, { cache: "no-store" });
     const payload = (await response.json().catch(() => null)) as TasksPayload | { error?: string } | null;
 
     if (!response.ok) {
@@ -96,12 +105,13 @@ export default function AdminTasksPage() {
       throw new Error("Failed to load admin tasks");
     }
 
-    return (payload as TasksPayload).tasks;
+    return payload as TasksPayload;
   }
 
-  async function loadTasks() {
-    const nextTasks = await fetchTasks();
-    setTasks(nextTasks);
+  async function loadTasks(page?: number) {
+    const result = await fetchTasks(page ?? pagination.page);
+    setTasks(result.tasks);
+    setPagination(result.pagination);
   }
 
   useEffect(() => {
@@ -109,13 +119,14 @@ export default function AdminTasksPage() {
 
     async function runInitialLoad() {
       try {
-        const nextTasks = await fetchTasks();
+        const result = await fetchTasks(1);
 
         if (!isActive) {
           return;
         }
 
-        setTasks(nextTasks);
+        setTasks(result.tasks);
+        setPagination(result.pagination);
       } catch (loadError) {
         if (!isActive) {
           return;
@@ -226,10 +237,9 @@ export default function AdminTasksPage() {
       <section style={panelStyle}>
         <div style={sectionHeaderStyle}>
           <div>
-            <h3 style={panelTitleStyle}>Recent 100 tasks</h3>
+            <h3 style={panelTitleStyle}>Tasks ({pagination.total} total)</h3>
             <p style={copyStyle}>
-              Showing the newest 100 tasks so recent queue activity, completions, and failures stay in
-              one view.
+              Page {pagination.page} of {pagination.totalPages || 1} &middot; {pagination.pageSize} per page
             </p>
           </div>
           <button type="button" style={secondaryButtonStyle} onClick={() => void loadTasks()}>
@@ -297,6 +307,30 @@ export default function AdminTasksPage() {
             );
           })}
         </div>
+
+        {pagination.totalPages > 1 ? (
+          <div style={paginationStyle}>
+            <button
+              type="button"
+              style={secondaryButtonStyle}
+              disabled={pagination.page <= 1}
+              onClick={() => void loadTasks(pagination.page - 1)}
+            >
+              Previous
+            </button>
+            <span style={copyStyle}>
+              Page {pagination.page} / {pagination.totalPages}
+            </span>
+            <button
+              type="button"
+              style={secondaryButtonStyle}
+              disabled={pagination.page >= pagination.totalPages}
+              onClick={() => void loadTasks(pagination.page + 1)}
+            >
+              Next
+            </button>
+          </div>
+        ) : null}
       </section>
     </section>
   );
@@ -430,6 +464,14 @@ const historyChipStyle = {
   background: "#fff",
   border: "1px solid rgba(31, 27, 22, 0.12)",
   fontSize: "0.9rem",
+} satisfies CSSProperties;
+
+const paginationStyle = {
+  display: "flex",
+  gap: "12px",
+  justifyContent: "center",
+  alignItems: "center",
+  marginTop: "18px",
 } satisfies CSSProperties;
 
 const actionsStyle = {
