@@ -1,5 +1,7 @@
 # LAN Studio V1
 
+English | [简体中文](./README.zh-CN.md)
+
 LAN Studio is a small-team LAN deployment for AI short-drama creation. The stack is `Next.js + Prisma + Postgres + Redis + BullMQ + local filesystem storage`, designed to run on one Windows host with Docker Desktop and be reachable by other machines on the same network.
 
 ## Stack and service responsibilities
