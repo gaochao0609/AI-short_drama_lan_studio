@@ -10,7 +10,7 @@ import { getDefaultModelSummary } from "@/lib/models/provider-registry";
 import { bullmqConnection } from "@/lib/redis";
 import { ServiceError } from "@/lib/services/errors";
 import { promoteTempFile, writeTempFile } from "@/lib/storage/fs-storage";
-import { getStorageRoot } from "@/lib/storage/paths";
+import { getStorageRoot, resolveStoredPath, toStoredPath } from "@/lib/storage/paths";
 import { cancelTaskIfRequested } from "@/worker/processors/cancellation";
 
 type VideoPayload = {
@@ -227,9 +227,7 @@ async function loadReferenceAssets(payload: VideoPayload) {
         throw new ServiceError(409, "Reference image exceeds maximum upload size");
       }
 
-      const filePath = path.isAbsolute(asset.storagePath)
-        ? asset.storagePath
-        : path.join(storageRoot, asset.storagePath);
+      const filePath = resolveStoredPath(storageRoot, asset.storagePath);
       const bytes = await readFile(filePath);
 
       if (bytes.length > maxBytes) {
@@ -361,7 +359,7 @@ export async function processVideoJob(
         projectId: payload.projectId,
         taskId: job.data.taskId,
         kind: "video_generated",
-        storagePath: path.relative(storageRoot, destinationPath),
+        storagePath: toStoredPath(storageRoot, destinationPath),
         originalName: null,
         mimeType: parsedOutput.mimeType,
         sizeBytes: parsedOutput.bytes.length,

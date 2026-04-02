@@ -3,7 +3,7 @@ import { requireAdmin } from "@/lib/auth/guards";
 import { prisma } from "@/lib/db";
 import { toErrorResponse } from "@/lib/services/errors";
 import { getDirectoryBytes, getDirectoryFileStats, getDiskSpaceStats } from "@/lib/storage/fs-storage";
-import { getStorageRoot } from "@/lib/storage/paths";
+import { getStorageRoot, resolveStoredPath } from "@/lib/storage/paths";
 
 function guessMimeTypeFromFilePath(filePath: string) {
   const extension = path.extname(filePath).toLowerCase();
@@ -39,11 +39,7 @@ export async function GET() {
     ]);
     const assetMimeByPath = new Map(
       assets.map((asset) => [
-        path.resolve(
-          path.isAbsolute(asset.storagePath)
-            ? asset.storagePath
-            : path.join(storageRoot, asset.storagePath),
-        ),
+        path.resolve(resolveStoredPath(storageRoot, asset.storagePath)),
         asset.mimeType,
       ]),
     );

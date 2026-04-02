@@ -2,6 +2,7 @@ import type { CSSProperties } from "react";
 import { requireUser } from "@/lib/auth/guards";
 import { listRecentProjects } from "@/lib/services/projects";
 import { countFailedTasks, listRecentTasks } from "@/lib/services/tasks";
+import CreateProjectForm from "./create-project-form";
 
 function formatDate(value: Date) {
   return new Intl.DateTimeFormat("zh-CN", {
@@ -26,7 +27,7 @@ export default async function WorkspaceDashboardPage() {
         <p style={sectionEyebrowStyle}>Workspace</p>
         <h2 style={heroTitleStyle}>最近活动</h2>
         <p style={heroTextStyle}>
-          当前只提供项目和任务概览，后续工作流页面在此基础上展开。
+          先创建项目，再进入脚本、分镜、图片和视频四条工作流。这里同时保留最近项目和最近任务概览。
         </p>
       </section>
 
@@ -46,6 +47,8 @@ export default async function WorkspaceDashboardPage() {
       </section>
 
       <section style={contentGridStyle}>
+        <CreateProjectForm />
+
         <article style={panelStyle}>
           <h3 style={panelTitleStyle}>最近项目</h3>
           {recentProjects.length === 0 ? (

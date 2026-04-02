@@ -51,6 +51,10 @@ vi.mock("@/lib/services/tasks", () => ({
 
 vi.mock("next/navigation", () => ({
   redirect: redirectMock,
+  useRouter: () => ({
+    push: vi.fn(),
+    refresh: vi.fn(),
+  }),
 }));
 
 describe("workspace shell", () => {
@@ -91,17 +95,18 @@ describe("workspace shell", () => {
     vi.clearAllMocks();
   });
 
-  it("renders the workspace dashboard with recent data", async () => {
+  it("renders the workspace dashboard and create-project form", async () => {
     const pageModule = await import("@/app/(workspace)/workspace/page");
 
     render(await pageModule.default());
 
-    expect(screen.getByRole("heading", { name: "最近项目" })).toBeInTheDocument();
     expect(screen.getByText("Recent Project")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "最近任务" })).toBeInTheDocument();
     expect(screen.getByText("task-1")).toBeInTheDocument();
-    expect(screen.getByText("失败任务数")).toBeInTheDocument();
     expect(screen.getByText("2")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Create Project" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Project title")).toBeInTheDocument();
+    expect(screen.getByLabelText("Project idea")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Create project" })).toBeInTheDocument();
   });
 
   it("redirects unauthenticated users from the workspace layout", async () => {
@@ -145,11 +150,9 @@ describe("workspace shell", () => {
       }),
     );
 
-    expect(screen.getByRole("link", { name: "仪表盘" })).toHaveAttribute(
-      "href",
-      "/workspace",
-    );
-    expect(screen.queryByRole("link", { name: "项目" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "任务" })).not.toBeInTheDocument();
+    const links = screen.getAllByRole("link");
+
+    expect(links).toHaveLength(1);
+    expect(links[0]).toHaveAttribute("href", "/workspace");
   });
 });

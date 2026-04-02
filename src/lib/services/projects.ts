@@ -1,9 +1,8 @@
-import path from "node:path";
 import { readFile, stat } from "node:fs/promises";
 import { prisma } from "@/lib/db";
 import { ServiceError } from "@/lib/services/errors";
 import { listProjectTaskHistory } from "@/lib/services/tasks";
-import { getStorageRoot } from "@/lib/storage/paths";
+import { getStorageRoot, resolveStoredPath } from "@/lib/storage/paths";
 
 const INLINE_IMAGE_PREVIEW_MAX_BYTES = 64 * 1024;
 const PREVIEWABLE_IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
@@ -15,9 +14,7 @@ async function toInlineImagePreview(storagePath: string, mimeType: string, sizeB
 
   try {
     const storageRoot = getStorageRoot();
-    const filePath = path.isAbsolute(storagePath)
-      ? storagePath
-      : path.join(storageRoot, storagePath);
+    const filePath = resolveStoredPath(storageRoot, storagePath);
     const fileStat = await stat(filePath);
 
     if (fileStat.size > INLINE_IMAGE_PREVIEW_MAX_BYTES) {
@@ -215,9 +212,7 @@ export async function readOwnedProjectAsset(assetId: string, ownerId: string) {
   }
 
   const storageRoot = getStorageRoot();
-  const filePath = path.isAbsolute(asset.storagePath)
-    ? asset.storagePath
-    : path.join(storageRoot, asset.storagePath);
+  const filePath = resolveStoredPath(storageRoot, asset.storagePath);
 
   return {
     ...asset,

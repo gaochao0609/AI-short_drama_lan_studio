@@ -9,7 +9,7 @@ import { ServiceError, toErrorResponse } from "@/lib/services/errors";
 import { enqueueImageGeneration, getImagesWorkspaceData } from "@/lib/services/images";
 import { getProject } from "@/lib/services/projects";
 import { deleteFile, promoteTempFile, writeTempFile } from "@/lib/storage/fs-storage";
-import { getStorageRoot } from "@/lib/storage/paths";
+import { getStorageRoot, toStoredPath } from "@/lib/storage/paths";
 
 const MULTIPART_OVERHEAD_BYTES = 256 * 1024;
 const ALLOWED_IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
@@ -151,7 +151,7 @@ export async function POST(request: Request) {
             projectId,
             taskId: null,
             kind: "image_reference",
-            storagePath: path.relative(storageRoot, destinationPath),
+            storagePath: toStoredPath(storageRoot, destinationPath),
             originalName: sourceFile.name || null,
             mimeType: sourceFile.type,
             sizeBytes: bytes.length,

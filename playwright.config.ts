@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 process.env.DATABASE_URL ??= "postgresql://postgres:postgres@localhost:5432/ai_short_drama";
+process.env.REDIS_URL ??= "redis://127.0.0.1:6379";
 process.env.APP_URL ??= "http://localhost:3000";
 process.env.SESSION_SECRET ??= "12345678901234567890123456789012";
 process.env.DEFAULT_ADMIN_USERNAME ??= "admin";
@@ -9,10 +10,10 @@ process.env.STORAGE_ROOT ??= "./storage";
 
 export default defineConfig({
   testDir: "./tests/e2e",
-  fullyParallel: true,
+  fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  workers: 1,
   reporter: "html",
   use: {
     baseURL: "http://127.0.0.1:3000",

@@ -3,7 +3,7 @@ import { requireAdmin } from "@/lib/auth/guards";
 import { prisma } from "@/lib/db";
 import { toErrorResponse } from "@/lib/services/errors";
 import { cleanupOldFiles } from "@/lib/storage/fs-storage";
-import { getStorageRoot } from "@/lib/storage/paths";
+import { getStorageRoot, resolveStoredPath } from "@/lib/storage/paths";
 
 function readOlderThanDays(value: unknown) {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
@@ -26,9 +26,7 @@ export async function POST(request: Request) {
       },
     });
     const referencedPaths = referencedAssets.map((asset) =>
-      path.isAbsolute(asset.storagePath)
-        ? path.resolve(asset.storagePath)
-        : path.resolve(storageRoot, asset.storagePath),
+      path.resolve(resolveStoredPath(storageRoot, asset.storagePath)),
     );
     const result = await cleanupOldFiles({
       directories: [
