@@ -57,6 +57,43 @@ DEFAULT_ADMIN_PASSWORD=replace-with-a-strong-password
 
 ## 本地启动
 
+### Windows 推荐方式：一键 PowerShell 脚本
+
+这两个脚本仅支持 Windows PowerShell / `pwsh`。
+
+首次执行前：
+
+1. 手动从 `.env.example` 创建 `.env`。
+2. 保持 `.env.example` 里的 Compose 风格主机名，尤其是 `DATABASE_URL` 中的 `postgres` 和 `REDIS_URL` 中的 `redis`。
+3. 保存 `.env` 后重新执行脚本。
+
+不要把方式 A 里给宿主机运行准备的 `localhost` / `127.0.0.1` 配置直接用于这两个脚本。这两个脚本只服务于 Docker Compose 部署路径。
+
+首次部署：
+
+```powershell
+pwsh -File scripts/install.ps1
+```
+
+日常启动：
+
+```powershell
+pwsh -File scripts/start.ps1
+```
+
+启动时强制重建：
+
+```powershell
+pwsh -File scripts/start.ps1 -Rebuild
+```
+
+脚本行为说明：
+
+- `scripts/install.ps1`：检查 Docker、要求 `.env` 已按 Compose 风格手动填写、等待 `postgres` 和 `redis` 进入健康状态、执行 `db:migrate`、执行 `db:seed`，最后启动 `web` 和 `worker`。
+- `scripts/start.ps1`：检查 Docker、要求 `.env` 为 Compose 风格配置，默认执行 `docker compose up -d`，传入 `-Rebuild` 时执行 `docker compose up -d --build`。
+
+如果你希望继续手动逐条执行命令，下面的手工启动方式仍然保留。
+
 ### 方式 A：应用跑在宿主机，Postgres 和 Redis 跑在 Docker 中
 
 适用于开发阶段，需要 `pnpm dev` 热更新时使用。

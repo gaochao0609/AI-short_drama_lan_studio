@@ -57,6 +57,43 @@ If you keep the repo on NTFS anyway, expect slower large-file throughput and mor
 
 ## Local startup
 
+### Recommended on Windows: one-click PowerShell scripts
+
+These scripts are intended for Windows PowerShell / `pwsh` only.
+
+Before the first run:
+
+1. Create `.env` manually from `.env.example`.
+2. Keep the Compose-style hostnames from `.env.example`, especially `postgres` in `DATABASE_URL` and `redis` in `REDIS_URL`.
+3. Re-run the script after saving `.env`.
+
+Do not use these scripts with the host-run `.env` values from Option A such as `localhost` or `127.0.0.1`. The scripts are for the Docker Compose deployment path only.
+
+First deployment:
+
+```powershell
+pwsh -File scripts/install.ps1
+```
+
+Daily startup:
+
+```powershell
+pwsh -File scripts/start.ps1
+```
+
+Force rebuild on startup:
+
+```powershell
+pwsh -File scripts/start.ps1 -Rebuild
+```
+
+What the scripts do:
+
+- `scripts/install.ps1`: checks Docker, requires a manually completed Compose-style `.env`, waits for `postgres` and `redis` to become healthy, runs `db:migrate`, runs `db:seed`, then starts `web` and `worker`.
+- `scripts/start.ps1`: checks Docker, requires a Compose-style `.env`, then runs `docker compose up -d` by default or `docker compose up -d --build` when `-Rebuild` is passed.
+
+If you prefer to run each command yourself, keep using the manual options below.
+
 ### Option A: host-run app, Docker-run Postgres and Redis
 
 Use this during development when you want `pnpm dev` hot reload.
