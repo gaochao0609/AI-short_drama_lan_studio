@@ -205,23 +205,31 @@ describe("admin tasks and storage api", () => {
               const adminResponse = await getAsAdmin(new Request("http://localhost/api/admin/tasks"));
 
               expect(adminResponse.status).toBe(200);
-              await expect(adminResponse.json()).resolves.toEqual({
-                tasks: expect.arrayContaining([
-                  expect.objectContaining({
-                    id: failedTask.id,
-                    type: TaskType.IMAGE,
-                    status: TaskStatus.FAILED,
-                    errorText: "provider timeout",
-                    retryHistory: [
-                      expect.objectContaining({
-                        status: TaskStatus.FAILED,
-                        retryCount: 1,
-                        errorText: "provider timeout",
-                      }),
-                    ],
+              await expect(adminResponse.json()).resolves.toEqual(
+                expect.objectContaining({
+                  tasks: expect.arrayContaining([
+                    expect.objectContaining({
+                      id: failedTask.id,
+                      type: TaskType.IMAGE,
+                      status: TaskStatus.FAILED,
+                      errorText: "provider timeout",
+                      retryHistory: [
+                        expect.objectContaining({
+                          status: TaskStatus.FAILED,
+                          retryCount: 1,
+                          errorText: "provider timeout",
+                        }),
+                      ],
+                    }),
+                  ]),
+                  pagination: expect.objectContaining({
+                    page: 1,
+                    pageSize: 50,
+                    total: 2,
+                    totalPages: 1,
                   }),
-                ]),
-              });
+                }),
+              );
 
               vi.resetModules();
               const { GET: getAsUser } = await loadRouteModule<{

@@ -11,6 +11,7 @@ COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 
 COPY . .
+RUN DATABASE_URL="postgresql://postgres:postgres@localhost:5432/ai_short_drama" pnpm exec prisma generate
 RUN pnpm build
 
 EXPOSE 3000

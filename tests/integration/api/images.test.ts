@@ -337,10 +337,11 @@ describe("images workspace api", () => {
                 sizeBytes: referenceBytes.length,
               }),
             );
+            expect(asset.storagePath).toBe(`assets/${project.id}/references/${path.basename(asset.storagePath)}`);
+            expect(asset.storagePath).not.toContain("\\");
 
-            const filePath = path.isAbsolute(asset.storagePath)
-              ? asset.storagePath
-              : path.join(storageRoot, asset.storagePath);
+            const { resolveStoredPath } = await import("@/lib/storage/paths");
+            const filePath = resolveStoredPath(storageRoot, asset.storagePath);
             await expect(readFile(filePath)).resolves.toEqual(referenceBytes);
           },
           {

@@ -446,4 +446,91 @@ describe("project detail api", () => {
       }
     });
   });
+
+  it("reads legacy backslash storage paths for previews and asset downloads", async () => {
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      const storageRoot = await mkdtemp(path.join(os.tmpdir(), "lan-studio-asset-backslash-"));
+
+      try {
+        await withApiTestEnv(
+          databaseUrl,
+          async () => {
+            const user = await createActiveUser(prisma, "asset-backslash-owner");
+            const session = await insertSessionForUser(prisma, user.id);
+            const project = await prisma.project.create({
+              data: {
+                ownerId: user.id,
+                title: "Backslash Asset Project",
+              },
+            });
+            const imageRelativePath = path.join("assets", project.id, "legacy", "still.png");
+            await writeAssetFile(storageRoot, imageRelativePath, ONE_BY_ONE_PNG_BYTES);
+
+            const imageAsset = await prisma.asset.create({
+              data: {
+                id: "image-backslash-asset",
+                projectId: project.id,
+                kind: "image_generated",
+                storagePath: `assets\\${project.id}\\legacy\\still.png`,
+                originalName: "still.png",
+                mimeType: "image/png",
+                sizeBytes: ONE_BY_ONE_PNG_BYTES.length,
+              },
+            });
+
+            const detailRoute = await loadRouteModule<{
+              GET: (
+                request: Request,
+                context: { params: Promise<{ projectId: string }> | { projectId: string } },
+              ) => Promise<Response>;
+            }>("src/app/api/projects/[projectId]/detail/route.ts", {
+              sessionToken: session.token,
+            });
+            const detailResponse = await detailRoute.GET(
+              new Request(`http://localhost/api/projects/${project.id}/detail`),
+              { params: { projectId: project.id } },
+            );
+
+            expect(detailResponse.status).toBe(200);
+            await expect(detailResponse.json()).resolves.toEqual(
+              expect.objectContaining({
+                imageAssets: [
+                  expect.objectContaining({
+                    id: imageAsset.id,
+                    previewDataUrl: expect.stringMatching(/^data:image\/png;base64,/),
+                  }),
+                ],
+              }),
+            );
+
+            const downloadRoute = await loadRouteModule<{
+              GET: (
+                request: Request,
+                context: { params: Promise<{ assetId: string }> | { assetId: string } },
+              ) => Promise<Response>;
+            }>("src/app/api/assets/[assetId]/download/route.ts", {
+              sessionToken: session.token,
+            });
+            const downloadResponse = await downloadRoute.GET(
+              new Request(`http://localhost/api/assets/${imageAsset.id}/download`),
+              { params: { assetId: imageAsset.id } },
+            );
+
+            expect(downloadResponse.status).toBe(200);
+            await expect(downloadResponse.arrayBuffer()).resolves.toEqual(
+              ONE_BY_ONE_PNG_BYTES.buffer.slice(
+                ONE_BY_ONE_PNG_BYTES.byteOffset,
+                ONE_BY_ONE_PNG_BYTES.byteOffset + ONE_BY_ONE_PNG_BYTES.length,
+              ),
+            );
+          },
+          {
+            STORAGE_ROOT: storageRoot,
+          },
+        );
+      } finally {
+        await rm(storageRoot, { recursive: true, force: true });
+      }
+    });
+  });
 });

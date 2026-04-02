@@ -57,7 +57,7 @@ async function writeTaskState(
 function hasRetriesRemaining(
   job: Job<MinimalWorkerJobData, MinimalWorkerResult, string>,
 ) {
-  const attempts = job.opts.attempts ?? 1;
+  const attempts = job.opts?.attempts ?? 1;
   const retryCount = job.attemptsMade + 1;
 
   return retryCount < attempts;
@@ -128,7 +128,7 @@ export function createMinimalWorker(
       return runMinimalTask(job);
     },
     {
-    connection: bullmqConnection,
+      connection: bullmqConnection,
       concurrency: input.concurrency,
     },
   );

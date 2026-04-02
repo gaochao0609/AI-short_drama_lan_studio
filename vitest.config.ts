@@ -14,5 +14,7 @@ export default defineConfig({
     globals: true,
     setupFiles: ["./tests/setup/vitest.setup.ts"],
     include: ["tests/**/*.test.{ts,tsx}"],
+    fileParallelism: false,
+    maxWorkers: 1,
   },
 });

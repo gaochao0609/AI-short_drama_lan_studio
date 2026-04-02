@@ -54,9 +54,15 @@ describe("admin tasks page", () => {
             ? input.toString()
             : input.url;
 
-      if (url === "/api/admin/tasks" && init?.cache === "no-store") {
+      if (url === "/api/admin/tasks?page=1&pageSize=50" && init?.cache === "no-store") {
         return jsonResponse({
           tasks: [fetchMock.mock.calls.length <= 1 ? createTask("RUNNING") : createTask("SUCCEEDED")],
+          pagination: {
+            page: 1,
+            pageSize: 50,
+            total: 1,
+            totalPages: 1,
+          },
         });
       }
 

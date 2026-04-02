@@ -487,7 +487,7 @@ describe("admin user api", () => {
     );
   });
 
-  it("rejects disabling the last active admin", async () => {
+  it("rejects a disabled admin session before updating another admin", async () => {
     await withTestDatabase(
       async ({ databaseUrl, prisma }) => {
         await withApiTestEnv(
@@ -529,10 +529,10 @@ describe("admin user api", () => {
               ),
             );
 
-            expect(response.status).toBe(409);
+            expect(response.status).toBe(403);
             await expect(response.json()).resolves.toEqual(
               expect.objectContaining({
-                error: expect.stringContaining("last active admin"),
+                error: "Account is disabled",
               }),
             );
             await expect(

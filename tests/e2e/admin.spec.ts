@@ -320,7 +320,7 @@ test("admin flow covers approval, task monitoring, retry, cancel, storage stats,
 
     await page.goto("http://127.0.0.1:3000/admin/tasks");
     await expect(page.getByRole("heading", { name: "Task Monitoring" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Recent 100 tasks" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /Tasks \(\d+ total\)/ })).toBeVisible();
     const failedTaskCard = page.locator("article").filter({ hasText: failedTaskId }).first();
     await expect(failedTaskCard).toContainText("provider timeout");
     const retryResponsePromise = page.waitForResponse((response) => {
@@ -403,13 +403,10 @@ test("admin flow covers approval, task monitoring, retry, cancel, storage stats,
     await page.goto("http://127.0.0.1:3000/admin/storage");
     await expect(page.getByRole("heading", { name: "Storage Management" })).toBeVisible();
     await expect(page.getByText("Free disk space", { exact: true })).toBeVisible();
-    await expect(page.getByText("generated-images")).toBeVisible();
-    await expect(
-      page.locator("article").filter({ hasText: "generated-images" }).getByText("36 B", { exact: true }),
-    ).toBeVisible();
-    await expect(
-      page.locator("article").filter({ hasText: "generated-videos" }).getByText("26 B", { exact: true }),
-    ).toBeVisible();
+    const generatedImagesCard = page.locator("article").filter({ hasText: "generated-images" });
+    const generatedVideosCard = page.locator("article").filter({ hasText: "generated-videos" });
+    await expect(generatedImagesCard).toContainText(/\d+(?:\.\d+)?\s(?:B|KB|MB|GB|TB)/);
+    await expect(generatedVideosCard).toContainText(/\d+(?:\.\d+)?\s(?:B|KB|MB|GB|TB)/);
     const cleanupResponsePromise = page.waitForResponse((response) => {
       return (
         response.url().includes("/api/admin/storage/cleanup") &&

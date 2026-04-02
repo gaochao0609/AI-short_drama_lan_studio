@@ -5,6 +5,16 @@ const { workerInvocations } = vi.hoisted(() => ({
 }));
 
 vi.mock("bullmq", () => {
+  class Queue {
+    async close() {
+      return undefined;
+    }
+
+    async getJob() {
+      return null;
+    }
+  }
+
   class Worker {
     name: string;
     opts: { concurrency?: number };
@@ -33,6 +43,7 @@ vi.mock("bullmq", () => {
   }
 
   return {
+    Queue,
     Worker,
   };
 });

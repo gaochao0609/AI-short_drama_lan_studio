@@ -1,11 +1,10 @@
-import path from "node:path";
 import { readFile, stat } from "node:fs/promises";
 import { Prisma, TaskType } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { enqueueTask } from "@/lib/queues/enqueue";
 import { ServiceError } from "@/lib/services/errors";
 import { getProject } from "@/lib/services/projects";
-import { getStorageRoot } from "@/lib/storage/paths";
+import { getStorageRoot, resolveStoredPath } from "@/lib/storage/paths";
 
 function normalizePrompt(prompt: string) {
   return prompt.trim();
@@ -71,9 +70,7 @@ async function toAssetSummary(
 
   try {
     const storageRoot = getStorageRoot();
-    const filePath = path.isAbsolute(asset.storagePath)
-      ? asset.storagePath
-      : path.join(storageRoot, asset.storagePath);
+    const filePath = resolveStoredPath(storageRoot, asset.storagePath);
     const fileStat = await stat(filePath);
 
     if (fileStat.size > input.inlinePreviewCapBytes) {
@@ -234,9 +231,7 @@ export async function readOwnedVideoAsset(input: {
   }
 
   const storageRoot = getStorageRoot();
-  const filePath = path.isAbsolute(asset.storagePath)
-    ? asset.storagePath
-    : path.join(storageRoot, asset.storagePath);
+  const filePath = resolveStoredPath(storageRoot, asset.storagePath);
 
   return {
     ...asset,

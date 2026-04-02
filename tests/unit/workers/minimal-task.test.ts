@@ -2,6 +2,7 @@ import { Prisma, TaskStatus } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
+  const taskFindUnique = vi.fn();
   const taskUpdate = vi.fn((args: unknown) => args);
   const taskStepUpdate = vi.fn((args: unknown) => args);
   const transaction = vi.fn(async (operations: Array<unknown>) => operations);
@@ -10,6 +11,7 @@ const mocks = vi.hoisted(() => {
     prisma: {
       $transaction: transaction,
       task: {
+        findUnique: taskFindUnique,
         update: taskUpdate,
       },
       taskStep: {
@@ -28,8 +30,10 @@ import { runMinimalTask } from "@/worker/processors/shared";
 describe("runMinimalTask", () => {
   beforeEach(() => {
     mocks.prisma.$transaction.mockReset();
+    mocks.prisma.task.findUnique.mockReset();
     mocks.prisma.task.update.mockClear();
     mocks.prisma.taskStep.update.mockClear();
+    mocks.prisma.task.findUnique.mockResolvedValue(null);
   });
 
   it("moves the task through running and succeeded states", async () => {
@@ -105,6 +109,15 @@ describe("runMinimalTask", () => {
         }),
       }),
     );
+    expect(mocks.prisma.task.findUnique).toHaveBeenCalledWith({
+      where: {
+        id: "task-1",
+      },
+      select: {
+        id: true,
+        cancelRequestedAt: true,
+      },
+    });
   });
 
   it("restores queued state when a retryable attempt fails", async () => {
@@ -245,6 +258,54 @@ describe("runMinimalTask", () => {
         data: expect.objectContaining({
           status: TaskStatus.FAILED,
           retryCount: 3,
+          outputJson: Prisma.DbNull,
+          errorText: "completion write failed",
+        }),
+      }),
+    );
+  });
+
+  it("treats a failed job without BullMQ attempt metadata as a final failure", async () => {
+    mocks.prisma.$transaction
+      .mockResolvedValueOnce([])
+      .mockRejectedValueOnce(new Error("completion write failed"))
+      .mockResolvedValueOnce([]);
+
+    const job = {
+      attemptsMade: 0,
+      data: {
+        taskId: "task-4",
+        taskStepId: "step-4",
+        traceId: "trace-4",
+      },
+    } as Parameters<typeof runMinimalTask>[0];
+
+    await expect(runMinimalTask(job)).rejects.toThrow("completion write failed");
+
+    expect(mocks.prisma.$transaction).toHaveBeenCalledTimes(3);
+    expect(mocks.prisma.task.update).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        where: {
+          id: "task-4",
+        },
+        data: expect.objectContaining({
+          status: TaskStatus.FAILED,
+          finishedAt: expect.any(Date),
+          outputJson: Prisma.DbNull,
+          errorText: "completion write failed",
+        }),
+      }),
+    );
+    expect(mocks.prisma.taskStep.update).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        where: {
+          id: "step-4",
+        },
+        data: expect.objectContaining({
+          status: TaskStatus.FAILED,
+          retryCount: 1,
           outputJson: Prisma.DbNull,
           errorText: "completion write failed",
         }),

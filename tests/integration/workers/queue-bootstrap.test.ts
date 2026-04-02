@@ -4,6 +4,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { withApiTestEnv } from "../api/test-api";
 import { withTestDatabase } from "../db/test-database";
 
+const ONE_BY_ONE_PNG_DATA_URL =
+  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7GZxkAAAAASUVORK5CYII=";
+
 afterEach(() => {
   vi.doUnmock("next/headers");
   vi.resetModules();
@@ -58,7 +61,7 @@ async function createOwnedTask(
     },
   });
 
-  return prisma.task.create({
+  const task = await prisma.task.create({
     data: {
       projectId: project.id,
       createdById: user.id,
@@ -68,6 +71,47 @@ async function createOwnedTask(
       },
     },
   });
+
+  return {
+    user,
+    project,
+    task,
+  };
+}
+
+function buildQueuePayload(input: {
+  taskType: TaskType;
+  projectId: string;
+  userId: string;
+}) {
+  if (input.taskType === TaskType.SCRIPT_FINALIZE) {
+    return {
+      sessionId: `session-${input.projectId}`,
+    };
+  }
+
+  if (input.taskType === TaskType.STORYBOARD) {
+    return {
+      projectId: input.projectId,
+      scriptVersionId: `script-${input.projectId}`,
+      userId: input.userId,
+    };
+  }
+
+  if (input.taskType === TaskType.IMAGE) {
+    return {
+      projectId: input.projectId,
+      prompt: "Generate key art",
+      userId: input.userId,
+    };
+  }
+
+  return {
+    projectId: input.projectId,
+    prompt: "Generate key art",
+    referenceAssetIds: ["reference-asset-id"],
+    userId: input.userId,
+  };
 }
 
 describe("queue bootstrap", () => {
@@ -101,10 +145,15 @@ describe("queue bootstrap", () => {
             import("@/lib/queues"),
             import("@/lib/queues/enqueue"),
           ]);
-          const task = await createOwnedTask(prisma, {
+          const ownedTask = await createOwnedTask(prisma, {
             username: `queue-bootstrap-attempts-${taskType.toLowerCase()}`,
             projectTitle: `Attempts ${taskType}`,
             taskType,
+          });
+          const payload = buildQueuePayload({
+            taskType,
+            projectId: ownedTask.project.id,
+            userId: ownedTask.user.id,
           });
           const queue = Object.values(queues).find(
             (candidateQueue) => candidateQueue.name === expectedQueueName,
@@ -115,14 +164,12 @@ describe("queue bootstrap", () => {
           const addSpy = vi.spyOn(queue!, "add");
 
           try {
-            await enqueueTask(task.id, taskType, {
-              prompt: "Generate asset",
-            });
+            await enqueueTask(ownedTask.task.id, taskType, payload);
 
             expect(addSpy).toHaveBeenCalledWith(
               taskType,
               expect.objectContaining({
-                taskId: task.id,
+                taskId: ownedTask.task.id,
                 type: taskType,
               }),
               expect.objectContaining({
@@ -158,25 +205,31 @@ describe("queue bootstrap", () => {
     await withTestDatabase(async ({ databaseUrl, prisma }) => {
       await withQueueTestEnv(databaseUrl, async () => {
         const { enqueueTask } = await import("@/lib/queues/enqueue");
-        const task = await createOwnedTask(prisma, {
+        const ownedTask = await createOwnedTask(prisma, {
           username: "queue-bootstrap-mismatch",
           projectTitle: "Mismatch Project",
           taskType: TaskType.IMAGE,
         });
 
         await expect(
-          enqueueTask(task.id, TaskType.VIDEO, {
-            prompt: "Generate key art",
-          }),
+          enqueueTask(
+            ownedTask.task.id,
+            TaskType.VIDEO,
+            buildQueuePayload({
+              taskType: TaskType.VIDEO,
+              projectId: ownedTask.project.id,
+              userId: ownedTask.user.id,
+            }),
+          ),
         ).rejects.toThrow(/task type mismatch/i);
 
         await expect(
           prisma.task.findUniqueOrThrow({
-            where: { id: task.id },
+            where: { id: ownedTask.task.id },
           }),
         ).resolves.toEqual(
           expect.objectContaining({
-            id: task.id,
+            id: ownedTask.task.id,
             type: TaskType.IMAGE,
             status: TaskStatus.QUEUED,
             errorText: null,
@@ -184,7 +237,7 @@ describe("queue bootstrap", () => {
         );
         expect(
           await prisma.taskStep.count({
-            where: { taskId: task.id },
+            where: { taskId: ownedTask.task.id },
           }),
         ).toBe(0);
       });
@@ -196,7 +249,7 @@ describe("queue bootstrap", () => {
       await withQueueTestEnv(databaseUrl, async () => {
         const { queues } = await import("@/lib/queues");
         const { enqueueTask } = await import("@/lib/queues/enqueue");
-        const task = await createOwnedTask(prisma, {
+        const ownedTask = await createOwnedTask(prisma, {
           username: "queue-bootstrap-failure",
           projectTitle: "Queue Failure Project",
           taskType: TaskType.IMAGE,
@@ -207,26 +260,32 @@ describe("queue bootstrap", () => {
 
         try {
           await expect(
-            enqueueTask(task.id, TaskType.IMAGE, {
-              prompt: "Generate key art",
-            }),
+            enqueueTask(
+              ownedTask.task.id,
+              TaskType.IMAGE,
+              buildQueuePayload({
+                taskType: TaskType.IMAGE,
+                projectId: ownedTask.project.id,
+                userId: ownedTask.user.id,
+              }),
+            ),
           ).rejects.toThrow("queue unavailable");
 
           expect(addSpy).toHaveBeenCalledTimes(1);
           await expect(
             prisma.task.findUniqueOrThrow({
-              where: { id: task.id },
+              where: { id: ownedTask.task.id },
             }),
           ).resolves.toEqual(
             expect.objectContaining({
-              id: task.id,
+              id: ownedTask.task.id,
               status: TaskStatus.FAILED,
               errorText: "queue unavailable",
             }),
           );
           expect(
             await prisma.taskStep.count({
-              where: { taskId: task.id },
+              where: { taskId: ownedTask.task.id },
             }),
           ).toBe(0);
         } finally {
@@ -243,17 +302,45 @@ describe("queue bootstrap", () => {
           import("@/lib/queues"),
           import("@/lib/queues/enqueue"),
         ]);
+        await prisma.modelProvider.create({
+          data: {
+            key: "image",
+            label: "Queue Bootstrap Image Provider",
+            providerName: "mock-provider",
+            modelName: "mock-image-model",
+            baseUrl: "http://127.0.0.1:1/mock-image",
+            timeoutMs: 1_000,
+            maxRetries: 0,
+            enabled: true,
+            configJson: {},
+          },
+        });
+        vi.doMock("@/lib/models/proxy-client", () => ({
+          callProxyModel: vi.fn().mockResolvedValue({
+            status: "ok",
+            fileOutputs: [ONE_BY_ONE_PNG_DATA_URL],
+            rawResponse: {
+              status: "ok",
+            },
+          }),
+        }));
         const { startWorkerRuntime } = await import("@/worker/index");
         const { bullmqConnection } = await import("@/lib/redis");
-        const task = await createOwnedTask(prisma, {
+        const ownedTask = await createOwnedTask(prisma, {
           username: "queue-bootstrap-runtime",
           projectTitle: "Queue Runtime Project",
           taskType: TaskType.IMAGE,
         });
 
-        const result = await enqueueTask(task.id, TaskType.IMAGE, {
-          prompt: "Generate key art",
-        });
+        const result = await enqueueTask(
+          ownedTask.task.id,
+          TaskType.IMAGE,
+          buildQueuePayload({
+            taskType: TaskType.IMAGE,
+            projectId: ownedTask.project.id,
+            userId: ownedTask.user.id,
+          }),
+        );
 
         expect(result.queueName).toBe("image-queue");
         expect(result.jobId).toEqual(expect.any(String));
@@ -263,7 +350,7 @@ describe("queue bootstrap", () => {
         expect(job?.name).toBe(TaskType.IMAGE);
         expect(job?.data).toEqual(
           expect.objectContaining({
-            taskId: task.id,
+            taskId: ownedTask.task.id,
             type: TaskType.IMAGE,
             traceId: expect.any(String),
           }),
@@ -271,7 +358,7 @@ describe("queue bootstrap", () => {
 
         const queuedStep = await prisma.taskStep.findFirstOrThrow({
           where: {
-            taskId: task.id,
+            taskId: ownedTask.task.id,
           },
           orderBy: {
             createdAt: "desc",
@@ -280,12 +367,14 @@ describe("queue bootstrap", () => {
 
         expect(queuedStep).toEqual(
           expect.objectContaining({
-            taskId: task.id,
+            taskId: ownedTask.task.id,
             stepKey: TaskType.IMAGE,
             status: TaskStatus.QUEUED,
             inputJson: expect.objectContaining({
               payload: {
+                projectId: ownedTask.project.id,
                 prompt: "Generate key art",
+                userId: ownedTask.user.id,
               },
               traceId: expect.any(String),
             }),
@@ -311,11 +400,11 @@ describe("queue bootstrap", () => {
 
           await expect(
             prisma.task.findUniqueOrThrow({
-              where: { id: task.id },
+              where: { id: ownedTask.task.id },
             }),
           ).resolves.toEqual(
             expect.objectContaining({
-              id: task.id,
+              id: ownedTask.task.id,
               status: TaskStatus.SUCCEEDED,
               outputJson: expect.objectContaining({
                 ok: true,
@@ -325,12 +414,12 @@ describe("queue bootstrap", () => {
           );
           await expect(
             prisma.taskStep.findFirstOrThrow({
-              where: { taskId: task.id },
+              where: { taskId: ownedTask.task.id },
               orderBy: { createdAt: "desc" },
             }),
           ).resolves.toEqual(
             expect.objectContaining({
-              taskId: task.id,
+              taskId: ownedTask.task.id,
               status: TaskStatus.SUCCEEDED,
               outputJson: expect.objectContaining({
                 ok: true,
@@ -341,6 +430,7 @@ describe("queue bootstrap", () => {
         } finally {
           await runtime.close();
           await queueEvents.close();
+          vi.doUnmock("@/lib/models/proxy-client");
         }
       });
     });

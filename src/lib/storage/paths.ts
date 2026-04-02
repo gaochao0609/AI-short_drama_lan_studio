@@ -14,6 +14,28 @@ export function getStorageRoot() {
   return requireStorageRoot();
 }
 
+export function normalizeStoredPath(storagePath: string) {
+  return path.posix.normalize(storagePath.replaceAll("\\", "/"));
+}
+
+export function toStoredPath(storageRoot: string, filePath: string) {
+  return normalizeStoredPath(path.relative(storageRoot, filePath));
+}
+
+export function resolveStoredPath(storageRoot: string, storagePath: string) {
+  if (path.isAbsolute(storagePath)) {
+    return path.resolve(storagePath);
+  }
+
+  const normalized = normalizeStoredPath(storagePath);
+
+  if (path.posix.isAbsolute(normalized)) {
+    return path.resolve(normalized);
+  }
+
+  return path.resolve(storageRoot, normalized);
+}
+
 export function getTempDir() {
   return path.join(getStorageRoot(), "tmp");
 }
