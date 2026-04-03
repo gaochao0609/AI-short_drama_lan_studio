@@ -100,13 +100,15 @@ describe("workspace shell", () => {
 
     render(await pageModule.default());
 
+    expect(screen.getByText("今日创作控制台")).toBeInTheDocument();
     expect(screen.getByText("Recent Project")).toBeInTheDocument();
     expect(screen.getByText("task-1")).toBeInTheDocument();
-    expect(screen.getByText("2")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Create Project" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Project title")).toBeInTheDocument();
-    expect(screen.getByLabelText("Project idea")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Create project" })).toBeInTheDocument();
+    expect(screen.getByText("失败任务")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "创建项目并进入脚本流程" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Script")).toBeInTheDocument();
+    expect(screen.getByText("Storyboard")).toBeInTheDocument();
   });
 
   it("redirects unauthenticated users from the workspace layout", async () => {

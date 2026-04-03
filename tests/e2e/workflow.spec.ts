@@ -123,6 +123,14 @@ test("workflow shows all generated artifacts in project detail", async ({ page }
     await page.locator('input[autocomplete="current-password"]').fill(password);
     await page.locator('button[type="submit"]').click();
     await expect(page).toHaveURL(/\/workspace$/);
+    await expect(
+      page.getByRole("heading", { name: "今日创作控制台" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "创建项目并进入脚本流程" }),
+    ).toBeVisible();
+    await expect(page.getByText("Script")).toBeVisible();
+    await expect(page.getByText("Storyboard")).toBeVisible();
 
     const createProjectPayload = await page.evaluate(async () => {
       const response = await fetch("/api/projects", {
