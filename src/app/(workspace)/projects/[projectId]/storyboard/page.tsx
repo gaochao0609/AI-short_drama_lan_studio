@@ -57,7 +57,8 @@ type StoryboardPageData = {
 const copy = {
   workflowTitle: "项目制作流程",
   stageTitle: "分镜",
-  stageDescription: "选择一个已定稿剧本，把内容拆成 15 秒镜头段落，并保留可直接复制的视频提示词。",
+  stageDescription:
+    "选择一个已定稿脚本，把内容拆成 15 秒镜头段落，并保留可直接复制的视频提示词。",
   projectLabel: "当前项目",
   backToProject: "返回项目制作台",
   activeStage: "当前阶段",
@@ -71,26 +72,32 @@ const copy = {
   stageNext: "下一步",
   stageWaiting: "待开始",
   scriptVersionsHeading: "脚本版本",
-  scriptVersionsDescription: "这里只显示当前项目的脚本版本，选中后即可发起分镜拆解任务。",
+  scriptVersionsDescription:
+    "这里只显示当前项目的脚本版本，选中后即可发起分镜拆解任务。",
   selectScriptVersion: "选择脚本版本",
   scriptVersionsEmpty: "当前项目还没有脚本版本，先完成脚本定稿。",
   noScriptBody: "当前版本没有保存剧本正文。",
   generateStoryboard: "生成分镜",
   statusHeading: "任务状态",
-  statusDescription: "发起分镜任务后，这里会展示当前轮询到的任务状态与结果摘要。",
+  statusDescription:
+    "发起分镜任务后，这里会显示当前轮询到的任务状态与结果摘要。",
   noTask: "当前没有正在运行的分镜任务。",
   generatedSegments: "生成段数",
   segmentsHeading: "分镜结果",
-  segmentsDescription: "每段分镜保留场景、景别、动作、对白和视频提示词，便于继续进入图片和视频流程。",
+  segmentsDescription:
+    "每段分镜保留场景、景别、动作、对白和视频提示词，便于继续进入图片和视频流程。",
   segmentsEmpty: "分镜任务完成后，结果会显示在这里。",
   taskIdLabel: "任务 ID",
   loadingProject: "加载项目中...",
+  loadProjectFailed: "加载项目失败",
+  fetchTaskFailed: "获取任务状态失败",
   generating: "正在生成分镜...",
-  generated: "Storyboard generated.",
-  failed: "Storyboard generation failed",
-  selectVersionValidation: "Select a script version before generating a storyboard",
-  requestFailed: "Storyboard request failed",
-  copyFailed: "Unable to copy the video prompt",
+  queued: "分镜任务已加入队列。",
+  generated: "分镜已生成。",
+  failed: "分镜生成失败",
+  selectVersionValidation: "请选择一个脚本版本后再生成分镜。",
+  requestFailed: "分镜任务提交失败",
+  copyFailed: "复制视频提示词失败",
   copied: "已复制",
   copyPrompt: "复制提示词",
   sceneLabel: "场景",
@@ -99,8 +106,8 @@ const copy = {
   dialogueLabel: "对白",
   promptLabel: "视频提示词",
   noDialogue: "无对白",
-  scriptDetail: "剧本完成后，可在这里拆分镜头节奏。",
-  storyboardDetail: "根据定稿剧本生成 15 秒分镜。",
+  scriptDetail: "脚本完成后，可在这里拆分镜头节奏。",
+  storyboardDetail: "根据定稿脚本生成 15 秒分镜。",
   imagesDetail: "把分镜转成关键画面与参考图。",
   videosDetail: "用关键画面推进视频镜头生成。",
   enterScript: "前往脚本",
@@ -111,20 +118,43 @@ const copy = {
   segmentPrefix: "第",
   segmentSuffix: "段",
   secondsSuffix: "秒",
+  statusPrefix: "任务状态：",
 } as const;
+
+function formatTaskStatus(status?: string) {
+  switch (status) {
+    case "QUEUED":
+      return "排队中";
+    case "RUNNING":
+      return "进行中";
+    case "SUCCEEDED":
+      return "已完成";
+    case "FAILED":
+      return "失败";
+    case "CANCELED":
+      return "已取消";
+    default:
+      return status ?? "未知";
+  }
+}
 
 export default function ProjectStoryboardPage() {
   const params = useParams<{ projectId: string }>();
   const [projectId, setProjectId] = useState("");
   const [project, setProject] = useState<StoryboardPageData | null>(null);
-  const [selectedScriptVersionId, setSelectedScriptVersionId] = useState<string | null>(null);
-  const [storyboardResult, setStoryboardResult] = useState<StoryboardTaskOutput | null>(null);
+  const [selectedScriptVersionId, setSelectedScriptVersionId] = useState<
+    string | null
+  >(null);
+  const [storyboardResult, setStoryboardResult] =
+    useState<StoryboardTaskOutput | null>(null);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoadingProject, setIsLoadingProject] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [copiedSegmentIndex, setCopiedSegmentIndex] = useState<number | null>(null);
+  const [copiedSegmentIndex, setCopiedSegmentIndex] = useState<number | null>(
+    null,
+  );
   const { task, error: pollingError } = useTaskPolling(activeTaskId);
 
   useEffect(() => {
@@ -153,8 +183,8 @@ export default function ProjectStoryboardPage() {
         if (!response.ok) {
           throw new Error(
             payload && "error" in payload
-              ? payload.error ?? "Failed to load project"
-              : "Failed to load project",
+              ? payload.error ?? copy.loadProjectFailed
+              : copy.loadProjectFailed,
           );
         }
 
@@ -170,15 +200,15 @@ export default function ProjectStoryboardPage() {
               current &&
               payload.scriptVersions.some((version) => version.id === current);
 
-            return currentVersionStillExists ? current : payload.scriptVersions[0]?.id ?? null;
+            return currentVersionStillExists
+              ? current
+              : payload.scriptVersions[0]?.id ?? null;
           });
         }
       } catch (loadError) {
         if (!cancelled) {
           setError(
-            loadError instanceof Error
-              ? loadError.message
-              : "Failed to load project",
+            loadError instanceof Error ? loadError.message : copy.loadProjectFailed,
           );
         }
       } finally {
@@ -203,9 +233,7 @@ export default function ProjectStoryboardPage() {
     setActiveTaskId(null);
     setStatusMessage(null);
     setError(
-      pollingError instanceof Error
-        ? pollingError.message
-        : "Failed to fetch task",
+      pollingError instanceof Error ? pollingError.message : copy.fetchTaskFailed,
     );
   }, [activeTaskId, pollingError]);
 
@@ -243,7 +271,11 @@ export default function ProjectStoryboardPage() {
       return null;
     }
 
-    return project.scriptVersions.find((version) => version.id === selectedScriptVersionId) ?? null;
+    return (
+      project.scriptVersions.find(
+        (version) => version.id === selectedScriptVersionId,
+      ) ?? null
+    );
   }, [project, selectedScriptVersionId]);
 
   const storyboardSegments = storyboardResult?.segments ?? [];
@@ -281,13 +313,11 @@ export default function ProjectStoryboardPage() {
       }
 
       setActiveTaskId(payload.taskId);
-      setStatusMessage("Storyboard task queued.");
+      setStatusMessage(copy.queued);
     } catch (submitError) {
       setStatusMessage(null);
       setError(
-        submitError instanceof Error
-          ? submitError.message
-          : copy.requestFailed,
+        submitError instanceof Error ? submitError.message : copy.requestFailed,
       );
     } finally {
       setIsSubmitting(false);
@@ -331,7 +361,9 @@ export default function ProjectStoryboardPage() {
               <StatusBadge label={copy.activeStage} tone="active" />
             </div>
             <h2 style={heroSupportTitleStyle}>
-              {isLoadingProject ? copy.loadingProject : project?.title ?? copy.loadingProject}
+              {isLoadingProject
+                ? copy.loadingProject
+                : project?.title ?? copy.loadingProject}
             </h2>
             <p style={heroSupportBodyStyle}>{projectSummary}</p>
           </div>
@@ -346,7 +378,9 @@ export default function ProjectStoryboardPage() {
             label: copy.scriptStage,
             detail: scriptVersionSummary,
             summary: copy.scriptDetail,
-            badgeLabel: project?.scriptVersions.length ? copy.stageDone : copy.stageWaiting,
+            badgeLabel: project?.scriptVersions.length
+              ? copy.stageDone
+              : copy.stageWaiting,
             tone: project?.scriptVersions.length ? "active" : "neutral",
             href: `/projects/${projectId}/script`,
             ctaLabel: copy.enterScript,
@@ -370,7 +404,9 @@ export default function ProjectStoryboardPage() {
             summary: storyboardSegments.length
               ? "分镜已就绪，可以继续生成关键画面。"
               : "等待分镜结果输出后继续。",
-            badgeLabel: storyboardSegments.length ? copy.stageNext : copy.stageWaiting,
+            badgeLabel: storyboardSegments.length
+              ? copy.stageNext
+              : copy.stageWaiting,
             tone: storyboardSegments.length ? "warning" : "neutral",
             href: `/projects/${projectId}/images`,
             ctaLabel: copy.enterImages,
@@ -462,7 +498,10 @@ export default function ProjectStoryboardPage() {
             <article style={resultCardStyle}>
               <p style={resultMetaStyle}>{copy.taskIdLabel}</p>
               <strong style={resultTitleStyle}>{activeTaskId}</strong>
-              <p style={resultBodyStyle}>Status: {task ? task.status : "QUEUED"}</p>
+              <p style={resultBodyStyle}>
+                {copy.statusPrefix}
+                {formatTaskStatus(task?.status ?? "QUEUED")}
+              </p>
             </article>
           ) : (
             <p style={emptyStateStyle}>{copy.noTask}</p>
@@ -471,7 +510,9 @@ export default function ProjectStoryboardPage() {
           {storyboardSegments.length > 0 ? (
             <article style={resultCardStyle}>
               <p style={resultMetaStyle}>{copy.generatedSegments}</p>
-              <strong style={resultTitleStyle}>{storyboardSegments.length} segments</strong>
+              <strong style={resultTitleStyle}>
+                {storyboardSegments.length} 段
+              </strong>
             </article>
           ) : null}
         </section>
@@ -506,7 +547,9 @@ export default function ProjectStoryboardPage() {
                     onClick={() => void handleCopyVideoPrompt(segment)}
                     style={secondaryButtonStyle}
                   >
-                    {copiedSegmentIndex === segment.index ? copy.copied : copy.copyPrompt}
+                    {copiedSegmentIndex === segment.index
+                      ? copy.copied
+                      : copy.copyPrompt}
                   </button>
                 </div>
 

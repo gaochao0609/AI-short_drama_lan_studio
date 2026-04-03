@@ -126,7 +126,7 @@ describe("project storyboard page", () => {
     );
     expect(screen.getByText("脚本")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Generate storyboard" }));
+    fireEvent.click(screen.getByText("生成分镜"));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -141,8 +141,8 @@ describe("project storyboard page", () => {
       );
     });
 
-    expect(await screen.findByText("Storyboard generated.")).toBeInTheDocument();
+    expect(await screen.findByText("分镜已生成。")).toBeInTheDocument();
     expect(screen.getByText("Archive room")).toBeInTheDocument();
-    expect(screen.getByText("1 segments")).toBeInTheDocument();
+    expect(screen.getByText("1 段")).toBeInTheDocument();
   });
 });

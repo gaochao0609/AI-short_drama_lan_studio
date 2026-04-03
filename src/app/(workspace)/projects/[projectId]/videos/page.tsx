@@ -59,7 +59,8 @@ const EMPTY_TASKS: VideoTaskSummary[] = [];
 const copy = {
   workflowTitle: "项目制作流程",
   stageTitle: "视频",
-  stageDescription: "从项目内已有关键画面中选择参考图，补充运动、镜头和节奏描述，生成最终视频镜头。",
+  stageDescription:
+    "从项目内已有关键画面中选择参考图，补充运动、镜头和节奏描述，生成最终视频镜头。",
   projectLabel: "当前项目",
   backToProject: "返回项目制作台",
   activeStage: "当前阶段",
@@ -72,30 +73,37 @@ const copy = {
   stageActive: "进行中",
   stageWaiting: "待开始",
   generateHeading: "生成设置",
-  generateDescription: "视频任务只接受项目内已有图片 ID，不会在这里重复上传素材。",
+  generateDescription:
+    "视频任务只接受项目内已有图片 ID，不会在这里重复上传素材。",
   promptLabel: "视频提示词",
   promptPlaceholder: "描述镜头运动、主体动作和节奏...",
   referencesLabel: "参考图片",
-  referencesDescription: "至少选择一张项目内图片作为参考素材，再发起视频任务。",
+  referencesDescription:
+    "至少选择一张项目内图片作为参考素材，再发起视频任务。",
   selectedReferencesPrefix: "已选参考图：",
   taskProgressHeading: "任务状态",
-  taskProgressDescription: "任务提交后会在这里显示当前轮询状态和近期任务历史。",
+  taskProgressDescription:
+    "任务提交后会在这里显示当前轮询状态和近期任务历史。",
   videosHeading: "视频结果",
-  videosDescription: "生成完成的视频会保留在项目结果区，方便继续回看和筛选。",
+  videosDescription:
+    "生成完成的视频会保留在项目结果区，方便继续回看和筛选。",
   noReferenceAssets: "当前项目还没有可用图片，请先完成图片阶段。",
   noRunningTask: "当前没有正在运行的视频任务。",
   noVideos: "当前项目还没有生成视频。",
   previewUnavailable: "暂无预览",
   loadingProject: "加载项目中...",
-  generating: "Generating video...",
-  generated: "Video generated.",
-  queued: "Video task queued.",
-  failed: "Video generation failed",
-  refreshFailedPrefix: "Video generated, but failed to refresh results: ",
-  missingProjectId: "Missing projectId",
-  enterPrompt: "Enter a prompt before generating a video",
-  selectReference: "Select at least one reference image",
-  enqueueFailed: "Failed to enqueue video task",
+  loadWorkspaceFailed: "加载视频工作区失败",
+  fetchTaskFailed: "获取任务状态失败",
+  refreshing: "正在刷新结果...",
+  generating: "正在生成视频...",
+  generated: "视频已生成。",
+  queued: "视频任务已加入队列。",
+  failed: "视频生成失败",
+  refreshFailedPrefix: "视频已生成，但刷新结果失败：",
+  missingProjectId: "缺少项目 ID",
+  enterPrompt: "请先输入提示词，再生成视频。",
+  selectReference: "请至少选择一张参考图片。",
+  enqueueFailed: "视频任务提交失败",
   scriptDetail: "脚本定稿后保留故事结构和对白。",
   storyboardDetail: "分镜确认镜头段落和视频提示词。",
   imagesDetail: "从关键画面中筛选可进入视频阶段的参考图。",
@@ -104,10 +112,42 @@ const copy = {
   enterStoryboard: "前往分镜",
   enterImages: "前往图片",
   enterVideos: "继续视频",
+  taskPrefix: "任务：",
+  statusPrefix: "状态：",
 } as const;
 
 function formatAssetMeta(asset: AssetSummary) {
   return `${asset.mimeType} · ${Math.round(asset.sizeBytes / 1024)} KB`;
+}
+
+function formatAssetKind(kind: string) {
+  switch (kind) {
+    case "image_generated":
+      return "生成图片";
+    case "image_reference":
+      return "参考图片";
+    case "video_generated":
+      return "生成视频";
+    default:
+      return kind;
+  }
+}
+
+function formatTaskStatus(status?: string) {
+  switch (status) {
+    case "QUEUED":
+      return "排队中";
+    case "RUNNING":
+      return "进行中";
+    case "SUCCEEDED":
+      return "已完成";
+    case "FAILED":
+      return "失败";
+    case "CANCELED":
+      return "已取消";
+    default:
+      return status ?? "未知";
+  }
 }
 
 export default function ProjectVideosPage() {
@@ -118,7 +158,9 @@ export default function ProjectVideosPage() {
   const workspaceRequestSeq = useRef(0);
   const submitRequestSeq = useRef(0);
   const [projectId, setProjectId] = useState("");
-  const [workspace, setWorkspace] = useState<VideosWorkspaceResponse | null>(null);
+  const [workspace, setWorkspace] = useState<VideosWorkspaceResponse | null>(
+    null,
+  );
   const [isLoading, setIsLoading] = useState(true);
   const [prompt, setPrompt] = useState("");
   const [selectedReferenceIds, setSelectedReferenceIds] = useState<string[]>([]);
@@ -136,9 +178,12 @@ export default function ProjectVideosPage() {
     const requestId = (workspaceRequestSeq.current += 1);
 
     try {
-      const response = await fetch(`/api/videos?projectId=${encodeURIComponent(nextProjectId)}`, {
-        cache: "no-store",
-      });
+      const response = await fetch(
+        `/api/videos?projectId=${encodeURIComponent(nextProjectId)}`,
+        {
+          cache: "no-store",
+        },
+      );
       const payload = (await response.json().catch(() => null)) as
         | VideosWorkspaceResponse
         | { error?: string }
@@ -151,8 +196,8 @@ export default function ProjectVideosPage() {
 
         throw new Error(
           payload && "error" in payload
-            ? payload.error ?? "Failed to load videos"
-            : "Failed to load videos",
+            ? payload.error ?? copy.loadWorkspaceFailed
+            : copy.loadWorkspaceFailed,
         );
       }
 
@@ -191,7 +236,11 @@ export default function ProjectVideosPage() {
         await reloadWorkspace(projectId);
       } catch (loadError) {
         if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : "Failed to load videos");
+          setError(
+            loadError instanceof Error
+              ? loadError.message
+              : copy.loadWorkspaceFailed,
+          );
         }
       } finally {
         if (!cancelled) {
@@ -214,7 +263,9 @@ export default function ProjectVideosPage() {
 
     setActiveTaskId(null);
     setStatusMessage(null);
-    setError(pollingError instanceof Error ? pollingError.message : "Failed to fetch task");
+    setError(
+      pollingError instanceof Error ? pollingError.message : copy.fetchTaskFailed,
+    );
   }, [activeTaskId, pollingError]);
 
   useEffect(() => {
@@ -233,7 +284,7 @@ export default function ProjectVideosPage() {
     if (polledTask.status === "SUCCEEDED") {
       setError(null);
       setActiveTaskId(null);
-      setStatusMessage("Refreshing results...");
+      setStatusMessage(copy.refreshing);
 
       if (!projectId) {
         setStatusMessage(copy.generated);
@@ -251,7 +302,9 @@ export default function ProjectVideosPage() {
         } catch (refreshError) {
           setStatusMessage(null);
           const message =
-            refreshError instanceof Error ? refreshError.message : "Failed to load videos";
+            refreshError instanceof Error
+              ? refreshError.message
+              : copy.loadWorkspaceFailed;
           setError(`${copy.refreshFailedPrefix}${message}`);
         }
       })();
@@ -341,7 +394,9 @@ export default function ProjectVideosPage() {
       }
 
       setStatusMessage(null);
-      setError(submitError instanceof Error ? submitError.message : copy.enqueueFailed);
+      setError(
+        submitError instanceof Error ? submitError.message : copy.enqueueFailed,
+      );
     } finally {
       if (
         submitRequestId === submitRequestSeq.current &&
@@ -372,7 +427,9 @@ export default function ProjectVideosPage() {
               <StatusBadge label={copy.activeStage} tone="active" />
             </div>
             <h2 style={heroSupportTitleStyle}>
-              {isLoading ? copy.loadingProject : workspace?.project.title ?? copy.loadingProject}
+              {isLoading
+                ? copy.loadingProject
+                : workspace?.project.title ?? copy.loadingProject}
             </h2>
             <p style={heroSupportBodyStyle}>{projectSummary}</p>
           </div>
@@ -386,7 +443,7 @@ export default function ProjectVideosPage() {
           {
             label: copy.scriptStage,
             detail: copy.scriptDetail,
-            summary: "保留完整剧本结构，作为后续所有素材的创作基础。",
+            summary: "保留完整脚本结构，作为后续所有素材的创作基础。",
             badgeLabel: copy.stageDone,
             tone: "active",
             href: `/projects/${projectId}/script`,
@@ -498,7 +555,8 @@ export default function ProjectVideosPage() {
                     <span style={referenceMetaStyle}>
                       {asset.id}
                       <br />
-                      {asset.kind} · {Math.round(asset.sizeBytes / 1024)} KB
+                      {formatAssetKind(asset.kind)} ·{" "}
+                      {Math.round(asset.sizeBytes / 1024)} KB
                     </span>
                   </button>
                 );
@@ -524,7 +582,12 @@ export default function ProjectVideosPage() {
           >
             生成视频
           </button>
-          {activeTaskId ? <span style={metaTextStyle}>Task: {activeTaskId}</span> : null}
+          {activeTaskId ? (
+            <span style={metaTextStyle}>
+              {copy.taskPrefix}
+              {activeTaskId}
+            </span>
+          ) : null}
         </div>
       </section>
 
@@ -537,7 +600,10 @@ export default function ProjectVideosPage() {
           {activeTaskId ? (
             <article style={resultCardStyle}>
               <strong style={resultTitleStyle}>{activeTaskId}</strong>
-              <span style={resultMetaTextStyle}>Status: {task?.status ?? "QUEUED"}</span>
+              <span style={resultMetaTextStyle}>
+                {copy.statusPrefix}
+                {formatTaskStatus(task?.status ?? "QUEUED")}
+              </span>
             </article>
           ) : (
             <p style={emptyStateStyle}>{copy.noRunningTask}</p>
@@ -549,7 +615,8 @@ export default function ProjectVideosPage() {
                 <article key={taskItem.id} style={resultCardStyle}>
                   <strong style={resultTitleStyle}>{taskItem.id}</strong>
                   <span style={resultMetaTextStyle}>
-                    {taskItem.status} · {new Date(taskItem.createdAt).toLocaleString("zh-CN")}
+                    {formatTaskStatus(taskItem.status)} ·{" "}
+                    {new Date(taskItem.createdAt).toLocaleString("zh-CN")}
                   </span>
                   {taskItem.errorText ? (
                     <span style={taskErrorStyle}>{taskItem.errorText}</span>

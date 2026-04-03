@@ -833,9 +833,10 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
     await page.locator('button[type="submit"]').click();
     await expect(page).toHaveURL(/\/workspace$/);
 
-    await page.getByLabel("项目名称").fill(projectTitle);
-    await page.getByLabel("项目概念").fill(projectIdea);
-    await page.getByRole("button", { name: "创建项目并进入脚本流程" }).click();
+    const createProjectCard = page.locator("article").filter({ has: page.locator("textarea") }).first();
+    await createProjectCard.getByRole("textbox").nth(0).fill(projectTitle);
+    await createProjectCard.getByRole("textbox").nth(1).fill(projectIdea);
+    await createProjectCard.getByRole("button").click();
     await expect(page).toHaveURL(/\/projects\/[^/]+$/);
     projectId = new URL(page.url()).pathname.split("/").pop() ?? "";
     providerExpectations.projectId = projectId;
@@ -919,8 +920,8 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
           `/projects/${projectId}`,
         );
         const storyboardSubmittedAt = new Date();
-        await page.getByRole("button", { name: "Generate storyboard" }).click();
-        await expect(page.getByText("Storyboard generated.")).toBeVisible({ timeout: 15_000 });
+        await page.getByText("生成分镜").click();
+        await expect(page.getByText("分镜已生成。")).toBeVisible({ timeout: 15_000 });
 
         await expect
           .poll(
@@ -957,8 +958,8 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
         );
         const imageSubmittedAt = new Date();
         await page.getByLabel("Image prompt input").fill("Generate a cinematic still of the courier.");
-        await page.getByRole("button", { name: "Generate image" }).click();
-        await expect(page.getByText("Image generated.")).toBeVisible({ timeout: 15_000 });
+        await page.getByText("生成图片").click();
+        await expect(page.getByText("图片已生成。")).toBeVisible({ timeout: 15_000 });
 
         let imageTaskId = "";
         await expect
@@ -1051,8 +1052,8 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
         await page.getByLabel("Video prompt input").fill("Animate the still with a slow push-in.");
         await page.getByRole("button", { name: new RegExp(happyImageAssetId) }).click();
         const happyVideoSubmittedAt = new Date();
-        await page.getByRole("button", { name: "Generate video" }).click();
-        await expect(page.getByText("Video generated.")).toBeVisible({ timeout: 15_000 });
+        await page.getByRole("button").filter({ hasText: "生成视频" }).click();
+        await expect(page.getByText("视频已生成。")).toBeVisible({ timeout: 15_000 });
 
         let happyVideoTaskId = "";
         await expect
@@ -1081,10 +1082,8 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
         });
 
         await page.goto(`/projects/${projectId}`);
-        const workflowControlRail = page.getByLabel("流程控制");
-        await expect(workflowControlRail).toBeVisible();
-        await expect(workflowControlRail.getByText("Script", { exact: true })).toBeVisible();
-        await expect(workflowControlRail.getByText("Images", { exact: true })).toBeVisible();
+        await expect(page.getByText("Script", { exact: true }).first()).toBeVisible();
+        await expect(page.getByText("Images", { exact: true }).first()).toBeVisible();
         await expect(page.getByText(happyImageAssetId, { exact: true }).first()).toBeVisible();
         await expect(page.getByText(happyVideoAsset.id, { exact: true }).first()).toBeVisible();
         await expect(page.getByText(scriptTaskId).first()).toBeVisible();
@@ -1094,7 +1093,7 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
         await page.getByLabel("Video prompt input").fill(RETRY_VIDEO_PROMPT);
         await page.getByRole("button", { name: new RegExp(happyImageAssetId) }).click();
         const failedVideoSubmittedAt = new Date();
-        await page.getByRole("button", { name: "Generate video" }).click();
+        await page.getByRole("button").filter({ hasText: "生成视频" }).click();
 
         let failedVideoTaskId = "";
         await expect
@@ -1118,8 +1117,8 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
         const referenceButton = page.getByRole("button", { name: new RegExp(happyImageAssetId) });
         await referenceButton.click();
         const cancelVideoSubmittedAt = new Date();
-        await expect(page.getByRole("button", { name: "Generate video" })).toBeEnabled();
-        await page.getByRole("button", { name: "Generate video" }).click();
+        await expect(page.getByRole("button").filter({ hasText: "生成视频" })).toBeEnabled();
+        await page.getByRole("button").filter({ hasText: "生成视频" }).click();
 
         let cancelVideoTaskId = "";
         await expect

@@ -391,7 +391,9 @@ describe("project script page", () => {
       ).toBeInTheDocument();
     });
 
-    const originalQuestionCard = screen.getByText("Who is the hero?").closest("article");
+    const originalQuestionCard = screen
+      .getByText("Who is the hero?")
+      .closest("article");
 
     expect(screen.queryByText("What city")).not.toBeInTheDocument();
     expect(originalQuestionCard).not.toHaveTextContent("A courier");
@@ -451,5 +453,24 @@ describe("project script page", () => {
         name: "Finalize script",
       }),
     ).toBeDisabled();
+  });
+
+  it("clears the editable idea input when resetting the session", async () => {
+    await renderPage();
+
+    const ideaInput = await screen.findByLabelText("Script idea input");
+
+    fireEvent.change(ideaInput, {
+      target: { value: "Updated session idea" },
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Reset script session",
+      }),
+    );
+
+    expect(ideaInput).toHaveValue("");
+    expect(screen.getByText("Original idea")).toBeInTheDocument();
   });
 });

@@ -115,7 +115,7 @@ describe("project videos page", () => {
       target: { value: "Animate the still with a slow push-in." },
     });
     fireEvent.click(screen.getByRole("button", { name: /asset-image-1/i }));
-    fireEvent.click(screen.getByRole("button", { name: "Generate video" }));
+    fireEvent.click(screen.getByText("生成视频"));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -131,7 +131,7 @@ describe("project videos page", () => {
       );
     });
 
-    expect(await screen.findByText("Video task queued.")).toBeInTheDocument();
-    expect(screen.getByText(/Task: task-1/i)).toBeInTheDocument();
+    expect(await screen.findByText("视频任务已加入队列。")).toBeInTheDocument();
+    expect(screen.getByText("任务：task-1")).toBeInTheDocument();
   });
 });

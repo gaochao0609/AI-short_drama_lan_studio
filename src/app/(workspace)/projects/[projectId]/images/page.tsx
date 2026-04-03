@@ -47,7 +47,8 @@ const EMPTY_ASSETS: ImageAssetSummary[] = [];
 const copy = {
   workflowTitle: "项目制作流程",
   stageTitle: "图片",
-  stageDescription: "根据分镜提示生成关键画面，或者基于当前项目已有图片继续做图生图调整。",
+  stageDescription:
+    "根据分镜提示生成关键画面，或者基于当前项目已有图片继续做图生图调整。",
   projectLabel: "当前项目",
   backToProject: "返回项目制作台",
   activeStage: "当前阶段",
@@ -61,33 +62,38 @@ const copy = {
   stageNext: "下一步",
   stageWaiting: "待开始",
   generateHeading: "生成设置",
-  generateDescription: "文本生图和图生图共用同一套任务链路，只是输入的素材来源不同。",
+  generateDescription:
+    "文生图和图生图共用同一套任务链路，只是输入的素材来源不同。",
   resultHeading: "结果列表",
-  resultDescription: "所有图片结果都按项目归档在这里，方便后续进入视频阶段继续使用。",
+  resultDescription:
+    "所有图片结果都按项目归档在这里，方便后续进入视频阶段继续使用。",
   textMode: "文生图",
   imageMode: "图生图",
   referenceAssetLabel: "参考图片",
   promptLabel: "生成提示词",
   promptPlaceholder: "描述你想生成的画面...",
-  helperPrefix: "MAX_UPLOAD_MB：",
+  helperPrefix: "单张参考图大小上限：",
   noAssets: "当前项目还没有图片资产。",
   noReferenceAssets: "请先生成一张图片，再继续图生图。",
-  selectReference: "选择一张项目内图片作为参考",
+  selectReference: "选择一张项目内图片作为参考。",
   referencePlaceholder: "选择图片资产...",
   previewUnavailable: "暂无预览",
   loadingProject: "加载项目中...",
-  generating: "Generating image...",
-  generated: "Image generated.",
-  requestQueued: "Image task queued.",
-  failed: "Image generation failed",
-  refreshFailedPrefix: "Image generated, but failed to refresh results: ",
-  missingProjectId: "Missing projectId",
-  enterPrompt: "Enter a prompt before generating an image",
-  selectReferenceValidation: "Select a reference image asset",
-  uploadTooLargePrefix: "Reference image exceeds MAX_UPLOAD_MB (",
-  uploadTooLargeSuffix: " MB)",
-  enqueueFailed: "Failed to enqueue image task",
-  payloadTooLarge: "Payload Too Large",
+  loadWorkspaceFailed: "加载图片工作区失败",
+  fetchTaskFailed: "获取任务状态失败",
+  refreshing: "正在刷新结果...",
+  generating: "正在生成图片...",
+  generated: "图片已生成。",
+  requestQueued: "图片任务已加入队列。",
+  failed: "图片生成失败",
+  refreshFailedPrefix: "图片已生成，但刷新结果失败：",
+  missingProjectId: "缺少项目 ID",
+  enterPrompt: "请先输入提示词，再生成图片。",
+  selectReferenceValidation: "请选择一张参考图片。",
+  uploadTooLargePrefix: "参考图片超过上传限制（",
+  uploadTooLargeSuffix: " MB）",
+  enqueueFailed: "图片任务提交失败",
+  payloadTooLarge: "上传内容过大",
   scriptDetail: "脚本定稿后继续把镜头拆成画面指令。",
   storyboardDetail: "分镜完成后可把镜头提示转成关键画面。",
   imagesDetail: "当前页负责管理文生图和图生图结果。",
@@ -96,6 +102,7 @@ const copy = {
   enterStoryboard: "前往分镜",
   enterImages: "继续图片",
   enterVideos: "前往视频",
+  taskPrefix: "任务：",
 } as const;
 
 function getMaxUploadBytes(maxUploadMb: number) {
@@ -114,7 +121,9 @@ export default function ProjectImagesPage() {
   const latestRouteProjectIdRef = useRef(routeProjectId);
   latestRouteProjectIdRef.current = routeProjectId;
   const [projectId, setProjectId] = useState("");
-  const [workspace, setWorkspace] = useState<ImagesWorkspaceResponse | null>(null);
+  const [workspace, setWorkspace] = useState<ImagesWorkspaceResponse | null>(
+    null,
+  );
   const [isLoading, setIsLoading] = useState(true);
   const [mode, setMode] = useState<Mode>("text");
   const [prompt, setPrompt] = useState("");
@@ -135,9 +144,12 @@ export default function ProjectImagesPage() {
     const requestId = (workspaceRequestSeq.current += 1);
 
     try {
-      const response = await fetch(`/api/images?projectId=${encodeURIComponent(nextProjectId)}`, {
-        cache: "no-store",
-      });
+      const response = await fetch(
+        `/api/images?projectId=${encodeURIComponent(nextProjectId)}`,
+        {
+          cache: "no-store",
+        },
+      );
       const payload = (await response.json().catch(() => null)) as
         | ImagesWorkspaceResponse
         | { error?: string }
@@ -150,8 +162,8 @@ export default function ProjectImagesPage() {
 
         throw new Error(
           payload && "error" in payload
-            ? payload.error ?? "Failed to load images"
-            : "Failed to load images",
+            ? payload.error ?? copy.loadWorkspaceFailed
+            : copy.loadWorkspaceFailed,
         );
       }
 
@@ -194,7 +206,11 @@ export default function ProjectImagesPage() {
         }
       } catch (loadError) {
         if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : "Failed to load images");
+          setError(
+            loadError instanceof Error
+              ? loadError.message
+              : copy.loadWorkspaceFailed,
+          );
         }
       } finally {
         if (!cancelled) {
@@ -217,7 +233,9 @@ export default function ProjectImagesPage() {
 
     setActiveTaskId(null);
     setStatusMessage(null);
-    setError(pollingError instanceof Error ? pollingError.message : "Failed to fetch task");
+    setError(
+      pollingError instanceof Error ? pollingError.message : copy.fetchTaskFailed,
+    );
   }, [activeTaskId, pollingError]);
 
   useEffect(() => {
@@ -242,7 +260,7 @@ export default function ProjectImagesPage() {
         return;
       }
 
-      setStatusMessage("Refreshing results...");
+      setStatusMessage(copy.refreshing);
 
       void (async () => {
         try {
@@ -256,7 +274,7 @@ export default function ProjectImagesPage() {
           const message =
             refreshError instanceof Error
               ? refreshError.message
-              : "Failed to load images";
+              : copy.loadWorkspaceFailed;
           setError(`${copy.refreshFailedPrefix}${message}`);
         }
       })();
@@ -356,7 +374,9 @@ export default function ProjectImagesPage() {
       }
 
       setStatusMessage(null);
-      setError(submitError instanceof Error ? submitError.message : copy.enqueueFailed);
+      setError(
+        submitError instanceof Error ? submitError.message : copy.enqueueFailed,
+      );
     } finally {
       if (
         submitRequestId === submitRequestSeq.current &&
@@ -387,7 +407,9 @@ export default function ProjectImagesPage() {
               <StatusBadge label={copy.activeStage} tone="active" />
             </div>
             <h2 style={heroSupportTitleStyle}>
-              {isLoading ? copy.loadingProject : workspace?.project.title ?? copy.loadingProject}
+              {isLoading
+                ? copy.loadingProject
+                : workspace?.project.title ?? copy.loadingProject}
             </h2>
             <p style={heroSupportBodyStyle}>{projectSummary}</p>
           </div>
@@ -401,7 +423,7 @@ export default function ProjectImagesPage() {
           {
             label: copy.scriptStage,
             detail: copy.scriptDetail,
-            summary: "保留剧本定稿内容，作为后续分镜输入。",
+            summary: "保留脚本定稿内容，作为后续分镜输入。",
             badgeLabel: copy.stageDone,
             tone: "active",
             href: `/projects/${projectId}/script`,
@@ -502,7 +524,9 @@ export default function ProjectImagesPage() {
               </select>
             </label>
             <p style={helperStyle}>
-              {selectableAssets.length === 0 ? copy.noReferenceAssets : copy.selectReference}
+              {selectableAssets.length === 0
+                ? copy.noReferenceAssets
+                : copy.selectReference}
             </p>
             {selectedAsset?.previewDataUrl ? (
               <figure style={referencePreviewStyle}>
@@ -549,7 +573,12 @@ export default function ProjectImagesPage() {
           >
             生成图片
           </button>
-          {activeTaskId ? <span style={metaTextStyle}>Task: {activeTaskId}</span> : null}
+          {activeTaskId ? (
+            <span style={metaTextStyle}>
+              {copy.taskPrefix}
+              {activeTaskId}
+            </span>
+          ) : null}
         </div>
       </section>
 

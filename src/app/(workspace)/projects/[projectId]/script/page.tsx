@@ -39,7 +39,8 @@ type SseEventMessage = {
 const copy = {
   workflowTitle: "项目制作流程",
   stageTitle: "脚本",
-  stageDescription: "通过多轮问答把项目想法整理成可定稿的短剧剧本，再交给后端任务队列完成最终定稿。",
+  stageDescription:
+    "通过多轮问答把项目想法整理成可定稿的短剧剧本，再交给后台任务队列完成最终定稿。",
   projectLabel: "当前项目",
   noIdea: "还没有填写项目创意，先补一句故事方向，再开始脚本问答。",
   activeStage: "当前阶段",
@@ -52,19 +53,22 @@ const copy = {
   stageNext: "下一步",
   stageWaiting: "待开始",
   startIdeaHeading: "创意输入",
-  startIdeaDescription: "先写下故事核心想法，系统会围绕角色、冲突和世界设定连续追问。",
+  startIdeaDescription:
+    "先写下故事核心想法，系统会围绕角色、冲突和世界设定连续追问。",
   ideaLabel: "项目创意",
   startSession: "开始脚本会话",
   resetSession: "重新开始",
   questionsHeading: "问答记录",
-  questionsDescription: "每一轮提问都会保留在这里，便于继续追问、回看和定稿前检查。",
+  questionsDescription:
+    "每一轮提问都会保留在这里，便于继续追问、回看和定稿前检查。",
   questionEmpty: "脚本会话开始后，AI 的问题会显示在这里。",
   answerLabel: "本轮回答",
   sendAnswer: "发送回答",
-  regenerateQuestion: "重生当前问题",
+  regenerateQuestion: "重新生成当前问题",
   finalize: "定稿剧本",
   finalScriptHeading: "定稿结果",
-  finalScriptDescription: "定稿后页面会持续轮询任务状态，成功时把最终剧本正文展示在这里。",
+  finalScriptDescription:
+    "定稿后页面会持续轮询任务状态，成功时把最终剧本正文展示在这里。",
   finalScriptEmpty: "还没有生成最终剧本。",
   streamingLabel: "实时生成中",
   roundPrefix: "第",
@@ -74,6 +78,10 @@ const copy = {
   finalizeRunning: "正在生成最终剧本...",
   finalizeSuccess: "最终剧本已生成。",
   finalizeFailed: "剧本定稿任务失败",
+  loadProjectFailed: "加载项目失败",
+  fetchTaskFailed: "获取任务状态失败",
+  streamRequestFailed: "脚本会话请求失败",
+  streamFailed: "脚本流式生成失败",
   startValidation: "请先填写项目创意，再开始脚本会话。",
   startFailed: "启动脚本会话失败",
   answerValidation: "请输入回答后再继续。",
@@ -124,7 +132,7 @@ export default function ProjectScriptPage() {
   const [projectId, setProjectId] = useState("");
   const [projectTitle, setProjectTitle] = useState(copy.loadingProject);
   const [idea, setIdea] = useState("");
-  const [loadedIdea, setLoadedIdea] = useState("");
+  const [projectIdea, setProjectIdea] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [questions, setQuestions] = useState<QuestionItem[]>([]);
   const [answer, setAnswer] = useState("");
@@ -165,22 +173,20 @@ export default function ProjectScriptPage() {
         if (!response.ok) {
           throw new Error(
             payload && "error" in payload
-              ? payload.error ?? "Failed to load project"
-              : "Failed to load project",
+              ? payload.error ?? copy.loadProjectFailed
+              : copy.loadProjectFailed,
           );
         }
 
         if (!cancelled && payload && "title" in payload) {
           setProjectTitle(payload.title);
-          setLoadedIdea(payload.idea?.trim() ?? "");
+          setProjectIdea(payload.idea?.trim() ?? "");
           setIdea((current) => current || payload.idea || "");
         }
       } catch (loadError) {
         if (!cancelled) {
           setError(
-            loadError instanceof Error
-              ? loadError.message
-              : "Failed to load project",
+            loadError instanceof Error ? loadError.message : copy.loadProjectFailed,
           );
         }
       } finally {
@@ -204,9 +210,7 @@ export default function ProjectScriptPage() {
 
     setStatusMessage(null);
     setError(
-      pollingError instanceof Error
-        ? pollingError.message
-        : "Failed to fetch task",
+      pollingError instanceof Error ? pollingError.message : copy.fetchTaskFailed,
     );
     setActiveTaskId(null);
   }, [activeTaskId, pollingError]);
@@ -252,7 +256,7 @@ export default function ProjectScriptPage() {
       const payload = (await response.json().catch(() => null)) as
         | { error?: string }
         | null;
-      throw new Error(payload?.error ?? "Script session request failed");
+      throw new Error(payload?.error ?? copy.streamRequestFailed);
     }
 
     setIsStreaming(true);
@@ -333,15 +337,17 @@ export default function ProjectScriptPage() {
                 ];
               });
             });
+
             if (mode === "next") {
               setAnswer("");
             }
+
             setStreamingQuestion("");
           }
 
           if (message.event === "error") {
             const payload = JSON.parse(message.data) as { message?: string };
-            throw new Error(payload.message ?? "Script stream failed");
+            throw new Error(payload.message ?? copy.streamFailed);
           }
         }
       }
@@ -384,9 +390,7 @@ export default function ProjectScriptPage() {
       await consumeQuestionStream(response, "start");
     } catch (submitError) {
       setError(
-        submitError instanceof Error
-          ? submitError.message
-          : copy.startFailed,
+        submitError instanceof Error ? submitError.message : copy.startFailed,
       );
     } finally {
       setIsSubmitting(false);
@@ -405,25 +409,20 @@ export default function ProjectScriptPage() {
     const submittedAnswer = answer;
 
     try {
-      const response = await fetch(
-        `/api/script/sessions/${sessionId}/message`,
-        {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({
-            answer: submittedAnswer,
-          }),
+      const response = await fetch(`/api/script/sessions/${sessionId}/message`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
         },
-      );
+        body: JSON.stringify({
+          answer: submittedAnswer,
+        }),
+      });
 
       await consumeQuestionStream(response, "next", submittedAnswer);
     } catch (submitError) {
       setError(
-        submitError instanceof Error
-          ? submitError.message
-          : copy.answerFailed,
+        submitError instanceof Error ? submitError.message : copy.answerFailed,
       );
     } finally {
       setIsSubmitting(false);
@@ -440,12 +439,9 @@ export default function ProjectScriptPage() {
     setIsSubmitting(true);
 
     try {
-      const response = await fetch(
-        `/api/script/sessions/${sessionId}/regenerate`,
-        {
-          method: "POST",
-        },
-      );
+      const response = await fetch(`/api/script/sessions/${sessionId}/regenerate`, {
+        method: "POST",
+      });
 
       await consumeQuestionStream(response, "regenerate");
     } catch (submitError) {
@@ -469,12 +465,9 @@ export default function ProjectScriptPage() {
     setIsSubmitting(true);
 
     try {
-      const response = await fetch(
-        `/api/script/sessions/${sessionId}/finalize`,
-        {
-          method: "POST",
-        },
-      );
+      const response = await fetch(`/api/script/sessions/${sessionId}/finalize`, {
+        method: "POST",
+      });
       const payload = (await response.json().catch(() => null)) as
         | { taskId?: string; error?: string }
         | null;
@@ -506,7 +499,7 @@ export default function ProjectScriptPage() {
     setStatusMessage(null);
     setError(null);
     setIsSessionCompleted(false);
-    setIdea(loadedIdea);
+    setIdea("");
   }
 
   const isBusy = isSubmitting || isStreaming;
@@ -518,12 +511,12 @@ export default function ProjectScriptPage() {
       return idea.trim();
     }
 
-    if (loadedIdea.trim()) {
-      return loadedIdea.trim();
+    if (projectIdea.trim()) {
+      return projectIdea.trim();
     }
 
     return copy.noIdea;
-  }, [idea, loadedIdea]);
+  }, [idea, projectIdea]);
   const scriptSummary = finalScript
     ? "已生成最终剧本，可直接进入分镜阶段。"
     : questions.length > 0
@@ -575,7 +568,7 @@ export default function ProjectScriptPage() {
             detail: copy.storyboardDetail,
             summary: finalScript
               ? "脚本已具备分镜输入条件。"
-              : "等待剧本定稿后生成结构化镜头段落。",
+              : "等待脚本定稿后生成结构化镜头段落。",
             badgeLabel: finalScript ? copy.stageNext : copy.stageWaiting,
             tone: finalScript ? "warning" : "neutral",
             href: `/projects/${projectId}/storyboard`,
