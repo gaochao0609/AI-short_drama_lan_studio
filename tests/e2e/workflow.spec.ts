@@ -497,11 +497,19 @@ test("workflow shows all generated artifacts in project detail", async ({ page }
     await expect(page.getByText("Video generated.")).toBeVisible();
 
     await page.goto(`${appUrl}/projects/${projectId}`);
-    await expect(page.getByRole("heading", { name: "Script Versions" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Storyboard Versions" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Image Assets" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Video Assets" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Task History" })).toBeVisible();
+    await expect(page.getByText("制作台")).toBeVisible();
+    await expect(page.getByRole("link", { name: "继续脚本流程" })).toHaveAttribute(
+      "href",
+      `/projects/${projectId}/script`,
+    );
+    const workflowControlRail = page.getByLabel("流程控制");
+    await expect(workflowControlRail.getByText("Script", { exact: true })).toBeVisible();
+    await expect(workflowControlRail.getByText("Images", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "脚本记录" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "分镜记录" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "图片资产" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "视频资产" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "任务历史" })).toBeVisible();
     await expect(page.getByText(`asset-image-${suffix}`)).toBeVisible();
     await expect(page.getByText(`asset-video-${suffix}`)).toBeVisible();
     await expect(page.getByText(`task-video-${suffix}`)).toBeVisible();

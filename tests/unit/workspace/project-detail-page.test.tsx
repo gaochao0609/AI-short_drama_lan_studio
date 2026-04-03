@@ -95,7 +95,7 @@ describe("project detail page", () => {
     vi.clearAllMocks();
   });
 
-  it("renders project artifacts, history, and download entries", async () => {
+  it("renders the workflow control page, history, and download entries", async () => {
     const pageModule = await import("@/app/(workspace)/projects/[projectId]/page");
 
     render(
@@ -114,28 +114,33 @@ describe("project detail page", () => {
     expect(
       screen.getByText("A contained script workflow test."),
     ).toBeInTheDocument();
-    expect(screen.getByText("ACTIVE")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Open script workflow" })).toHaveAttribute(
+    expect(screen.getByText("制作台")).toBeInTheDocument();
+    expect(screen.getByText("进行中")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "继续脚本流程" }),
+    ).toHaveAttribute(
       "href",
       "/projects/project-1/script",
     );
-    expect(screen.getByRole("link", { name: "Back to workspace" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "返回工作台" })).toHaveAttribute(
       "href",
       "/workspace",
     );
-    expect(screen.getByRole("heading", { name: "Script Versions" })).toBeInTheDocument();
+    expect(screen.getByText("Script")).toBeInTheDocument();
+    expect(screen.getByText("Images")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "脚本记录" })).toBeInTheDocument();
     expect(screen.getByText("Version 2")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Storyboard Versions" })).toBeInTheDocument();
-    expect(screen.getByText("3 frames")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Image Assets" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Video Assets" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Task History" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "分镜记录" })).toBeInTheDocument();
+    expect(screen.getByText("3 个镜头")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "图片资产" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "视频资产" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "任务历史" })).toBeInTheDocument();
     expect(screen.getByText("task-video-1")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Download keyframe.png" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "下载 keyframe.png" })).toHaveAttribute(
       "href",
       "/api/assets/image-1/download",
     );
-    expect(screen.getByRole("link", { name: "Download clip.mp4" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "下载 clip.mp4" })).toHaveAttribute(
       "href",
       "/api/assets/video-1/download",
     );
