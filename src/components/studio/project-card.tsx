@@ -3,6 +3,7 @@ import StatusBadge from "@/components/studio/status-badge";
 import type { StatusBadgeProps } from "@/components/studio/status-badge";
 
 export type ProjectCardProps = {
+  projectId: string;
   title: string;
   summary: string;
   status: string;
@@ -15,6 +16,7 @@ export type ProjectCardProps = {
 };
 
 export default function ProjectCard({
+  projectId,
   title,
   summary,
   status,
@@ -25,7 +27,7 @@ export default function ProjectCard({
   nextActionCtaLabel,
   nextActionHref,
 }: Readonly<ProjectCardProps>) {
-  const actionAriaLabel = `${nextActionCtaLabel}：${title}`;
+  const actionAriaLabel = `${nextActionCtaLabel}：${title}（${projectId}）`;
 
   return (
     <article className="studio-project-card">

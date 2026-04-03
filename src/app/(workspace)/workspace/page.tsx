@@ -325,6 +325,7 @@ export default async function WorkspaceDashboardPage() {
                   return (
                     <ProjectCard
                       key={project.id}
+                      projectId={project.id}
                       title={project.title}
                       summary={project.idea?.trim() || copy.noIdea}
                       status={mapProjectStatus(project.status)}

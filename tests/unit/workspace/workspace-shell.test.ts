@@ -73,14 +73,14 @@ describe("workspace shell", () => {
     listRecentProjectsMock.mockResolvedValue([
       {
         id: "project-1",
-        title: "Recent Project",
+        title: "Shared Project",
         idea: "Workspace test idea",
         status: "active",
         updatedAt: new Date("2026-03-18T09:00:00.000Z"),
       },
       {
         id: "project-2",
-        title: "Quiet Project",
+        title: "Shared Project",
         idea: "No recent tasks in slice",
         status: "active",
         updatedAt: new Date("2026-03-18T08:00:00.000Z"),
@@ -115,7 +115,7 @@ describe("workspace shell", () => {
     render(await pageModule.default());
 
     expect(screen.getByText("今日创作控制台")).toBeInTheDocument();
-    expect(screen.getByText("Recent Project")).toBeInTheDocument();
+    expect(screen.getAllByText("Shared Project")).toHaveLength(2);
     expect(screen.getByText("task-1")).toBeInTheDocument();
     expect(screen.getByText("失败任务")).toBeInTheDocument();
     expect(
@@ -126,11 +126,11 @@ describe("workspace shell", () => {
     expect(within(workflowOverview).getByText("Storyboard")).toBeInTheDocument();
     expect(screen.getByText("当前阶段：Images")).toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: "进入视频流程：Recent Project" }),
+      screen.getByRole("link", { name: "进入视频流程：Shared Project（project-1）" }),
     ).toHaveAttribute("href", "/projects/project-1/videos");
     expect(screen.getByText("当前阶段：暂无最近任务")).toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: "查看项目详情：Quiet Project" }),
+      screen.getByRole("link", { name: "查看项目详情：Shared Project（project-2）" }),
     ).toHaveAttribute("href", "/projects/project-2");
   });
 
