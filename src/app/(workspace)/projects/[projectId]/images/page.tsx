@@ -5,6 +5,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import PageHero from "@/components/studio/page-hero";
+import StatusBadge from "@/components/studio/status-badge";
+import WorkflowRail from "@/components/studio/workflow-rail";
 import useTaskPolling from "@/hooks/useTaskPolling";
 
 type ImageAssetSummary = {
@@ -41,10 +44,68 @@ type Mode = "text" | "image";
 
 const EMPTY_ASSETS: ImageAssetSummary[] = [];
 
+const copy = {
+  workflowTitle: "项目制作流程",
+  stageTitle: "图片",
+  stageDescription: "根据分镜提示生成关键画面，或者基于当前项目已有图片继续做图生图调整。",
+  projectLabel: "当前项目",
+  backToProject: "返回项目制作台",
+  activeStage: "当前阶段",
+  noIdea: "项目还没有补充创意说明，先确认分镜方向再继续出图。",
+  scriptStage: "脚本",
+  storyboardStage: "分镜",
+  imagesStage: "图片",
+  videosStage: "视频",
+  stageDone: "已完成",
+  stageActive: "进行中",
+  stageNext: "下一步",
+  stageWaiting: "待开始",
+  generateHeading: "生成设置",
+  generateDescription: "文本生图和图生图共用同一套任务链路，只是输入的素材来源不同。",
+  resultHeading: "结果列表",
+  resultDescription: "所有图片结果都按项目归档在这里，方便后续进入视频阶段继续使用。",
+  textMode: "文生图",
+  imageMode: "图生图",
+  referenceAssetLabel: "参考图片",
+  promptLabel: "生成提示词",
+  promptPlaceholder: "描述你想生成的画面...",
+  helperPrefix: "MAX_UPLOAD_MB：",
+  noAssets: "当前项目还没有图片资产。",
+  noReferenceAssets: "请先生成一张图片，再继续图生图。",
+  selectReference: "选择一张项目内图片作为参考",
+  referencePlaceholder: "选择图片资产...",
+  previewUnavailable: "暂无预览",
+  loadingProject: "加载项目中...",
+  generating: "Generating image...",
+  generated: "Image generated.",
+  requestQueued: "Image task queued.",
+  failed: "Image generation failed",
+  refreshFailedPrefix: "Image generated, but failed to refresh results: ",
+  missingProjectId: "Missing projectId",
+  enterPrompt: "Enter a prompt before generating an image",
+  selectReferenceValidation: "Select a reference image asset",
+  uploadTooLargePrefix: "Reference image exceeds MAX_UPLOAD_MB (",
+  uploadTooLargeSuffix: " MB)",
+  enqueueFailed: "Failed to enqueue image task",
+  payloadTooLarge: "Payload Too Large",
+  scriptDetail: "脚本定稿后继续把镜头拆成画面指令。",
+  storyboardDetail: "分镜完成后可把镜头提示转成关键画面。",
+  imagesDetail: "当前页负责管理文生图和图生图结果。",
+  videosDetail: "选中满意的图片后继续生成视频。",
+  enterScript: "前往脚本",
+  enterStoryboard: "前往分镜",
+  enterImages: "继续图片",
+  enterVideos: "前往视频",
+} as const;
+
 function getMaxUploadBytes(maxUploadMb: number) {
   const parsed = Number(maxUploadMb);
   const effective = Number.isFinite(parsed) && parsed > 0 ? parsed : 25;
   return Math.floor(effective * 1024 * 1024);
+}
+
+function formatAssetMeta(asset: ImageAssetSummary) {
+  return `${asset.mimeType} · ${Math.round(asset.sizeBytes / 1024)} KB`;
 }
 
 export default function ProjectImagesPage() {
@@ -71,7 +132,6 @@ export default function ProjectImagesPage() {
   }, [params]);
 
   async function reloadWorkspace(nextProjectId: string): Promise<boolean> {
-    // Bump request id so slower earlier responses cannot overwrite newer state.
     const requestId = (workspaceRequestSeq.current += 1);
 
     try {
@@ -84,7 +144,6 @@ export default function ProjectImagesPage() {
         | null;
 
       if (!response.ok || !payload || !("project" in payload)) {
-        // Ignore failures from stale requests.
         if (requestId !== workspaceRequestSeq.current) {
           return false;
         }
@@ -96,20 +155,18 @@ export default function ProjectImagesPage() {
         );
       }
 
-      // Ignore responses that are no longer the latest request.
       if (requestId !== workspaceRequestSeq.current) {
         return false;
       }
 
       setWorkspace(payload);
       return true;
-    } catch (error) {
-      // Ignore failures from stale requests.
+    } catch (loadError) {
       if (requestId !== workspaceRequestSeq.current) {
         return false;
       }
 
-      throw error;
+      throw loadError;
     }
   }
 
@@ -122,7 +179,6 @@ export default function ProjectImagesPage() {
 
     async function load() {
       setIsLoading(true);
-      // Project-scoped state must not linger across navigation while the new workspace loads.
       setWorkspace(null);
       setActiveTaskId(null);
       setStatusMessage(null);
@@ -172,7 +228,7 @@ export default function ProjectImagesPage() {
     }
 
     if (polledTask.status === "RUNNING" || polledTask.status === "QUEUED") {
-      setStatusMessage("Generating image...");
+      setStatusMessage(copy.generating);
       setError(null);
       return;
     }
@@ -182,7 +238,7 @@ export default function ProjectImagesPage() {
       setActiveTaskId(null);
 
       if (!projectId) {
-        setStatusMessage("Image generated.");
+        setStatusMessage(copy.generated);
         return;
       }
 
@@ -194,14 +250,14 @@ export default function ProjectImagesPage() {
           if (!applied) {
             return;
           }
-          setStatusMessage("Image generated.");
+          setStatusMessage(copy.generated);
         } catch (refreshError) {
           setStatusMessage(null);
           const message =
             refreshError instanceof Error
               ? refreshError.message
               : "Failed to load images";
-          setError(`Image generated, but failed to refresh results: ${message}`);
+          setError(`${copy.refreshFailedPrefix}${message}`);
         }
       })();
       return;
@@ -209,7 +265,7 @@ export default function ProjectImagesPage() {
 
     if (polledTask.status === "FAILED" || polledTask.status === "CANCELED") {
       setStatusMessage(null);
-      setError(polledTask.errorText ?? "Image generation failed");
+      setError(polledTask.errorText ?? copy.failed);
       setActiveTaskId(null);
     }
   }, [activeTaskId, projectId, task]);
@@ -234,7 +290,7 @@ export default function ProjectImagesPage() {
 
   async function submit() {
     if (!projectId) {
-      setError("Missing projectId");
+      setError(copy.missingProjectId);
       return;
     }
 
@@ -242,18 +298,20 @@ export default function ProjectImagesPage() {
     const submitRequestId = (submitRequestSeq.current += 1);
     const trimmedPrompt = prompt.trim();
     if (!trimmedPrompt) {
-      setError("Enter a prompt before generating an image");
+      setError(copy.enterPrompt);
       return;
     }
 
     if (mode === "image") {
       if (!sourceAssetId) {
-        setError("Select a reference image asset");
+        setError(copy.selectReferenceValidation);
         return;
       }
 
       if (selectedAsset && selectedAsset.sizeBytes > maxUploadBytes) {
-        setError(`Reference image exceeds MAX_UPLOAD_MB (${workspace?.maxUploadMb ?? 25} MB)`);
+        setError(
+          `${copy.uploadTooLargePrefix}${workspace?.maxUploadMb ?? 25}${copy.uploadTooLargeSuffix}`,
+        );
         return;
       }
     }
@@ -279,30 +337,27 @@ export default function ProjectImagesPage() {
         | null;
 
       if (response.status === 413) {
-        throw new Error(payload?.error ?? "Payload Too Large");
+        throw new Error(payload?.error ?? copy.payloadTooLarge);
       }
 
       if (!response.ok || !payload?.taskId) {
-        throw new Error(payload?.error ?? "Failed to enqueue image task");
+        throw new Error(payload?.error ?? copy.enqueueFailed);
       }
 
-      // Suppress late enqueue responses after navigation.
       if (latestRouteProjectIdRef.current !== submitRouteProjectId) {
         return;
       }
 
       setActiveTaskId(payload.taskId);
-      setStatusMessage("Image task queued.");
+      setStatusMessage(copy.requestQueued);
     } catch (submitError) {
-      // Suppress late enqueue failures after navigation.
       if (latestRouteProjectIdRef.current !== submitRouteProjectId) {
         return;
       }
 
       setStatusMessage(null);
-      setError(submitError instanceof Error ? submitError.message : "Failed to enqueue image task");
+      setError(submitError instanceof Error ? submitError.message : copy.enqueueFailed);
     } finally {
-      // Prevent older in-flight enqueues from flipping the submitting state on a newer project/request.
       if (
         submitRequestId === submitRequestSeq.current &&
         latestRouteProjectIdRef.current === submitRouteProjectId
@@ -312,123 +367,203 @@ export default function ProjectImagesPage() {
     }
   }
 
-  return (
-    <section style={pageStyle}>
-      <header style={heroStyle}>
-        <div style={heroContentStyle}>
-          <p style={eyebrowStyle}>Images Workflow</p>
-          <h2 style={heroTitleStyle}>
-            {isLoading ? "Loading project..." : workspace?.project.title ?? "Images"}
-          </h2>
-          <p style={heroCopyStyle}>
-            Generate images from text prompts, or transform an existing project image with a prompt.
-          </p>
-        </div>
-        <div style={actionsStyle}>
-          <Link href={`/projects/${projectId}`} style={secondaryLinkStyle}>
-            Back to project
-          </Link>
-        </div>
-      </header>
+  const projectSummary = workspace?.project.idea?.trim() || copy.noIdea;
 
-      <article style={cardStyle}>
-        <h3 style={sectionTitleStyle}>Generate</h3>
-        <div style={modeRowStyle}>
+  return (
+    <div style={pageStyle}>
+      <PageHero
+        eyebrow={copy.workflowTitle}
+        title={copy.stageTitle}
+        description={copy.stageDescription}
+        actions={
+          <Link href={`/projects/${projectId}`} style={secondaryActionStyle}>
+            {copy.backToProject}
+          </Link>
+        }
+        supportingContent={
+          <div style={heroSupportStyle}>
+            <div style={heroSupportHeaderStyle}>
+              <span style={heroMetaLabelStyle}>{copy.projectLabel}</span>
+              <StatusBadge label={copy.activeStage} tone="active" />
+            </div>
+            <h2 style={heroSupportTitleStyle}>
+              {isLoading ? copy.loadingProject : workspace?.project.title ?? copy.loadingProject}
+            </h2>
+            <p style={heroSupportBodyStyle}>{projectSummary}</p>
+          </div>
+        }
+      />
+
+      <WorkflowRail
+        title={copy.workflowTitle}
+        layout="cards"
+        items={[
+          {
+            label: copy.scriptStage,
+            detail: copy.scriptDetail,
+            summary: "保留剧本定稿内容，作为后续分镜输入。",
+            badgeLabel: copy.stageDone,
+            tone: "active",
+            href: `/projects/${projectId}/script`,
+            ctaLabel: copy.enterScript,
+          },
+          {
+            label: copy.storyboardStage,
+            detail: copy.storyboardDetail,
+            summary: "按 15 秒段落拆出镜头和视频提示词。",
+            badgeLabel: copy.stageDone,
+            tone: "active",
+            href: `/projects/${projectId}/storyboard`,
+            ctaLabel: copy.enterStoryboard,
+          },
+          {
+            label: copy.imagesStage,
+            detail: assets.length
+              ? `当前已归档 ${assets.length} 张项目图片。`
+              : copy.imagesDetail,
+            summary:
+              mode === "image"
+                ? "图生图会复用项目内已有图片作为输入。"
+                : "文生图和图生图都走同一套任务接口。",
+            badgeLabel: copy.stageActive,
+            tone: "active",
+            href: `/projects/${projectId}/images`,
+            ctaLabel: copy.enterImages,
+          },
+          {
+            label: copy.videosStage,
+            detail: copy.videosDetail,
+            summary: assets.length
+              ? "已经有可选图片，可继续进入视频阶段。"
+              : "等待先生成关键画面。",
+            badgeLabel: assets.length ? copy.stageNext : copy.stageWaiting,
+            tone: assets.length ? "warning" : "neutral",
+            href: `/projects/${projectId}/videos`,
+            ctaLabel: copy.enterVideos,
+          },
+        ]}
+      />
+
+      {statusMessage ? (
+        <p role="status" style={statusNoticeStyle}>
+          {statusMessage}
+        </p>
+      ) : null}
+      {error ? (
+        <p role="alert" style={errorNoticeStyle}>
+          {error}
+        </p>
+      ) : null}
+
+      <section style={panelStyle}>
+        <div style={sectionHeaderStyle}>
+          <h2 style={sectionTitleStyle}>{copy.generateHeading}</h2>
+          <p style={sectionDescriptionStyle}>{copy.generateDescription}</p>
+        </div>
+
+        <div style={buttonRowStyle}>
           <button
             type="button"
             onClick={() => setMode("text")}
             disabled={isBusy}
-            style={mode === "text" ? modeButtonActiveStyle : modeButtonStyle}
+            style={mode === "text" ? primaryButtonStyle : secondaryButtonStyle}
           >
-            Text-to-image
+            {copy.textMode}
           </button>
           <button
             type="button"
+            aria-label="Switch to image-to-image"
             onClick={() => setMode("image")}
             disabled={isBusy}
-            style={mode === "image" ? modeButtonActiveStyle : modeButtonStyle}
+            style={mode === "image" ? primaryButtonStyle : secondaryButtonStyle}
           >
-            Switch to image-to-image
+            {copy.imageMode}
           </button>
         </div>
 
         {mode === "image" ? (
-          <div style={fieldGroupStyle}>
-            <label style={labelStyle} htmlFor="sourceAssetId">
-              Reference image asset
+          <div style={fieldGridStyle}>
+            <label style={fieldStyle} htmlFor="sourceAssetId">
+              <span style={fieldLabelStyle}>{copy.referenceAssetLabel}</span>
+              <select
+                id="sourceAssetId"
+                aria-label="Reference image asset"
+                value={sourceAssetId}
+                onChange={(event) => setSourceAssetId(event.target.value)}
+                disabled={isBusy}
+                style={selectStyle}
+              >
+                <option value="">{copy.referencePlaceholder}</option>
+                {selectableAssets.map((asset) => (
+                  <option key={asset.id} value={asset.id}>
+                    {asset.id} ({Math.round(asset.sizeBytes / 1024)} KB)
+                  </option>
+                ))}
+              </select>
             </label>
-            <select
-              id="sourceAssetId"
-              value={sourceAssetId}
-              onChange={(event) => setSourceAssetId(event.target.value)}
-              disabled={isBusy}
-              style={inputStyle}
-            >
-              <option value="">Select an image asset...</option>
-              {selectableAssets.map((asset) => (
-                <option key={asset.id} value={asset.id}>
-                  {asset.id} ({Math.round(asset.sizeBytes / 1024)} KB)
-                </option>
-              ))}
-            </select>
+            <p style={helperStyle}>
+              {selectableAssets.length === 0 ? copy.noReferenceAssets : copy.selectReference}
+            </p>
             {selectedAsset?.previewDataUrl ? (
-              <figure style={previewFigureStyle}>
+              <figure style={referencePreviewStyle}>
                 <Image
                   src={selectedAsset.previewDataUrl}
                   alt="Reference preview"
                   width={420}
                   height={220}
                   unoptimized
-                  style={previewImageStyle}
+                  style={referencePreviewImageStyle}
                 />
               </figure>
             ) : null}
           </div>
         ) : null}
 
-        <div style={fieldGroupStyle}>
-          <label style={labelStyle} htmlFor="promptInput">
-            Prompt
+        <div style={fieldGridStyle}>
+          <label style={fieldStyle} htmlFor="promptInput">
+            <span style={fieldLabelStyle}>{copy.promptLabel}</span>
+            <textarea
+              id="promptInput"
+              aria-label="Image prompt input"
+              value={prompt}
+              onChange={(event) => setPrompt(event.target.value)}
+              disabled={isBusy}
+              placeholder={copy.promptPlaceholder}
+              style={textareaStyle}
+              rows={4}
+            />
           </label>
-          <textarea
-            id="promptInput"
-            aria-label="Image prompt input"
-            value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
-            disabled={isBusy}
-            placeholder="Describe the image you want..."
-            style={textareaStyle}
-            rows={4}
-          />
-          <p style={helperStyle}>MAX_UPLOAD_MB: {workspace?.maxUploadMb ?? 25} MB</p>
+          <p style={helperStyle}>
+            {copy.helperPrefix}
+            {workspace?.maxUploadMb ?? 25} MB
+          </p>
         </div>
 
-        <div style={submitRowStyle}>
+        <div style={buttonRowStyle}>
           <button
             type="button"
+            aria-label="Generate image"
             onClick={() => void submit()}
             disabled={!canSubmit}
             style={primaryButtonStyle}
           >
-            Generate image
+            生成图片
           </button>
-          {activeTaskId ? (
-            <span style={metaStyle}>Task: {activeTaskId}</span>
-          ) : null}
+          {activeTaskId ? <span style={metaTextStyle}>Task: {activeTaskId}</span> : null}
         </div>
+      </section>
 
-        {statusMessage ? <p style={statusStyle}>{statusMessage}</p> : null}
-        {error ? <p style={errorStyle}>{error}</p> : null}
-      </article>
-
-      <article style={cardStyle}>
-        <h3 style={sectionTitleStyle}>Results</h3>
+      <section style={panelStyle}>
+        <div style={sectionHeaderStyle}>
+          <h2 style={sectionTitleStyle}>{copy.resultHeading}</h2>
+          <p style={sectionDescriptionStyle}>{copy.resultDescription}</p>
+        </div>
         {assets.length === 0 ? (
-          <p style={emptyStyle}>No image assets recorded for this project yet.</p>
+          <p style={emptyStateStyle}>{copy.noAssets}</p>
         ) : (
           <div style={assetGridStyle}>
             {assets.map((asset) => (
-              <figure key={asset.id} style={assetCardStyle}>
+              <article key={asset.id} style={assetCardStyle}>
                 {asset.previewDataUrl ? (
                   <Image
                     src={asset.previewDataUrl}
@@ -439,251 +574,261 @@ export default function ProjectImagesPage() {
                     style={assetImageStyle}
                   />
                 ) : (
-                  <div style={assetPlaceholderStyle}>
-                    <span style={placeholderTextStyle}>Preview unavailable</span>
-                  </div>
+                  <div style={assetPlaceholderStyle}>{copy.previewUnavailable}</div>
                 )}
-                <figcaption style={assetCaptionStyle}>
-                  <strong style={assetIdStyle}>{asset.id}</strong>
-                  <span style={assetMetaStyle}>
-                    {asset.mimeType} - {Math.round(asset.sizeBytes / 1024)} KB
-                  </span>
-                </figcaption>
-              </figure>
+                <div style={assetCopyStyle}>
+                  <strong style={assetTitleStyle}>{asset.id}</strong>
+                  <span style={assetMetaStyle}>{formatAssetMeta(asset)}</span>
+                </div>
+              </article>
             ))}
           </div>
         )}
-      </article>
-    </section>
+      </section>
+    </div>
   );
 }
 
 const pageStyle = {
   display: "grid",
-  gap: "20px",
+  gap: "24px",
 } satisfies CSSProperties;
 
-const heroStyle = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "flex-start",
-  gap: "16px",
-  padding: "24px",
-  borderRadius: "24px",
-  border: "1px solid rgba(31, 27, 22, 0.12)",
-  background: "rgba(255, 250, 243, 0.92)",
-} satisfies CSSProperties;
-
-const heroContentStyle = {
+const heroSupportStyle = {
   display: "grid",
   gap: "10px",
-  maxWidth: "760px",
 } satisfies CSSProperties;
 
-const eyebrowStyle = {
-  margin: 0,
-  color: "#8c5f2d",
+const heroSupportHeaderStyle = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: "12px",
+  flexWrap: "wrap",
+} satisfies CSSProperties;
+
+const heroMetaLabelStyle = {
+  color: "var(--text-muted)",
+  fontSize: "0.82rem",
+  letterSpacing: "0.08em",
   textTransform: "uppercase",
-  letterSpacing: "0.12em",
-  fontSize: "0.8rem",
 } satisfies CSSProperties;
 
-const heroTitleStyle = {
+const heroSupportTitleStyle = {
   margin: 0,
-  fontSize: "2rem",
+  fontSize: "1.15rem",
+  lineHeight: 1.4,
 } satisfies CSSProperties;
 
-const heroCopyStyle = {
+const heroSupportBodyStyle = {
   margin: 0,
-  color: "#665d52",
+  color: "var(--text-muted)",
+  lineHeight: 1.7,
+} satisfies CSSProperties;
+
+const secondaryActionStyle = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  minHeight: "42px",
+  padding: "0 18px",
+  borderRadius: "999px",
+  background: "rgba(248, 250, 252, 0.08)",
+  border: "1px solid rgba(248, 250, 252, 0.12)",
+  color: "var(--text)",
+  textDecoration: "none",
+  fontWeight: 700,
+} satisfies CSSProperties;
+
+const panelStyle = {
+  display: "grid",
+  gap: "16px",
+  padding: "22px",
+  borderRadius: "24px",
+  border: "1px solid var(--border)",
+  background: "rgba(22, 24, 39, 0.88)",
+  boxShadow: "var(--shadow-panel)",
+} satisfies CSSProperties;
+
+const sectionHeaderStyle = {
+  display: "grid",
+  gap: "8px",
+} satisfies CSSProperties;
+
+const sectionTitleStyle = {
+  margin: 0,
+  fontSize: "1.2rem",
+} satisfies CSSProperties;
+
+const sectionDescriptionStyle = {
+  margin: 0,
+  color: "var(--text-muted)",
   lineHeight: 1.6,
 } satisfies CSSProperties;
 
-const actionsStyle = {
+const statusNoticeStyle = {
+  margin: 0,
+  padding: "16px 18px",
+  borderRadius: "18px",
+  border: "1px solid rgba(74, 222, 128, 0.2)",
+  background: "rgba(21, 128, 61, 0.16)",
+  color: "#dcfce7",
+  lineHeight: 1.6,
+} satisfies CSSProperties;
+
+const errorNoticeStyle = {
+  margin: 0,
+  padding: "16px 18px",
+  borderRadius: "18px",
+  border: "1px solid rgba(248, 113, 113, 0.24)",
+  background: "rgba(127, 29, 29, 0.24)",
+  color: "#fecaca",
+  lineHeight: 1.6,
+} satisfies CSSProperties;
+
+const buttonRowStyle = {
   display: "flex",
-  gap: "10px",
+  gap: "12px",
   flexWrap: "wrap",
+  alignItems: "center",
 } satisfies CSSProperties;
 
 const primaryButtonStyle = {
   display: "inline-flex",
   alignItems: "center",
   justifyContent: "center",
+  minHeight: "42px",
+  padding: "0 18px",
   borderRadius: "999px",
-  padding: "12px 18px",
-  border: "none",
-  background: "#8c5f2d",
+  border: 0,
+  background:
+    "linear-gradient(135deg, rgba(109, 94, 252, 0.95), rgba(129, 140, 248, 0.72))",
   color: "#fff",
   fontWeight: 700,
   cursor: "pointer",
 } satisfies CSSProperties;
 
-const secondaryLinkStyle = {
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  borderRadius: "999px",
-  padding: "12px 18px",
-  textDecoration: "none",
-  background: "rgba(140, 95, 45, 0.12)",
-  color: "#4b3a27",
-  fontWeight: 700,
-} satisfies CSSProperties;
-
-const cardStyle = {
-  display: "grid",
-  gap: "14px",
-  padding: "20px",
-  borderRadius: "24px",
-  border: "1px solid rgba(31, 27, 22, 0.12)",
-  background: "rgba(255, 250, 243, 0.88)",
-} satisfies CSSProperties;
-
-const sectionTitleStyle = {
-  margin: 0,
-  fontSize: "1.1rem",
-} satisfies CSSProperties;
-
-const modeRowStyle = {
-  display: "flex",
-  gap: "10px",
-  flexWrap: "wrap",
-} satisfies CSSProperties;
-
-const modeButtonStyle = {
-  ...secondaryLinkStyle,
-  border: "1px solid rgba(140, 95, 45, 0.25)",
-} satisfies CSSProperties;
-
-const modeButtonActiveStyle = {
+const secondaryButtonStyle = {
   ...primaryButtonStyle,
+  background: "rgba(248, 250, 252, 0.08)",
+  border: "1px solid rgba(248, 250, 252, 0.12)",
+  color: "var(--text)",
 } satisfies CSSProperties;
 
-const fieldGroupStyle = {
+const fieldGridStyle = {
+  display: "grid",
+  gap: "12px",
+} satisfies CSSProperties;
+
+const fieldStyle = {
   display: "grid",
   gap: "8px",
 } satisfies CSSProperties;
 
-const labelStyle = {
+const fieldLabelStyle = {
   fontWeight: 700,
-  color: "#4b3a27",
+  color: "var(--text)",
 } satisfies CSSProperties;
 
-const inputStyle = {
-  padding: "10px 12px",
-  borderRadius: "12px",
-  border: "1px solid rgba(31, 27, 22, 0.18)",
-  background: "#fff",
-  color: "#1f1b16",
+const selectStyle = {
+  width: "100%",
+  minHeight: "48px",
+  borderRadius: "18px",
+  border: "1px solid rgba(129, 140, 248, 0.2)",
+  padding: "0 14px",
+  color: "var(--text)",
+  background: "rgba(8, 10, 26, 0.4)",
 } satisfies CSSProperties;
 
 const textareaStyle = {
-  ...inputStyle,
+  width: "100%",
+  minHeight: "120px",
+  borderRadius: "18px",
+  border: "1px solid rgba(129, 140, 248, 0.2)",
+  padding: "14px 16px",
+  font: "inherit",
+  color: "var(--text)",
+  background: "rgba(8, 10, 26, 0.4)",
   resize: "vertical",
-  minHeight: "100px",
 } satisfies CSSProperties;
 
 const helperStyle = {
   margin: 0,
-  color: "#665d52",
-  fontSize: "0.9rem",
-  lineHeight: 1.5,
-} satisfies CSSProperties;
-
-const submitRowStyle = {
-  display: "flex",
-  alignItems: "center",
-  gap: "12px",
-  flexWrap: "wrap",
-} satisfies CSSProperties;
-
-const metaStyle = {
-  color: "#665d52",
-  fontSize: "0.9rem",
-} satisfies CSSProperties;
-
-const statusStyle = {
-  margin: 0,
-  color: "#245f3f",
-  fontWeight: 700,
-} satisfies CSSProperties;
-
-const errorStyle = {
-  margin: 0,
-  color: "#a11d1d",
-  fontWeight: 700,
-} satisfies CSSProperties;
-
-const emptyStyle = {
-  margin: 0,
-  color: "#665d52",
+  color: "var(--text-muted)",
   lineHeight: 1.6,
+} satisfies CSSProperties;
+
+const metaTextStyle = {
+  color: "var(--text-muted)",
+  lineHeight: 1.6,
+} satisfies CSSProperties;
+
+const emptyStateStyle = {
+  margin: 0,
+  color: "var(--text-muted)",
+  lineHeight: 1.7,
+} satisfies CSSProperties;
+
+const referencePreviewStyle = {
+  margin: 0,
+} satisfies CSSProperties;
+
+const referencePreviewImageStyle = {
+  width: "100%",
+  maxWidth: "420px",
+  height: "220px",
+  objectFit: "cover",
+  borderRadius: "18px",
+  border: "1px solid rgba(129, 140, 248, 0.16)",
 } satisfies CSSProperties;
 
 const assetGridStyle = {
   display: "grid",
-  gap: "14px",
+  gap: "16px",
   gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
 } satisfies CSSProperties;
 
 const assetCardStyle = {
-  margin: 0,
   display: "grid",
-  gap: "10px",
-  padding: "14px",
+  gap: "12px",
+  padding: "16px",
   borderRadius: "20px",
-  border: "1px solid rgba(31, 27, 22, 0.12)",
-  background: "rgba(255, 255, 255, 0.7)",
+  border: "1px solid rgba(129, 140, 248, 0.16)",
+  background: "rgba(8, 10, 26, 0.26)",
 } satisfies CSSProperties;
 
 const assetImageStyle = {
   width: "100%",
   height: "180px",
   objectFit: "cover",
-  borderRadius: "14px",
-  border: "1px solid rgba(31, 27, 22, 0.12)",
+  borderRadius: "16px",
+  border: "1px solid rgba(129, 140, 248, 0.16)",
 } satisfies CSSProperties;
 
 const assetPlaceholderStyle = {
   width: "100%",
   height: "180px",
-  borderRadius: "14px",
-  border: "1px dashed rgba(31, 27, 22, 0.22)",
-  background: "rgba(255, 250, 243, 0.65)",
   display: "grid",
   placeItems: "center",
+  borderRadius: "16px",
+  border: "1px dashed rgba(129, 140, 248, 0.26)",
+  color: "var(--text-muted)",
+  background: "rgba(15, 23, 42, 0.52)",
 } satisfies CSSProperties;
 
-const placeholderTextStyle = {
-  color: "#665d52",
-  fontSize: "0.95rem",
-} satisfies CSSProperties;
-
-const assetCaptionStyle = {
+const assetCopyStyle = {
   display: "grid",
-  gap: "4px",
+  gap: "6px",
 } satisfies CSSProperties;
 
-const assetIdStyle = {
-  color: "#1f1b16",
-  fontSize: "0.95rem",
+const assetTitleStyle = {
+  fontSize: "1rem",
+  lineHeight: 1.5,
   wordBreak: "break-word",
 } satisfies CSSProperties;
 
 const assetMetaStyle = {
-  color: "#665d52",
-  fontSize: "0.85rem",
-} satisfies CSSProperties;
-
-const previewFigureStyle = {
-  margin: 0,
-} satisfies CSSProperties;
-
-const previewImageStyle = {
-  width: "100%",
-  maxWidth: "420px",
-  height: "220px",
-  objectFit: "cover",
-  borderRadius: "18px",
-  border: "1px solid rgba(31, 27, 22, 0.12)",
+  color: "var(--text-muted)",
+  lineHeight: 1.6,
+  wordBreak: "break-word",
 } satisfies CSSProperties;

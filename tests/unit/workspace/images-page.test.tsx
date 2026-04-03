@@ -81,6 +81,37 @@ describe("project images page", () => {
     });
   });
 
+  it("renders the shared workflow header and preserves image generation", async () => {
+    const pageModule = await import("@/app/(workspace)/projects/[projectId]/images/page");
+
+    render(<pageModule.default />);
+
+    expect((await screen.findAllByText("项目制作流程")).length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: "图片" })).toBeInTheDocument();
+    expect(screen.getByText("Project One")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "返回项目制作台" })).toHaveAttribute(
+      "href",
+      "/projects/project-1",
+    );
+    expect(screen.getByText("脚本")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Image prompt input"), {
+      target: { value: "Generate key art." },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Generate image" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/images",
+        expect.objectContaining({
+          method: "POST",
+          body: expect.any(FormData),
+        }),
+      );
+    });
+  });
+
   it("submits text-to-image tasks", async () => {
     const pageModule = await import("@/app/(workspace)/projects/[projectId]/images/page");
 
@@ -554,7 +585,7 @@ describe("project images page", () => {
     rerender(<pageModule.default />);
 
     await waitFor(() => {
-      expect(screen.getByText("Loading project...")).toBeInTheDocument();
+      expect(screen.getByText("加载项目中...")).toBeInTheDocument();
     });
 
     expect(screen.queryByText("asset-a1")).not.toBeInTheDocument();

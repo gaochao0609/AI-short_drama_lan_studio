@@ -107,6 +107,28 @@ describe("project script page", () => {
     });
   });
 
+  it("renders the shared workflow header and keeps the script session controls", async () => {
+    await renderPage();
+
+    expect((await screen.findAllByText("项目制作流程")).length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: "脚本" })).toBeInTheDocument();
+    expect(screen.getByText("Project One")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "返回项目制作台" })).toHaveAttribute(
+      "href",
+      "/projects/project-1",
+    );
+    expect(screen.getByText("分镜")).toBeInTheDocument();
+
+    const startButton = screen.getByRole("button", {
+      name: "Start script session",
+    });
+    expect(startButton).toBeEnabled();
+
+    fireEvent.click(startButton);
+
+    expect(await screen.findByText("Who is the hero?")).toBeInTheDocument();
+  });
+
   it("shows polling errors instead of staying stuck in the generating state", async () => {
     useTaskPollingMock.mockImplementation((taskId?: string | null) => ({
       task: undefined,

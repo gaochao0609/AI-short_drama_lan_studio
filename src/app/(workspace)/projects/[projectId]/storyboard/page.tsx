@@ -4,6 +4,9 @@ import type { CSSProperties } from "react";
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import PageHero from "@/components/studio/page-hero";
+import StatusBadge from "@/components/studio/status-badge";
+import WorkflowRail from "@/components/studio/workflow-rail";
 import useTaskPolling from "@/hooks/useTaskPolling";
 
 type StoryboardSegment = {
@@ -50,6 +53,65 @@ type StoryboardPageData = {
   idea?: string | null;
   scriptVersions: ScriptVersionSummary[];
 };
+
+const copy = {
+  workflowTitle: "项目制作流程",
+  stageTitle: "分镜",
+  stageDescription: "选择一个已定稿剧本，把内容拆成 15 秒镜头段落，并保留可直接复制的视频提示词。",
+  projectLabel: "当前项目",
+  backToProject: "返回项目制作台",
+  activeStage: "当前阶段",
+  noIdea: "项目还没有补充创意说明，先确认脚本版本内容再继续分镜。",
+  scriptStage: "脚本",
+  storyboardStage: "分镜",
+  imagesStage: "图片",
+  videosStage: "视频",
+  stageDone: "已完成",
+  stageActive: "进行中",
+  stageNext: "下一步",
+  stageWaiting: "待开始",
+  scriptVersionsHeading: "脚本版本",
+  scriptVersionsDescription: "这里只显示当前项目的脚本版本，选中后即可发起分镜拆解任务。",
+  selectScriptVersion: "选择脚本版本",
+  scriptVersionsEmpty: "当前项目还没有脚本版本，先完成脚本定稿。",
+  noScriptBody: "当前版本没有保存剧本正文。",
+  generateStoryboard: "生成分镜",
+  statusHeading: "任务状态",
+  statusDescription: "发起分镜任务后，这里会展示当前轮询到的任务状态与结果摘要。",
+  noTask: "当前没有正在运行的分镜任务。",
+  generatedSegments: "生成段数",
+  segmentsHeading: "分镜结果",
+  segmentsDescription: "每段分镜保留场景、景别、动作、对白和视频提示词，便于继续进入图片和视频流程。",
+  segmentsEmpty: "分镜任务完成后，结果会显示在这里。",
+  taskIdLabel: "任务 ID",
+  loadingProject: "加载项目中...",
+  generating: "正在生成分镜...",
+  generated: "Storyboard generated.",
+  failed: "Storyboard generation failed",
+  selectVersionValidation: "Select a script version before generating a storyboard",
+  requestFailed: "Storyboard request failed",
+  copyFailed: "Unable to copy the video prompt",
+  copied: "已复制",
+  copyPrompt: "复制提示词",
+  sceneLabel: "场景",
+  shotLabel: "景别",
+  actionLabel: "动作",
+  dialogueLabel: "对白",
+  promptLabel: "视频提示词",
+  noDialogue: "无对白",
+  scriptDetail: "剧本完成后，可在这里拆分镜头节奏。",
+  storyboardDetail: "根据定稿剧本生成 15 秒分镜。",
+  imagesDetail: "把分镜转成关键画面与参考图。",
+  videosDetail: "用关键画面推进视频镜头生成。",
+  enterScript: "前往脚本",
+  enterStoryboard: "继续分镜",
+  enterImages: "前往图片",
+  enterVideos: "前往视频",
+  versionPrefix: "版本",
+  segmentPrefix: "第",
+  segmentSuffix: "段",
+  secondsSuffix: "秒",
+} as const;
 
 export default function ProjectStoryboardPage() {
   const params = useParams<{ projectId: string }>();
@@ -155,14 +217,14 @@ export default function ProjectStoryboardPage() {
     }
 
     if (polledTask.status === "RUNNING" || polledTask.status === "QUEUED") {
-      setStatusMessage("Generating storyboard segments...");
+      setStatusMessage(copy.generating);
       setError(null);
       return;
     }
 
     if (polledTask.status === "SUCCEEDED") {
       setStoryboardResult(polledTask.outputJson ?? null);
-      setStatusMessage("Storyboard generated.");
+      setStatusMessage(copy.generated);
       setError(null);
       setActiveTaskId(null);
       return;
@@ -171,7 +233,7 @@ export default function ProjectStoryboardPage() {
     if (polledTask.status === "FAILED" || polledTask.status === "CANCELED") {
       setStoryboardResult(null);
       setStatusMessage(null);
-      setError(polledTask.errorText ?? "Storyboard generation failed");
+      setError(polledTask.errorText ?? copy.failed);
       setActiveTaskId(null);
     }
   }, [activeTaskId, task]);
@@ -190,7 +252,7 @@ export default function ProjectStoryboardPage() {
 
   async function handleGenerateStoryboard() {
     if (!projectId || !selectedScriptVersionId) {
-      setError("Select a script version before generating a storyboard");
+      setError(copy.selectVersionValidation);
       return;
     }
 
@@ -215,7 +277,7 @@ export default function ProjectStoryboardPage() {
         | null;
 
       if (!response.ok || !payload?.taskId) {
-        throw new Error(payload?.error ?? "Storyboard request failed");
+        throw new Error(payload?.error ?? copy.requestFailed);
       }
 
       setActiveTaskId(payload.taskId);
@@ -225,7 +287,7 @@ export default function ProjectStoryboardPage() {
       setError(
         submitError instanceof Error
           ? submitError.message
-          : "Storyboard request failed",
+          : copy.requestFailed,
       );
     } finally {
       setIsSubmitting(false);
@@ -242,54 +304,110 @@ export default function ProjectStoryboardPage() {
         );
       }, 1500);
     } catch {
-      setError("Unable to copy the video prompt");
+      setError(copy.copyFailed);
     }
   }
 
+  const projectSummary = project?.idea?.trim() || copy.noIdea;
+  const scriptVersionSummary = project?.scriptVersions.length
+    ? `已载入 ${project.scriptVersions.length} 个脚本版本。`
+    : "等待脚本定稿后再开始分镜。";
+
   return (
-    <section style={pageStyle}>
-      <header style={heroStyle}>
-        <div>
-          <p style={eyebrowStyle}>Storyboard Workflow</p>
-          <h2 style={heroTitleStyle}>
-            {isLoadingProject ? "Loading project..." : project?.title ?? "Storyboard"}
-          </h2>
-          <p style={heroCopyStyle}>
-            Pick a full script version, generate 15-second storyboard segments, then copy
-            the prompt for any single segment.
-          </p>
-        </div>
-        <div style={heroActionsStyle}>
-          <Link href="/workspace" style={secondaryLinkStyle}>
-            Back to workspace
+    <div style={pageStyle}>
+      <PageHero
+        eyebrow={copy.workflowTitle}
+        title={copy.stageTitle}
+        description={copy.stageDescription}
+        actions={
+          <Link href={`/projects/${projectId}`} style={secondaryActionStyle}>
+            {copy.backToProject}
           </Link>
-          <Link href={`/projects/${projectId}`} style={secondaryLinkStyle}>
-            Back to project
-          </Link>
-        </div>
-      </header>
+        }
+        supportingContent={
+          <div style={heroSupportStyle}>
+            <div style={heroSupportHeaderStyle}>
+              <span style={heroMetaLabelStyle}>{copy.projectLabel}</span>
+              <StatusBadge label={copy.activeStage} tone="active" />
+            </div>
+            <h2 style={heroSupportTitleStyle}>
+              {isLoadingProject ? copy.loadingProject : project?.title ?? copy.loadingProject}
+            </h2>
+            <p style={heroSupportBodyStyle}>{projectSummary}</p>
+          </div>
+        }
+      />
+
+      <WorkflowRail
+        title={copy.workflowTitle}
+        layout="cards"
+        items={[
+          {
+            label: copy.scriptStage,
+            detail: scriptVersionSummary,
+            summary: copy.scriptDetail,
+            badgeLabel: project?.scriptVersions.length ? copy.stageDone : copy.stageWaiting,
+            tone: project?.scriptVersions.length ? "active" : "neutral",
+            href: `/projects/${projectId}/script`,
+            ctaLabel: copy.enterScript,
+          },
+          {
+            label: copy.storyboardStage,
+            detail: storyboardSegments.length
+              ? `已生成 ${storyboardSegments.length} 段分镜。`
+              : copy.storyboardDetail,
+            summary: selectedScriptVersion
+              ? `当前使用脚本版本 ${selectedScriptVersion.versionNumber}。`
+              : "先选择一个脚本版本。",
+            badgeLabel: copy.stageActive,
+            tone: "active",
+            href: `/projects/${projectId}/storyboard`,
+            ctaLabel: copy.enterStoryboard,
+          },
+          {
+            label: copy.imagesStage,
+            detail: copy.imagesDetail,
+            summary: storyboardSegments.length
+              ? "分镜已就绪，可以继续生成关键画面。"
+              : "等待分镜结果输出后继续。",
+            badgeLabel: storyboardSegments.length ? copy.stageNext : copy.stageWaiting,
+            tone: storyboardSegments.length ? "warning" : "neutral",
+            href: `/projects/${projectId}/images`,
+            ctaLabel: copy.enterImages,
+          },
+          {
+            label: copy.videosStage,
+            detail: copy.videosDetail,
+            summary: "在关键画面确认后继续进入视频生成。",
+            badgeLabel: copy.stageWaiting,
+            tone: "neutral",
+            href: `/projects/${projectId}/videos`,
+            ctaLabel: copy.enterVideos,
+          },
+        ]}
+      />
 
       {error ? (
-        <p role="alert" style={errorStyle}>
+        <p role="alert" style={errorNoticeStyle}>
           {error}
         </p>
       ) : null}
       {statusMessage ? (
-        <p role="status" style={messageStyle}>
+        <p role="status" style={statusNoticeStyle}>
           {statusMessage}
         </p>
       ) : null}
 
-      <div style={gridStyle}>
+      <div style={twoColumnGridStyle}>
         <section style={panelStyle}>
-          <h3 style={panelTitleStyle}>Script Versions</h3>
-          <p style={panelCopyStyle}>
-            Only script versions belonging to this project are available here.
-          </p>
+          <div style={sectionHeaderStyle}>
+            <h2 style={sectionTitleStyle}>{copy.scriptVersionsHeading}</h2>
+            <p style={sectionDescriptionStyle}>{copy.scriptVersionsDescription}</p>
+          </div>
 
           {project?.scriptVersions?.length ? (
             <label style={fieldStyle}>
-              <span>Select a full script version</span>
+              <span style={fieldLabelStyle}>{copy.selectScriptVersion}</span>
               <select
                 aria-label="Select script version"
                 value={selectedScriptVersionId ?? ""}
@@ -302,105 +420,118 @@ export default function ProjectStoryboardPage() {
               >
                 {project.scriptVersions.map((version) => (
                   <option key={version.id} value={version.id}>
-                    Version {version.versionNumber} - {new Date(version.createdAt).toLocaleString()}
+                    {copy.versionPrefix} {version.versionNumber} ·{" "}
+                    {new Date(version.createdAt).toLocaleString("zh-CN")}
                   </option>
                 ))}
               </select>
             </label>
           ) : (
-            <p style={emptyStyle}>No script versions are available for this project yet.</p>
+            <p style={emptyStateStyle}>{copy.scriptVersionsEmpty}</p>
           )}
 
           {selectedScriptVersion ? (
-            <article style={versionPreviewStyle}>
-              <p style={versionLabelStyle}>Version {selectedScriptVersion.versionNumber}</p>
-              <pre style={scriptPreviewStyle}>
-                {selectedScriptVersion.body?.trim() || "No script body recorded."}
+            <article style={resultCardStyle}>
+              <p style={resultMetaStyle}>
+                {copy.versionPrefix} {selectedScriptVersion.versionNumber}
+              </p>
+              <pre style={outputPreStyle}>
+                {selectedScriptVersion.body?.trim() || copy.noScriptBody}
               </pre>
             </article>
           ) : null}
 
           <button
             type="button"
+            aria-label="Generate storyboard"
             onClick={handleGenerateStoryboard}
             style={primaryButtonStyle}
             disabled={!canGenerate}
           >
-            Generate storyboard
+            {copy.generateStoryboard}
           </button>
         </section>
 
         <section style={panelStyle}>
-          <h3 style={panelTitleStyle}>Generation Status</h3>
-          <p style={panelCopyStyle}>
-            Queue a storyboard task, then watch the current task through polling.
-          </p>
+          <div style={sectionHeaderStyle}>
+            <h2 style={sectionTitleStyle}>{copy.statusHeading}</h2>
+            <p style={sectionDescriptionStyle}>{copy.statusDescription}</p>
+          </div>
 
           {activeTaskId ? (
-            <article style={taskCardStyle}>
-              <p style={taskLabelStyle}>Task ID</p>
-              <strong>{activeTaskId}</strong>
-              <p style={taskMetaStyle}>Status: {task ? task.status : "Queued"}</p>
+            <article style={resultCardStyle}>
+              <p style={resultMetaStyle}>{copy.taskIdLabel}</p>
+              <strong style={resultTitleStyle}>{activeTaskId}</strong>
+              <p style={resultBodyStyle}>Status: {task ? task.status : "QUEUED"}</p>
             </article>
           ) : (
-            <p style={emptyStyle}>No storyboard task is currently running.</p>
+            <p style={emptyStateStyle}>{copy.noTask}</p>
           )}
 
           {storyboardSegments.length > 0 ? (
-            <article style={taskCardStyle}>
-              <p style={taskLabelStyle}>Generated Segments</p>
-              <strong>{storyboardSegments.length} segments</strong>
+            <article style={resultCardStyle}>
+              <p style={resultMetaStyle}>{copy.generatedSegments}</p>
+              <strong style={resultTitleStyle}>{storyboardSegments.length} segments</strong>
             </article>
           ) : null}
         </section>
       </div>
 
       <section style={panelStyle}>
-        <h3 style={panelTitleStyle}>Storyboard Segments</h3>
-        <p style={panelCopyStyle}>
-          Each segment is validated to 15 seconds and can be copied as a video prompt.
-        </p>
+        <div style={sectionHeaderStyle}>
+          <h2 style={sectionTitleStyle}>{copy.segmentsHeading}</h2>
+          <p style={sectionDescriptionStyle}>{copy.segmentsDescription}</p>
+        </div>
 
         {storyboardSegments.length === 0 ? (
-          <p style={emptyStyle}>Storyboard results will appear here after generation completes.</p>
+          <p style={emptyStateStyle}>{copy.segmentsEmpty}</p>
         ) : (
           <div style={segmentGridStyle}>
             {storyboardSegments.map((segment) => (
               <article key={segment.index} style={segmentCardStyle}>
                 <div style={segmentHeaderStyle}>
-                  <div>
-                    <p style={segmentIndexStyle}>Segment {segment.index}</p>
-                    <strong>{segment.durationSeconds} seconds</strong>
+                  <div style={segmentHeaderCopyStyle}>
+                    <p style={resultMetaStyle}>
+                      {copy.segmentPrefix}
+                      {segment.index}
+                      {copy.segmentSuffix}
+                    </p>
+                    <strong style={resultTitleStyle}>
+                      {segment.durationSeconds}
+                      {copy.secondsSuffix}
+                    </strong>
                   </div>
                   <button
                     type="button"
                     onClick={() => void handleCopyVideoPrompt(segment)}
-                    style={copyButtonStyle}
+                    style={secondaryButtonStyle}
                   >
-                    {copiedSegmentIndex === segment.index ? "Copied" : "Copy prompt"}
+                    {copiedSegmentIndex === segment.index ? copy.copied : copy.copyPrompt}
                   </button>
                 </div>
 
-                <div style={segmentFieldGroupStyle}>
+                <div style={segmentFieldsStyle}>
                   <div>
-                    <p style={segmentFieldLabelStyle}>Scene</p>
+                    <p style={segmentFieldLabelStyle}>{copy.sceneLabel}</p>
                     <p style={segmentFieldValueStyle}>{segment.scene}</p>
                   </div>
                   <div>
-                    <p style={segmentFieldLabelStyle}>Shot</p>
+                    <p style={segmentFieldLabelStyle}>{copy.shotLabel}</p>
                     <p style={segmentFieldValueStyle}>{segment.shot}</p>
                   </div>
                   <div>
-                    <p style={segmentFieldLabelStyle}>Action</p>
+                    <p style={segmentFieldLabelStyle}>{copy.actionLabel}</p>
                     <p style={segmentFieldValueStyle}>{segment.action}</p>
                   </div>
                   <div>
-                    <p style={segmentFieldLabelStyle}>Dialogue</p>
-                    <p style={segmentFieldValueStyle}>{segment.dialogue || "No dialogue"}</p>
+                    <p style={segmentFieldLabelStyle}>{copy.dialogueLabel}</p>
+                    <p style={segmentFieldValueStyle}>
+                      {segment.dialogue || copy.noDialogue}
+                    </p>
                   </div>
                   <div>
-                    <p style={segmentFieldLabelStyle}>Video Prompt</p>
-                    <pre style={videoPromptStyle}>{segment.videoPrompt}</pre>
+                    <p style={segmentFieldLabelStyle}>{copy.promptLabel}</p>
+                    <pre style={promptPreStyle}>{segment.videoPrompt}</pre>
                   </div>
                 </div>
               </article>
@@ -408,179 +539,199 @@ export default function ProjectStoryboardPage() {
           </div>
         )}
       </section>
-    </section>
+    </div>
   );
 }
 
 const pageStyle = {
   display: "grid",
-  gap: "20px",
+  gap: "24px",
 } satisfies CSSProperties;
 
-const heroStyle = {
-  display: "flex",
-  justifyContent: "space-between",
-  gap: "16px",
-  alignItems: "flex-start",
-  padding: "24px",
-  borderRadius: "24px",
-  border: "1px solid rgba(31, 27, 22, 0.12)",
-  background: "rgba(255, 250, 243, 0.92)",
-} satisfies CSSProperties;
-
-const eyebrowStyle = {
-  margin: 0,
-  color: "#8c5f2d",
-  textTransform: "uppercase",
-  letterSpacing: "0.12em",
-  fontSize: "0.8rem",
-} satisfies CSSProperties;
-
-const heroTitleStyle = {
-  margin: "10px 0 0",
-  fontSize: "2rem",
-} satisfies CSSProperties;
-
-const heroCopyStyle = {
-  margin: "12px 0 0",
-  color: "#665d52",
-  lineHeight: 1.6,
-  maxWidth: "720px",
-} satisfies CSSProperties;
-
-const heroActionsStyle = {
-  display: "flex",
+const heroSupportStyle = {
+  display: "grid",
   gap: "10px",
+} satisfies CSSProperties;
+
+const heroSupportHeaderStyle = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: "12px",
   flexWrap: "wrap",
 } satisfies CSSProperties;
 
-const gridStyle = {
-  display: "grid",
-  gap: "20px",
-  gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+const heroMetaLabelStyle = {
+  color: "var(--text-muted)",
+  fontSize: "0.82rem",
+  letterSpacing: "0.08em",
+  textTransform: "uppercase",
+} satisfies CSSProperties;
+
+const heroSupportTitleStyle = {
+  margin: 0,
+  fontSize: "1.15rem",
+  lineHeight: 1.4,
+} satisfies CSSProperties;
+
+const heroSupportBodyStyle = {
+  margin: 0,
+  color: "var(--text-muted)",
+  lineHeight: 1.7,
+} satisfies CSSProperties;
+
+const secondaryActionStyle = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  minHeight: "42px",
+  padding: "0 18px",
+  borderRadius: "999px",
+  background: "rgba(248, 250, 252, 0.08)",
+  border: "1px solid rgba(248, 250, 252, 0.12)",
+  color: "var(--text)",
+  textDecoration: "none",
+  fontWeight: 700,
 } satisfies CSSProperties;
 
 const panelStyle = {
   display: "grid",
   gap: "16px",
-  padding: "20px",
+  padding: "22px",
   borderRadius: "24px",
-  border: "1px solid rgba(31, 27, 22, 0.12)",
-  background: "rgba(255, 250, 243, 0.9)",
+  border: "1px solid var(--border)",
+  background: "rgba(22, 24, 39, 0.88)",
+  boxShadow: "var(--shadow-panel)",
 } satisfies CSSProperties;
 
-const panelTitleStyle = {
+const sectionHeaderStyle = {
+  display: "grid",
+  gap: "8px",
+} satisfies CSSProperties;
+
+const sectionTitleStyle = {
   margin: 0,
   fontSize: "1.2rem",
 } satisfies CSSProperties;
 
-const panelCopyStyle = {
+const sectionDescriptionStyle = {
   margin: 0,
-  color: "#665d52",
+  color: "var(--text-muted)",
   lineHeight: 1.6,
+} satisfies CSSProperties;
+
+const statusNoticeStyle = {
+  margin: 0,
+  padding: "16px 18px",
+  borderRadius: "18px",
+  border: "1px solid rgba(74, 222, 128, 0.2)",
+  background: "rgba(21, 128, 61, 0.16)",
+  color: "#dcfce7",
+  lineHeight: 1.6,
+} satisfies CSSProperties;
+
+const errorNoticeStyle = {
+  margin: 0,
+  padding: "16px 18px",
+  borderRadius: "18px",
+  border: "1px solid rgba(248, 113, 113, 0.24)",
+  background: "rgba(127, 29, 29, 0.24)",
+  color: "#fecaca",
+  lineHeight: 1.6,
+} satisfies CSSProperties;
+
+const twoColumnGridStyle = {
+  display: "grid",
+  gap: "20px",
+  gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
 } satisfies CSSProperties;
 
 const fieldStyle = {
   display: "grid",
   gap: "8px",
-  fontWeight: 600,
+} satisfies CSSProperties;
+
+const fieldLabelStyle = {
+  fontWeight: 700,
+  color: "var(--text)",
 } satisfies CSSProperties;
 
 const selectStyle = {
   width: "100%",
-  borderRadius: "16px",
-  border: "1px solid rgba(31, 27, 22, 0.16)",
-  padding: "14px 16px",
-  font: "inherit",
-  background: "#fff",
-} satisfies CSSProperties;
-
-const versionPreviewStyle = {
-  display: "grid",
-  gap: "10px",
-  padding: "16px",
+  minHeight: "48px",
   borderRadius: "18px",
-  background: "rgba(140, 95, 45, 0.08)",
-} satisfies CSSProperties;
-
-const versionLabelStyle = {
-  margin: 0,
-  color: "#8c5f2d",
-  textTransform: "uppercase",
-  letterSpacing: "0.08em",
-  fontSize: "0.85rem",
-} satisfies CSSProperties;
-
-const scriptPreviewStyle = {
-  margin: 0,
-  whiteSpace: "pre-wrap",
-  lineHeight: 1.65,
-  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+  border: "1px solid rgba(129, 140, 248, 0.2)",
+  padding: "0 14px",
+  color: "var(--text)",
+  background: "rgba(8, 10, 26, 0.4)",
 } satisfies CSSProperties;
 
 const primaryButtonStyle = {
-  border: 0,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  minHeight: "42px",
+  padding: "0 18px",
   borderRadius: "999px",
-  background: "#8c5f2d",
+  border: 0,
+  background:
+    "linear-gradient(135deg, rgba(109, 94, 252, 0.95), rgba(129, 140, 248, 0.72))",
   color: "#fff",
-  padding: "12px 18px",
-  font: "inherit",
   fontWeight: 700,
   cursor: "pointer",
 } satisfies CSSProperties;
 
-const secondaryLinkStyle = {
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  borderRadius: "999px",
-  padding: "12px 18px",
-  textDecoration: "none",
-  background: "rgba(140, 95, 45, 0.12)",
-  color: "#4b3a27",
-  fontWeight: 700,
+const secondaryButtonStyle = {
+  ...primaryButtonStyle,
+  background: "rgba(248, 250, 252, 0.08)",
+  border: "1px solid rgba(248, 250, 252, 0.12)",
+  color: "var(--text)",
 } satisfies CSSProperties;
 
-const emptyStyle = {
+const emptyStateStyle = {
   margin: 0,
-  color: "#665d52",
+  color: "var(--text-muted)",
+  lineHeight: 1.7,
 } satisfies CSSProperties;
 
-const messageStyle = {
-  margin: 0,
-  padding: "14px 16px",
-  borderRadius: "16px",
-  background: "rgba(23, 92, 49, 0.12)",
-  color: "#175c31",
-} satisfies CSSProperties;
-
-const errorStyle = {
-  margin: 0,
-  padding: "14px 16px",
-  borderRadius: "16px",
-  background: "rgba(180, 35, 24, 0.12)",
-  color: "#b42318",
-} satisfies CSSProperties;
-
-const taskCardStyle = {
+const resultCardStyle = {
   display: "grid",
   gap: "8px",
   padding: "16px",
   borderRadius: "18px",
-  background: "rgba(140, 95, 45, 0.08)",
+  border: "1px solid rgba(129, 140, 248, 0.16)",
+  background: "rgba(8, 10, 26, 0.26)",
 } satisfies CSSProperties;
 
-const taskLabelStyle = {
+const resultMetaStyle = {
   margin: 0,
-  color: "#8c5f2d",
-  textTransform: "uppercase",
+  color: "var(--accent-gold)",
+  fontSize: "0.8rem",
   letterSpacing: "0.08em",
-  fontSize: "0.85rem",
+  textTransform: "uppercase",
 } satisfies CSSProperties;
 
-const taskMetaStyle = {
+const resultTitleStyle = {
+  fontSize: "1rem",
+  lineHeight: 1.6,
+} satisfies CSSProperties;
+
+const resultBodyStyle = {
   margin: 0,
-  color: "#665d52",
+  color: "var(--text-muted)",
+  lineHeight: 1.7,
+  whiteSpace: "pre-wrap",
+} satisfies CSSProperties;
+
+const outputPreStyle = {
+  margin: 0,
+  padding: "18px",
+  borderRadius: "18px",
+  border: "1px solid rgba(129, 140, 248, 0.16)",
+  background: "rgba(8, 10, 26, 0.32)",
+  color: "var(--text)",
+  whiteSpace: "pre-wrap",
+  lineHeight: 1.8,
 } satisfies CSSProperties;
 
 const segmentGridStyle = {
@@ -590,64 +741,52 @@ const segmentGridStyle = {
 
 const segmentCardStyle = {
   display: "grid",
-  gap: "14px",
+  gap: "16px",
   padding: "18px",
   borderRadius: "20px",
-  border: "1px solid rgba(31, 27, 22, 0.12)",
-  background: "#fff",
+  border: "1px solid rgba(129, 140, 248, 0.16)",
+  background: "rgba(8, 10, 26, 0.26)",
 } satisfies CSSProperties;
 
 const segmentHeaderStyle = {
   display: "flex",
+  alignItems: "center",
   justifyContent: "space-between",
   gap: "12px",
-  alignItems: "center",
+  flexWrap: "wrap",
 } satisfies CSSProperties;
 
-const segmentIndexStyle = {
-  margin: 0,
-  color: "#8c5f2d",
-  textTransform: "uppercase",
-  letterSpacing: "0.08em",
-  fontSize: "0.85rem",
-} satisfies CSSProperties;
-
-const copyButtonStyle = {
-  border: 0,
-  borderRadius: "999px",
-  background: "rgba(140, 95, 45, 0.12)",
-  color: "#4b3a27",
-  padding: "10px 14px",
-  font: "inherit",
-  fontWeight: 700,
-  cursor: "pointer",
-} satisfies CSSProperties;
-
-const segmentFieldGroupStyle = {
+const segmentHeaderCopyStyle = {
   display: "grid",
-  gap: "12px",
+  gap: "6px",
+} satisfies CSSProperties;
+
+const segmentFieldsStyle = {
+  display: "grid",
+  gap: "14px",
 } satisfies CSSProperties;
 
 const segmentFieldLabelStyle = {
   margin: 0,
-  color: "#8c5f2d",
-  textTransform: "uppercase",
-  letterSpacing: "0.08em",
+  color: "var(--accent-gold)",
   fontSize: "0.78rem",
+  letterSpacing: "0.08em",
+  textTransform: "uppercase",
 } satisfies CSSProperties;
 
 const segmentFieldValueStyle = {
   margin: "6px 0 0",
-  color: "#332b21",
-  lineHeight: 1.6,
+  color: "var(--text)",
+  lineHeight: 1.7,
 } satisfies CSSProperties;
 
-const videoPromptStyle = {
+const promptPreStyle = {
   margin: "6px 0 0",
   padding: "14px",
   borderRadius: "16px",
-  background: "rgba(140, 95, 45, 0.06)",
+  background: "rgba(15, 23, 42, 0.52)",
+  border: "1px solid rgba(129, 140, 248, 0.16)",
+  color: "var(--text)",
   whiteSpace: "pre-wrap",
-  lineHeight: 1.6,
-  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+  lineHeight: 1.7,
 } satisfies CSSProperties;

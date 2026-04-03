@@ -833,9 +833,9 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
     await page.locator('button[type="submit"]').click();
     await expect(page).toHaveURL(/\/workspace$/);
 
-    await page.getByLabel("Project title").fill(projectTitle);
-    await page.getByLabel("Project idea").fill(projectIdea);
-    await page.getByRole("button", { name: "Create project" }).click();
+    await page.getByLabel("项目名称").fill(projectTitle);
+    await page.getByLabel("项目概念").fill(projectIdea);
+    await page.getByRole("button", { name: "创建项目并进入脚本流程" }).click();
     await expect(page).toHaveURL(/\/projects\/[^/]+$/);
     projectId = new URL(page.url()).pathname.split("/").pop() ?? "";
     providerExpectations.projectId = projectId;
@@ -852,6 +852,12 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
       },
       async () => {
         await page.goto(`/projects/${projectId}/script`);
+        await expect(page.getByRole("heading", { name: /^脚本$/ })).toBeVisible();
+        await expect(page.getByRole("link", { name: "返回项目制作台" })).toHaveAttribute(
+          "href",
+          `/projects/${projectId}`,
+        );
+        await expect(page.getByText("项目制作流程")).toHaveCount(2);
         await page.getByLabel("Script idea input").fill(
           "A courier discovers a vault that can rewrite every memory in the city.",
         );
@@ -907,6 +913,11 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
       },
       async () => {
         await page.goto(`/projects/${projectId}/storyboard`);
+        await expect(page.getByRole("heading", { name: /^分镜$/ })).toBeVisible();
+        await expect(page.getByRole("link", { name: "返回项目制作台" })).toHaveAttribute(
+          "href",
+          `/projects/${projectId}`,
+        );
         const storyboardSubmittedAt = new Date();
         await page.getByRole("button", { name: "Generate storyboard" }).click();
         await expect(page.getByText("Storyboard generated.")).toBeVisible({ timeout: 15_000 });
@@ -939,6 +950,11 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
       },
       async () => {
         await page.goto(`/projects/${projectId}/images`);
+        await expect(page.getByRole("heading", { name: /^图片$/ })).toBeVisible();
+        await expect(page.getByRole("link", { name: "返回项目制作台" })).toHaveAttribute(
+          "href",
+          `/projects/${projectId}`,
+        );
         const imageSubmittedAt = new Date();
         await page.getByLabel("Image prompt input").fill("Generate a cinematic still of the courier.");
         await page.getByRole("button", { name: "Generate image" }).click();
@@ -1027,6 +1043,11 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
       },
       async () => {
         await page.goto(`/projects/${projectId}/videos`);
+        await expect(page.getByRole("heading", { name: /^视频$/ })).toBeVisible();
+        await expect(page.getByRole("link", { name: "返回项目制作台" })).toHaveAttribute(
+          "href",
+          `/projects/${projectId}`,
+        );
         await page.getByLabel("Video prompt input").fill("Animate the still with a slow push-in.");
         await page.getByRole("button", { name: new RegExp(happyImageAssetId) }).click();
         const happyVideoSubmittedAt = new Date();
@@ -1060,15 +1081,14 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
         });
 
         await page.goto(`/projects/${projectId}`);
-        await expect(page.getByRole("heading", { name: "Script Versions" })).toBeVisible();
-        await expect(page.getByRole("heading", { name: "Storyboard Versions" })).toBeVisible();
-        await expect(page.getByRole("heading", { name: "Image Assets" })).toBeVisible();
-        await expect(page.getByRole("heading", { name: "Video Assets" })).toBeVisible();
-        await expect(page.getByRole("heading", { name: "Task History" })).toBeVisible();
-        await expect(page.getByText(happyImageAssetId, { exact: true })).toBeVisible();
-        await expect(page.getByText(happyVideoAsset.id, { exact: true })).toBeVisible();
-        await expect(page.getByText(scriptTaskId)).toBeVisible();
-        await expect(page.getByText(storyboardTaskId)).toBeVisible();
+        const workflowControlRail = page.getByLabel("流程控制");
+        await expect(workflowControlRail).toBeVisible();
+        await expect(workflowControlRail.getByText("Script", { exact: true })).toBeVisible();
+        await expect(workflowControlRail.getByText("Images", { exact: true })).toBeVisible();
+        await expect(page.getByText(happyImageAssetId, { exact: true }).first()).toBeVisible();
+        await expect(page.getByText(happyVideoAsset.id, { exact: true }).first()).toBeVisible();
+        await expect(page.getByText(scriptTaskId).first()).toBeVisible();
+        await expect(page.getByText(storyboardTaskId).first()).toBeVisible();
 
         await page.goto(`/projects/${projectId}/videos`);
         await page.getByLabel("Video prompt input").fill(RETRY_VIDEO_PROMPT);

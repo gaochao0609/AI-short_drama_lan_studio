@@ -1,0 +1,137 @@
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const { useParamsMock, useTaskPollingMock, fetchMock } = vi.hoisted(() => ({
+  useParamsMock: vi.fn(),
+  useTaskPollingMock: vi.fn(),
+  fetchMock: vi.fn<typeof fetch>(),
+}));
+
+vi.mock("next/navigation", () => ({
+  useParams: useParamsMock,
+}));
+
+vi.mock("@/hooks/useTaskPolling", () => ({
+  default: useTaskPollingMock,
+}));
+
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      "content-type": "application/json",
+    },
+  });
+}
+
+async function renderPage() {
+  const pageModule = await import(
+    "@/app/(workspace)/projects/[projectId]/videos/page"
+  );
+
+  render(<pageModule.default />);
+}
+
+describe("project videos page", () => {
+  beforeEach(() => {
+    useParamsMock.mockReset();
+    useTaskPollingMock.mockReset();
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+
+    useParamsMock.mockReturnValue({
+      projectId: "project-1",
+    });
+
+    useTaskPollingMock.mockReturnValue({
+      task: undefined,
+      error: undefined,
+      isLoading: false,
+      mutate: vi.fn(),
+      isFinished: false,
+    });
+
+    fetchMock.mockImplementation(async (input, init) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+
+      if (url === "/api/videos?projectId=project-1") {
+        return jsonResponse({
+          project: {
+            id: "project-1",
+            title: "Project One",
+            idea: "Idea",
+          },
+          referenceAssets: [
+            {
+              id: "asset-image-1",
+              kind: "image_generated",
+              mimeType: "image/png",
+              sizeBytes: 1234,
+              createdAt: "2026-04-03T08:00:00.000Z",
+              previewDataUrl: "data:image/png;base64,abcd",
+            },
+          ],
+          videoAssets: [
+            {
+              id: "asset-video-1",
+              kind: "video_generated",
+              mimeType: "video/mp4",
+              sizeBytes: 2048,
+              createdAt: "2026-04-03T09:00:00.000Z",
+              previewUrl: "/api/assets/asset-video-1/download",
+            },
+          ],
+          tasks: [],
+        });
+      }
+
+      if (url === "/api/videos" && init?.method === "POST") {
+        return jsonResponse({ taskId: "task-1" }, 202);
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+  });
+
+  it("renders the shared workflow header and preserves video task submission", async () => {
+    await renderPage();
+
+    expect((await screen.findAllByText("项目制作流程")).length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: "视频" })).toBeInTheDocument();
+    expect(screen.getByText("Project One")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "返回项目制作台" })).toHaveAttribute(
+      "href",
+      "/projects/project-1",
+    );
+    expect(screen.getByText("分镜")).toBeInTheDocument();
+    expect(screen.getByText("asset-video-1")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Video prompt input"), {
+      target: { value: "Animate the still with a slow push-in." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /asset-image-1/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Generate video" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/videos",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            projectId: "project-1",
+            prompt: "Animate the still with a slow push-in.",
+            referenceAssetIds: ["asset-image-1"],
+          }),
+        }),
+      );
+    });
+
+    expect(await screen.findByText("Video task queued.")).toBeInTheDocument();
+    expect(screen.getByText(/Task: task-1/i)).toBeInTheDocument();
+  });
+});
