@@ -1,7 +1,6 @@
 export type WorkflowRailItem = {
   label: string;
   detail?: string;
-  href?: string;
 };
 
 export type WorkflowRailProps = {

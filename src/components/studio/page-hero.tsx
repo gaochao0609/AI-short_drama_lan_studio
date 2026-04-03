@@ -5,7 +5,6 @@ export type PageHeroProps = {
   title: string;
   description?: string;
   actions?: ReactNode;
-  aside?: ReactNode;
 };
 
 export default function PageHero({
@@ -13,7 +12,6 @@ export default function PageHero({
   title,
   description,
   actions,
-  aside,
 }: Readonly<PageHeroProps>) {
   return (
     <section className="studio-page-hero">
@@ -25,7 +23,6 @@ export default function PageHero({
         ) : null}
         {actions ? <div className="studio-page-hero__actions">{actions}</div> : null}
       </div>
-      {aside ? <div className="studio-page-hero__aside">{aside}</div> : null}
     </section>
   );
 }

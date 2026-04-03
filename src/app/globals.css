@@ -44,6 +44,26 @@ select {
   font: inherit;
 }
 
+input,
+textarea,
+select {
+  color: var(--text);
+  background: rgba(22, 24, 39, 0.9);
+  border: 1px solid var(--border);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-muted);
+}
+
+input:disabled,
+textarea:disabled,
+select:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
 code,
 pre {
   font-family: var(--font-mono);

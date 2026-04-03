@@ -1,9 +1,11 @@
 import StatusBadge from "@/components/studio/status-badge";
+import type { StatusBadgeProps } from "@/components/studio/status-badge";
 
 export type ProjectCardProps = {
   title: string;
   summary: string;
   status: string;
+  statusTone?: StatusBadgeProps["tone"];
   updatedAtLabel: string;
   nextStep?: string;
 };
@@ -12,6 +14,7 @@ export default function ProjectCard({
   title,
   summary,
   status,
+  statusTone = "active",
   updatedAtLabel,
   nextStep,
 }: Readonly<ProjectCardProps>) {
@@ -19,7 +22,7 @@ export default function ProjectCard({
     <article className="studio-project-card">
       <div className="studio-project-card__header">
         <h2 className="studio-project-card__title">{title}</h2>
-        <StatusBadge label={status} tone="active" />
+        <StatusBadge label={status} tone={statusTone} />
       </div>
       <p className="studio-project-card__summary">{summary}</p>
       <div className="studio-project-card__meta">

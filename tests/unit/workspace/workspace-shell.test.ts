@@ -141,6 +141,26 @@ describe("workspace shell", () => {
     expect(redirectMock).not.toHaveBeenCalled();
   });
 
+  it("redirects users who must change their password", async () => {
+    requireUserMock.mockResolvedValueOnce({
+      userId: "user-1",
+      role: "USER",
+      forcePasswordChange: true,
+    });
+
+    const layoutModule = await import("@/app/(workspace)/layout");
+
+    await expect(
+      layoutModule.default({
+        children: createElement("div", undefined, "workspace"),
+      }),
+    ).rejects.toMatchObject({
+      href: "/force-password",
+    });
+
+    expect(redirectMock).toHaveBeenCalledWith("/force-password");
+  });
+
   it("shows only reachable workspace navigation links", async () => {
     const layoutModule = await import("@/app/(workspace)/layout");
 
