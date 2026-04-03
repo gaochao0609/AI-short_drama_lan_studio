@@ -119,4 +119,19 @@ describe("login page", () => {
     expect(isValidElement(element)).toBe(true);
     expect(element.props.nextPath).toBeUndefined();
   });
+
+  it("keeps white-background login fields readable under the global theme", async () => {
+    const pageModule = await import("@/app/(auth)/login/login-form");
+    const { container } = render(createElement(pageModule.default));
+    const inputs = container.querySelectorAll("input");
+
+    expect(inputs[0]).toHaveStyle({
+      background: "#fff",
+      color: "#1f1b16",
+    });
+    expect(inputs[1]).toHaveStyle({
+      background: "#fff",
+      color: "#1f1b16",
+    });
+  });
 });

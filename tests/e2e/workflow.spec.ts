@@ -13,6 +13,9 @@ import { hash } from "bcryptjs";
 
 const databaseUrl =
   process.env.DATABASE_URL ?? "postgresql://postgres:postgres@localhost:5432/ai_short_drama";
+const appUrl = process.env.APP_URL ?? "http://127.0.0.1:3000";
+const workspaceHeroTitle = "\u4eca\u65e5\u521b\u4f5c\u63a7\u5236\u53f0";
+const createProjectCta = "\u521b\u5efa\u9879\u76ee\u5e76\u8fdb\u5165\u811a\u672c\u6d41\u7a0b";
 
 const ONE_BY_ONE_PNG_BYTES = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7GZxkAAAAASUVORK5CYII=",
@@ -86,6 +89,50 @@ async function insertTaskRow(
   );
 }
 
+test("workspace create-project form navigates into the project flow", async ({ page }) => {
+  const prisma = createPrismaClient();
+  const suffix = Math.random().toString(36).slice(2, 10);
+  const username = `workspace-create-${suffix}`;
+  const password = "WorkflowE2E123!";
+  const passwordHash = await hash(password, 12);
+  let userId = "";
+
+  try {
+    const user = await prisma.user.create({
+      data: {
+        username,
+        passwordHash,
+        role: UserRole.USER,
+        status: UserStatus.ACTIVE,
+        forcePasswordChange: false,
+      },
+    });
+    userId = user.id;
+
+    await page.goto(`${appUrl}/login`);
+    await page.locator('input[autocomplete="username"]').fill(username);
+    await page.locator('input[autocomplete="current-password"]').fill(password);
+    await page.locator('button[type="submit"]').click();
+    await expect(page).toHaveURL(/\/workspace$/);
+    await expect(page.getByRole("heading", { name: workspaceHeroTitle })).toBeVisible();
+
+    await page.getByLabel("项目名称").fill("Workspace Flow Project");
+    await page.getByLabel("项目概念").fill("Navigate from the workspace form into the project flow.");
+    await page.getByRole("button", { name: createProjectCta }).click();
+
+    await expect(page).toHaveURL(/\/projects\/[^/]+$/);
+  } finally {
+    if (userId) {
+      await prisma.user.deleteMany({
+        where: {
+          id: userId,
+        },
+      });
+    }
+    await prisma.$disconnect();
+  }
+});
+
 test("workflow shows all generated artifacts in project detail", async ({ page }) => {
   const prisma = createPrismaClient();
   const suffix = Math.random().toString(36).slice(2, 10);
@@ -118,27 +165,24 @@ test("workflow shows all generated artifacts in project detail", async ({ page }
     });
     userId = user.id;
 
-    await page.goto("http://127.0.0.1:3000/login");
+    await page.goto(`${appUrl}/login`);
     await page.locator('input[autocomplete="username"]').fill(username);
     await page.locator('input[autocomplete="current-password"]').fill(password);
     await page.locator('button[type="submit"]').click();
     await expect(page).toHaveURL(/\/workspace$/);
+    await expect(page.getByRole("heading", { name: workspaceHeroTitle })).toBeVisible();
+    await expect(page.getByRole("button", { name: createProjectCta })).toBeVisible();
+    const workflowOverview = page.getByLabel("Workflow Overview");
+    await expect(workflowOverview.getByText("Script", { exact: true })).toBeVisible();
+    await expect(workflowOverview.getByText("Storyboard", { exact: true })).toBeVisible();
 
-    const createProjectPayload = await page.evaluate(async () => {
-      const response = await fetch("/api/projects", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          title: "Workflow Detail Project",
-          idea: "Create every artifact and show it on the detail page.",
-        }),
-      });
-
-      return response.json();
-    });
-    projectId = String((createProjectPayload as { id: string }).id);
+    await page.getByLabel("项目名称").fill("Workflow Detail Project");
+    await page.getByLabel("项目概念").fill(
+      "Create every artifact and show it on the detail page.",
+    );
+    await page.getByRole("button", { name: createProjectCta }).click();
+    await expect(page).toHaveURL(/\/projects\/[^/]+$/);
+    projectId = page.url().split("/").at(-1) ?? "";
 
     await page.route("**/api/script/sessions", async (route) => {
       await route.fulfill({
@@ -424,7 +468,7 @@ test("workflow shows all generated artifacts in project detail", async ({ page }
       });
     });
 
-    await page.goto(`http://127.0.0.1:3000/projects/${projectId}/script`);
+    await page.goto(`${appUrl}/projects/${projectId}/script`);
     await page.getByLabel("Script idea input").fill(
       "A courier opens the vault that can rewrite every memory in the city.",
     );
@@ -436,28 +480,36 @@ test("workflow shows all generated artifacts in project detail", async ({ page }
     await page.getByRole("button", { name: "Finalize script" }).click();
     await expect(page.getByText("INT. CONTROL ROOM - NIGHT")).toBeVisible();
 
-    await page.goto(`http://127.0.0.1:3000/projects/${projectId}/storyboard`);
+    await page.goto(`${appUrl}/projects/${projectId}/storyboard`);
     await page.getByRole("button", { name: "Generate storyboard" }).click();
     await expect(page.getByText("Storyboard generated.")).toBeVisible();
     await expect(page.getByText("2 segments")).toBeVisible();
 
-    await page.goto(`http://127.0.0.1:3000/projects/${projectId}/images`);
+    await page.goto(`${appUrl}/projects/${projectId}/images`);
     await page.getByLabel("Image prompt input").fill("Generate a cinematic still of the courier.");
     await page.getByRole("button", { name: "Generate image" }).click();
     await expect(page.getByText("Image generated.")).toBeVisible();
 
-    await page.goto(`http://127.0.0.1:3000/projects/${projectId}/videos`);
+    await page.goto(`${appUrl}/projects/${projectId}/videos`);
     await page.getByLabel("Video prompt input").fill("Animate the still with a slow push-in.");
     await page.getByRole("button", { name: new RegExp(`asset-image-${suffix}`) }).click();
     await page.getByRole("button", { name: "Generate video" }).click();
     await expect(page.getByText("Video generated.")).toBeVisible();
 
-    await page.goto(`http://127.0.0.1:3000/projects/${projectId}`);
-    await expect(page.getByRole("heading", { name: "Script Versions" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Storyboard Versions" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Image Assets" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Video Assets" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Task History" })).toBeVisible();
+    await page.goto(`${appUrl}/projects/${projectId}`);
+    await expect(page.getByText("制作台")).toBeVisible();
+    await expect(page.getByRole("link", { name: "继续脚本流程" })).toHaveAttribute(
+      "href",
+      `/projects/${projectId}/script`,
+    );
+    const workflowControlRail = page.getByLabel("流程控制");
+    await expect(workflowControlRail.getByText("Script", { exact: true })).toBeVisible();
+    await expect(workflowControlRail.getByText("Images", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "脚本记录" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "分镜记录" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "图片资产" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "视频资产" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "任务历史" })).toBeVisible();
     await expect(page.getByText(`asset-image-${suffix}`)).toBeVisible();
     await expect(page.getByText(`asset-video-${suffix}`)).toBeVisible();
     await expect(page.getByText(`task-video-${suffix}`)).toBeVisible();

@@ -47,7 +47,7 @@ describe("admin layout", () => {
     process.env.APP_URL = previousAppUrl;
   });
 
-  it("shows the non-https deployment warning for plain-http admin installs", async () => {
+  it("shows the shared admin chrome and plain-http deployment warning", async () => {
     process.env.APP_URL = "http://192.168.1.20:3000";
 
     const layoutModule = await import("@/app/admin/layout");
@@ -58,8 +58,82 @@ describe("admin layout", () => {
       }),
     );
 
+    expect(screen.getByText("Lan Studio")).toBeInTheDocument();
+    expect(screen.getByText("Admin control")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "User access" })).toHaveAttribute(
+      "href",
+      "/admin/users",
+    );
+    expect(screen.getByRole("link", { name: "Provider stack" })).toHaveAttribute(
+      "href",
+      "/admin/providers",
+    );
+    expect(screen.getByRole("link", { name: "Task monitor" })).toHaveAttribute(
+      "href",
+      "/admin/tasks",
+    );
+    expect(screen.getByRole("link", { name: "Storage vault" })).toHaveAttribute(
+      "href",
+      "/admin/storage",
+    );
     expect(
       screen.getByText("当前为非 HTTPS 部署，密码和 API Key 传输存在风险"),
     ).toBeInTheDocument();
+  });
+
+  it("redirects unauthenticated users to login", async () => {
+    requireUserMock.mockRejectedValueOnce(new Error("Unauthorized"));
+
+    const layoutModule = await import("@/app/admin/layout");
+
+    await expect(
+      layoutModule.default({
+        children: createElement("div", undefined, "admin"),
+      }),
+    ).rejects.toMatchObject({
+      href: "/login",
+    });
+
+    expect(redirectMock).toHaveBeenCalledWith("/login");
+  });
+
+  it("redirects admins who must change their password", async () => {
+    requireUserMock.mockResolvedValueOnce({
+      userId: "admin-1",
+      role: "ADMIN",
+      forcePasswordChange: true,
+    });
+
+    const layoutModule = await import("@/app/admin/layout");
+
+    await expect(
+      layoutModule.default({
+        children: createElement("div", undefined, "admin"),
+      }),
+    ).rejects.toMatchObject({
+      href: "/force-password",
+    });
+
+    expect(redirectMock).toHaveBeenCalledWith("/force-password");
+  });
+
+  it("redirects non-admin users away from the admin shell", async () => {
+    requireUserMock.mockResolvedValueOnce({
+      userId: "user-1",
+      role: "USER",
+      forcePasswordChange: false,
+    });
+
+    const layoutModule = await import("@/app/admin/layout");
+
+    await expect(
+      layoutModule.default({
+        children: createElement("div", undefined, "admin"),
+      }),
+    ).rejects.toMatchObject({
+      href: "/",
+    });
+
+    expect(redirectMock).toHaveBeenCalledWith("/");
   });
 });

@@ -1,5 +1,5 @@
 import { createElement } from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
@@ -73,10 +73,17 @@ describe("workspace shell", () => {
     listRecentProjectsMock.mockResolvedValue([
       {
         id: "project-1",
-        title: "Recent Project",
+        title: "Shared Project",
         idea: "Workspace test idea",
         status: "active",
         updatedAt: new Date("2026-03-18T09:00:00.000Z"),
+      },
+      {
+        id: "project-2",
+        title: "Shared Project",
+        idea: "No recent tasks in slice",
+        status: "active",
+        updatedAt: new Date("2026-03-18T08:00:00.000Z"),
       },
     ]);
     listRecentTasksMock.mockResolvedValue([
@@ -86,6 +93,13 @@ describe("workspace shell", () => {
         type: "IMAGE",
         status: "RUNNING",
         createdAt: new Date("2026-03-18T09:30:00.000Z"),
+      },
+      {
+        id: "task-older",
+        projectId: "project-1",
+        type: "STORYBOARD",
+        status: "SUCCEEDED",
+        createdAt: new Date("2026-03-18T09:10:00.000Z"),
       },
     ]);
     countFailedTasksMock.mockResolvedValue(2);
@@ -100,13 +114,24 @@ describe("workspace shell", () => {
 
     render(await pageModule.default());
 
-    expect(screen.getByText("Recent Project")).toBeInTheDocument();
+    expect(screen.getByText("今日创作控制台")).toBeInTheDocument();
+    expect(screen.getAllByText("Shared Project")).toHaveLength(2);
     expect(screen.getByText("task-1")).toBeInTheDocument();
-    expect(screen.getByText("2")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Create Project" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Project title")).toBeInTheDocument();
-    expect(screen.getByLabelText("Project idea")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Create project" })).toBeInTheDocument();
+    expect(screen.getByText("失败任务")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "创建项目并进入脚本流程" }),
+    ).toBeInTheDocument();
+    const workflowOverview = screen.getByLabelText("Workflow Overview");
+    expect(within(workflowOverview).getByText("Script")).toBeInTheDocument();
+    expect(within(workflowOverview).getByText("Storyboard")).toBeInTheDocument();
+    expect(screen.getByText("当前阶段：Images")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "进入视频流程：Shared Project（project-1）" }),
+    ).toHaveAttribute("href", "/projects/project-1/videos");
+    expect(screen.getByText("当前阶段：暂无最近任务")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "查看项目详情：Shared Project（project-2）" }),
+    ).toHaveAttribute("href", "/projects/project-2");
   });
 
   it("redirects unauthenticated users from the workspace layout", async () => {
@@ -141,6 +166,26 @@ describe("workspace shell", () => {
     expect(redirectMock).not.toHaveBeenCalled();
   });
 
+  it("redirects users who must change their password", async () => {
+    requireUserMock.mockResolvedValueOnce({
+      userId: "user-1",
+      role: "USER",
+      forcePasswordChange: true,
+    });
+
+    const layoutModule = await import("@/app/(workspace)/layout");
+
+    await expect(
+      layoutModule.default({
+        children: createElement("div", undefined, "workspace"),
+      }),
+    ).rejects.toMatchObject({
+      href: "/force-password",
+    });
+
+    expect(redirectMock).toHaveBeenCalledWith("/force-password");
+  });
+
   it("shows only reachable workspace navigation links", async () => {
     const layoutModule = await import("@/app/(workspace)/layout");
 
@@ -150,9 +195,15 @@ describe("workspace shell", () => {
       }),
     );
 
-    const links = screen.getAllByRole("link");
-
-    expect(links).toHaveLength(1);
-    expect(links[0]).toHaveAttribute("href", "/workspace");
+    expect(screen.getByText("Lan Studio")).toBeInTheDocument();
+    expect(screen.getByText("Creative workspace")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Workspace overview" })).toHaveAttribute(
+      "href",
+      "/workspace",
+    );
+    expect(screen.getByText("Script")).toBeInTheDocument();
+    expect(screen.getByText("Storyboard")).toBeInTheDocument();
+    expect(screen.getByText("Images")).toBeInTheDocument();
+    expect(screen.getByText("Videos")).toBeInTheDocument();
   });
 });
