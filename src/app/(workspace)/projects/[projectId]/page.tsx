@@ -197,7 +197,9 @@ export default async function ProjectDetailPage({ params }: PageProps) {
   const project = await getProjectDetail(projectId, user.userId);
   const latestScript = project.scriptVersions[0];
   const latestStoryboard = project.storyboardVersions[0];
-  const latestImage = project.imageAssets[0];
+  const latestGeneratedImage = project.imageAssets.find(
+    (asset) => asset.kind === "image_generated",
+  );
   const latestVideo = project.videoAssets[0];
   const latestTask = project.taskHistory[0];
 
@@ -279,15 +281,15 @@ export default async function ProjectDetailPage({ params }: PageProps) {
           },
           {
             label: "Images",
-            detail: latestImage
-              ? `${latestImage.originalName ?? latestImage.id} · ${formatSize(latestImage.sizeBytes)}`
+            detail: latestGeneratedImage
+              ? `${latestGeneratedImage.originalName ?? latestGeneratedImage.id} · ${formatSize(latestGeneratedImage.sizeBytes)}`
               : copy.workflowImagesEmpty,
-            summary: latestImage
-              ? `${latestImage.mimeType} · ${formatDate(latestImage.createdAt)}`
+            summary: latestGeneratedImage
+              ? `${latestGeneratedImage.mimeType} · ${formatDate(latestGeneratedImage.createdAt)}`
               : copy.workflowImagesEmpty,
             href: `/projects/${project.id}/images`,
             ctaLabel: copy.workflowImageLink,
-            ...getStageBadge(Boolean(latestImage), Boolean(latestStoryboard)),
+            ...getStageBadge(Boolean(latestGeneratedImage), Boolean(latestStoryboard)),
           },
           {
             label: "Videos",
@@ -299,7 +301,7 @@ export default async function ProjectDetailPage({ params }: PageProps) {
               : copy.workflowVideosEmpty,
             href: `/projects/${project.id}/videos`,
             ctaLabel: copy.workflowVideoLink,
-            ...getStageBadge(Boolean(latestVideo), Boolean(latestImage)),
+            ...getStageBadge(Boolean(latestVideo), Boolean(latestGeneratedImage)),
           },
         ]}
       />

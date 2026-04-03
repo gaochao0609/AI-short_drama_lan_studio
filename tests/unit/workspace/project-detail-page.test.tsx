@@ -145,4 +145,94 @@ describe("project detail page", () => {
       "/api/assets/video-1/download",
     );
   });
+  it("uses generated images for the workflow rail when newer reference images exist", async () => {
+    getProjectDetailMock.mockResolvedValueOnce({
+      id: "project-1",
+      title: "Project One",
+      idea: "A contained script workflow test.",
+      status: "ACTIVE",
+      ownerId: "user-1",
+      createdAt: "2026-03-30T08:00:00.000Z",
+      updatedAt: "2026-03-30T09:30:00.000Z",
+      scriptVersions: [
+        {
+          id: "script-2",
+          versionNumber: 2,
+          body: "INT. STUDIO - NIGHT",
+          createdAt: "2026-03-30T09:00:00.000Z",
+        },
+      ],
+      storyboardVersions: [
+        {
+          id: "storyboard-1",
+          scriptVersionId: "script-2",
+          taskId: "task-storyboard-1",
+          frameCount: 3,
+          createdAt: "2026-03-30T09:05:00.000Z",
+        },
+      ],
+      imageAssets: [
+        {
+          id: "image-ref-1",
+          kind: "image_reference",
+          mimeType: "image/png",
+          sizeBytes: 512,
+          originalName: "moodboard.png",
+          taskId: null,
+          createdAt: "2026-03-30T09:12:00.000Z",
+          downloadUrl: "/api/assets/image-ref-1/download",
+          previewDataUrl: "data:image/png;base64,cmVm",
+        },
+        {
+          id: "image-1",
+          kind: "image_generated",
+          mimeType: "image/png",
+          sizeBytes: 1024,
+          originalName: "keyframe.png",
+          taskId: "task-image-1",
+          createdAt: "2026-03-30T09:10:00.000Z",
+          downloadUrl: "/api/assets/image-1/download",
+          previewDataUrl: "data:image/png;base64,ZmFrZQ==",
+        },
+      ],
+      videoAssets: [],
+      taskHistory: [
+        {
+          id: "task-image-1",
+          type: "IMAGE",
+          status: "SUCCEEDED",
+          createdAt: "2026-03-30T09:10:00.000Z",
+          finishedAt: "2026-03-30T09:11:00.000Z",
+          errorText: null,
+          outputJson: {
+            outputAssetId: "image-1",
+          },
+        },
+      ],
+    });
+
+    const pageModule = await import("@/app/(workspace)/projects/[projectId]/page");
+
+    render(
+      await pageModule.default({
+        params: Promise.resolve({
+          projectId: "project-1",
+        }),
+      }),
+    );
+
+    const workflowRail = screen.getByLabelText("\u6d41\u7a0b\u63a7\u5236");
+
+    expect(workflowRail).toHaveTextContent("keyframe.png");
+    expect(workflowRail).not.toHaveTextContent("moodboard.png");
+    expect(workflowRail).toHaveTextContent("\u5df2\u4ea7\u51fa");
+    expect(workflowRail).toHaveTextContent("\u4e0b\u4e00\u6b65");
+    expect(screen.getByText("image-ref-1")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "\u4e0b\u8f7d moodboard.png" }),
+    ).toHaveAttribute(
+      "href",
+      "/api/assets/image-ref-1/download",
+    );
+  });
 });
