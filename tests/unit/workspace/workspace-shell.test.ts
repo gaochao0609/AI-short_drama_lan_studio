@@ -1,5 +1,5 @@
 import { createElement } from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
@@ -78,6 +78,13 @@ describe("workspace shell", () => {
         status: "active",
         updatedAt: new Date("2026-03-18T09:00:00.000Z"),
       },
+      {
+        id: "project-2",
+        title: "Quiet Project",
+        idea: "No recent tasks in slice",
+        status: "active",
+        updatedAt: new Date("2026-03-18T08:00:00.000Z"),
+      },
     ]);
     listRecentTasksMock.mockResolvedValue([
       {
@@ -86,6 +93,13 @@ describe("workspace shell", () => {
         type: "IMAGE",
         status: "RUNNING",
         createdAt: new Date("2026-03-18T09:30:00.000Z"),
+      },
+      {
+        id: "task-older",
+        projectId: "project-1",
+        type: "STORYBOARD",
+        status: "SUCCEEDED",
+        createdAt: new Date("2026-03-18T09:10:00.000Z"),
       },
     ]);
     countFailedTasksMock.mockResolvedValue(2);
@@ -107,8 +121,17 @@ describe("workspace shell", () => {
     expect(
       screen.getByRole("button", { name: "创建项目并进入脚本流程" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Script")).toBeInTheDocument();
-    expect(screen.getByText("Storyboard")).toBeInTheDocument();
+    const workflowOverview = screen.getByLabelText("Workflow Overview");
+    expect(within(workflowOverview).getByText("Script")).toBeInTheDocument();
+    expect(within(workflowOverview).getByText("Storyboard")).toBeInTheDocument();
+    expect(screen.getByText("当前阶段：Images")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "进入视频流程：Recent Project" }),
+    ).toHaveAttribute("href", "/projects/project-1/videos");
+    expect(screen.getByText("当前阶段：暂无最近任务")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "查看项目详情：Quiet Project" }),
+    ).toHaveAttribute("href", "/projects/project-2");
   });
 
   it("redirects unauthenticated users from the workspace layout", async () => {

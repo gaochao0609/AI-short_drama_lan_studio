@@ -35,7 +35,6 @@ export default function PageHero({
 const heroStyle = {
   display: "grid",
   gap: "24px",
-  gridTemplateColumns: "minmax(0, 1.7fr) minmax(280px, 1fr)",
   alignItems: "stretch",
   background:
     "linear-gradient(135deg, rgba(109, 94, 252, 0.24), rgba(22, 24, 39, 0.88) 55%, rgba(202, 138, 4, 0.18))",

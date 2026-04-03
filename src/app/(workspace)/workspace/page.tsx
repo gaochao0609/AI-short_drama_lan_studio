@@ -47,6 +47,7 @@ const copy = {
     "\u9879\u76ee\u6982\u5ff5\u5c1a\u672a\u586b\u5199\uff0c\u5efa\u8bae\u5148\u8865\u5145\u4e00\u53e5\u8bdd\u6545\u4e8b\u65b9\u5411\u3002",
   updatedAtPrefix: "\u66f4\u65b0\u4e8e ",
   currentPhasePrefix: "\u5f53\u524d\u9636\u6bb5\uff1a",
+  noRecentTaskPhase: "\u6682\u65e0\u6700\u8fd1\u4efb\u52a1",
   recentTasksEyebrow: "Recent Tasks",
   recentTasksHeading: "\u8fd1\u671f\u4efb\u52a1\u8282\u594f",
   noTaskRecords: "\u6682\u65e0\u4efb\u52a1\u8bb0\u5f55\u3002",
@@ -62,7 +63,12 @@ const copy = {
   storyboardNext: "\u5206\u955c\u5df2\u66f4\u65b0\uff0c\u5efa\u8bae\u751f\u6210\u5173\u952e\u753b\u9762\u3002",
   imageNext: "\u753b\u9762\u5df2\u751f\u6210\uff0c\u5efa\u8bae\u8fdb\u5165\u89c6\u9891\u5236\u4f5c\u3002",
   videoNext: "\u89c6\u9891\u9636\u6bb5\u5df2\u542f\u52a8\uff0c\u53ef\u56de\u770b\u9879\u76ee\u8be6\u60c5\u3002",
-  defaultNext: "\u9879\u76ee\u521a\u5efa\u7acb\uff0c\u5148\u8fdb\u5165\u811a\u672c\u6d41\u7a0b\u3002",
+  noRecentTaskNext:
+    "\u6700\u8fd1\u4efb\u52a1\u4e0d\u5728\u5f53\u524d\u5217\u8868\u4e2d\uff0c\u5148\u67e5\u770b\u9879\u76ee\u8be6\u60c5\u786e\u8ba4\u8fdb\u5ea6\u3002",
+  openStoryboardFlow: "\u8fdb\u5165\u5206\u955c\u6d41\u7a0b",
+  openImagesFlow: "\u8fdb\u5165\u753b\u9762\u6d41\u7a0b",
+  openVideosFlow: "\u8fdb\u5165\u89c6\u9891\u6d41\u7a0b",
+  viewProjectDetail: "\u67e5\u770b\u9879\u76ee\u8be6\u60c5",
 } as const;
 
 function formatDate(value: Date) {
@@ -145,8 +151,8 @@ function mapNextActionLabel(type?: string) {
     case "VIDEO":
       return copy.videoNext;
     default:
-      return copy.defaultNext;
-  }
+      return copy.noRecentTaskNext;
+    }
 }
 
 function mapNextActionHref(projectId: string, type?: string) {
@@ -160,8 +166,39 @@ function mapNextActionHref(projectId: string, type?: string) {
     case "VIDEO":
       return `/projects/${projectId}`;
     default:
-      return `/projects/${projectId}/script`;
+      return `/projects/${projectId}`;
   }
+}
+
+function mapNextActionCtaLabel(type?: string) {
+  switch (type) {
+    case "SCRIPT_FINALIZE":
+      return copy.openStoryboardFlow;
+    case "STORYBOARD":
+      return copy.openImagesFlow;
+    case "IMAGE":
+      return copy.openVideosFlow;
+    case "VIDEO":
+      return copy.viewProjectDetail;
+    default:
+      return copy.viewProjectDetail;
+  }
+}
+
+function getLatestTaskByProjectId(
+  recentTasks: Awaited<ReturnType<typeof listRecentTasks>>,
+) {
+  const latestTaskByProjectId = new Map<string, (typeof recentTasks)[number]>();
+
+  for (const task of recentTasks) {
+    const currentTask = latestTaskByProjectId.get(task.projectId);
+
+    if (!currentTask || task.createdAt > currentTask.createdAt) {
+      latestTaskByProjectId.set(task.projectId, task);
+    }
+  }
+
+  return latestTaskByProjectId;
 }
 
 export default async function WorkspaceDashboardPage() {
@@ -171,9 +208,7 @@ export default async function WorkspaceDashboardPage() {
     listRecentTasks(user.userId),
     countFailedTasks(user.userId),
   ]);
-  const latestTaskByProjectId = new Map(
-    recentTasks.map((task) => [task.projectId, task] as const),
-  );
+  const latestTaskByProjectId = getLatestTaskByProjectId(recentTasks);
 
   return (
     <div style={pageStyle}>
@@ -243,7 +278,7 @@ export default async function WorkspaceDashboardPage() {
         />
       </section>
 
-      <section style={contentGridStyle}>
+      <section className="workspace-dashboard__content-grid" style={contentGridStyle}>
         <div style={primaryColumnStyle}>
           <WorkflowRail
             title={copy.workflowTitle}
@@ -283,6 +318,9 @@ export default async function WorkspaceDashboardPage() {
               <div style={projectGridStyle}>
                 {recentProjects.map((project) => {
                   const currentTask = latestTaskByProjectId.get(project.id);
+                  const currentPhase = currentTask
+                    ? `${copy.currentPhasePrefix}${mapTaskType(currentTask.type)}`
+                    : `${copy.currentPhasePrefix}${copy.noRecentTaskPhase}`;
 
                   return (
                     <ProjectCard
@@ -292,8 +330,9 @@ export default async function WorkspaceDashboardPage() {
                       status={mapProjectStatus(project.status)}
                       statusTone={mapProjectStatusTone(project.status)}
                       updatedAtLabel={`${copy.updatedAtPrefix}${formatDate(project.updatedAt)}`}
-                      currentPhase={`${copy.currentPhasePrefix}${mapTaskType(currentTask?.type)}`}
+                      currentPhase={currentPhase}
                       nextActionLabel={mapNextActionLabel(currentTask?.type)}
+                      nextActionCtaLabel={mapNextActionCtaLabel(currentTask?.type)}
                       nextActionHref={mapNextActionHref(project.id, currentTask?.type)}
                     />
                   );
@@ -408,7 +447,6 @@ const statsGridStyle = {
 const contentGridStyle = {
   display: "grid",
   gap: "20px",
-  gridTemplateColumns: "minmax(0, 1.65fr) minmax(320px, 0.95fr)",
   alignItems: "start",
 } satisfies CSSProperties;
 

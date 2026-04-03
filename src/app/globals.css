@@ -199,6 +199,7 @@ pre {
   display: grid;
   gap: 20px;
   padding: 28px;
+  grid-template-columns: minmax(0, 1.7fr) minmax(280px, 1fr);
 }
 
 .studio-page-hero__content {
@@ -346,6 +347,10 @@ pre {
   color: var(--text);
 }
 
+.workspace-dashboard__content-grid {
+  grid-template-columns: minmax(0, 1.65fr) minmax(320px, 0.95fr);
+}
+
 @media (max-width: 900px) {
   .studio-shell {
     grid-template-columns: 1fr;
@@ -358,5 +363,24 @@ pre {
 
   .studio-shell__main {
     padding: 24px;
+  }
+
+  .studio-page-hero,
+  .workspace-dashboard__content-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .studio-page-hero,
+  .studio-metric-card,
+  .studio-project-card,
+  .studio-workflow-rail,
+  .studio-notice {
+    border-radius: 20px;
+  }
+
+  .studio-page-hero {
+    padding: 22px;
   }
 }

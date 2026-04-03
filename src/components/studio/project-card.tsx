@@ -10,6 +10,7 @@ export type ProjectCardProps = {
   updatedAtLabel: string;
   currentPhase: string;
   nextActionLabel: string;
+  nextActionCtaLabel: string;
   nextActionHref: string;
 };
 
@@ -21,8 +22,11 @@ export default function ProjectCard({
   updatedAtLabel,
   currentPhase,
   nextActionLabel,
+  nextActionCtaLabel,
   nextActionHref,
 }: Readonly<ProjectCardProps>) {
+  const actionAriaLabel = `${nextActionCtaLabel}：${title}`;
+
   return (
     <article className="studio-project-card">
       <div className="studio-project-card__header">
@@ -36,8 +40,12 @@ export default function ProjectCard({
       </div>
       <div style={footerStyle}>
         <span style={actionHintStyle}>{nextActionLabel}</span>
-        <Link href={nextActionHref} style={actionLinkStyle}>
-          继续处理
+        <Link
+          href={nextActionHref}
+          aria-label={actionAriaLabel}
+          style={actionLinkStyle}
+        >
+          {nextActionCtaLabel}
         </Link>
       </div>
     </article>

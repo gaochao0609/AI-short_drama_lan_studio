@@ -89,6 +89,50 @@ async function insertTaskRow(
   );
 }
 
+test("workspace create-project form navigates into the project flow", async ({ page }) => {
+  const prisma = createPrismaClient();
+  const suffix = Math.random().toString(36).slice(2, 10);
+  const username = `workspace-create-${suffix}`;
+  const password = "WorkflowE2E123!";
+  const passwordHash = await hash(password, 12);
+  let userId = "";
+
+  try {
+    const user = await prisma.user.create({
+      data: {
+        username,
+        passwordHash,
+        role: UserRole.USER,
+        status: UserStatus.ACTIVE,
+        forcePasswordChange: false,
+      },
+    });
+    userId = user.id;
+
+    await page.goto(`${appUrl}/login`);
+    await page.locator('input[autocomplete="username"]').fill(username);
+    await page.locator('input[autocomplete="current-password"]').fill(password);
+    await page.locator('button[type="submit"]').click();
+    await expect(page).toHaveURL(/\/workspace$/);
+    await expect(page.getByRole("heading", { name: workspaceHeroTitle })).toBeVisible();
+
+    await page.getByLabel("项目名称").fill("Workspace Flow Project");
+    await page.getByLabel("项目概念").fill("Navigate from the workspace form into the project flow.");
+    await page.getByRole("button", { name: createProjectCta }).click();
+
+    await expect(page).toHaveURL(/\/projects\/[^/]+$/);
+  } finally {
+    if (userId) {
+      await prisma.user.deleteMany({
+        where: {
+          id: userId,
+        },
+      });
+    }
+    await prisma.$disconnect();
+  }
+});
+
 test("workflow shows all generated artifacts in project detail", async ({ page }) => {
   const prisma = createPrismaClient();
   const suffix = Math.random().toString(36).slice(2, 10);
@@ -132,21 +176,13 @@ test("workflow shows all generated artifacts in project detail", async ({ page }
     await expect(workflowOverview.getByText("Script", { exact: true })).toBeVisible();
     await expect(workflowOverview.getByText("Storyboard", { exact: true })).toBeVisible();
 
-    const createProjectPayload = await page.evaluate(async () => {
-      const response = await fetch("/api/projects", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          title: "Workflow Detail Project",
-          idea: "Create every artifact and show it on the detail page.",
-        }),
-      });
-
-      return response.json();
-    });
-    projectId = String((createProjectPayload as { id: string }).id);
+    await page.getByLabel("项目名称").fill("Workflow Detail Project");
+    await page.getByLabel("项目概念").fill(
+      "Create every artifact and show it on the detail page.",
+    );
+    await page.getByRole("button", { name: createProjectCta }).click();
+    await expect(page).toHaveURL(/\/projects\/[^/]+$/);
+    projectId = page.url().split("/").at(-1) ?? "";
 
     await page.route("**/api/script/sessions", async (route) => {
       await route.fulfill({
