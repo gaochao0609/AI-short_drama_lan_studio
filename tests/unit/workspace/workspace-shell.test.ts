@@ -150,9 +150,15 @@ describe("workspace shell", () => {
       }),
     );
 
-    const links = screen.getAllByRole("link");
-
-    expect(links).toHaveLength(1);
-    expect(links[0]).toHaveAttribute("href", "/workspace");
+    expect(screen.getByText("Lan Studio")).toBeInTheDocument();
+    expect(screen.getByText("Creative workspace")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Workspace overview" })).toHaveAttribute(
+      "href",
+      "/workspace",
+    );
+    expect(screen.getByText("Script")).toBeInTheDocument();
+    expect(screen.getByText("Storyboard")).toBeInTheDocument();
+    expect(screen.getByText("Images")).toBeInTheDocument();
+    expect(screen.getByText("Videos")).toBeInTheDocument();
   });
 });

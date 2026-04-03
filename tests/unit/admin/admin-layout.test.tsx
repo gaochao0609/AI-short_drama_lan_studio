@@ -47,7 +47,7 @@ describe("admin layout", () => {
     process.env.APP_URL = previousAppUrl;
   });
 
-  it("shows the non-https deployment warning for plain-http admin installs", async () => {
+  it("shows the shared admin chrome and plain-http deployment warning", async () => {
     process.env.APP_URL = "http://192.168.1.20:3000";
 
     const layoutModule = await import("@/app/admin/layout");
@@ -58,8 +58,24 @@ describe("admin layout", () => {
       }),
     );
 
-    expect(
-      screen.getByText("当前为非 HTTPS 部署，密码和 API Key 传输存在风险"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Lan Studio")).toBeInTheDocument();
+    expect(screen.getByText("Admin control")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "User access" })).toHaveAttribute(
+      "href",
+      "/admin/users",
+    );
+    expect(screen.getByRole("link", { name: "Provider stack" })).toHaveAttribute(
+      "href",
+      "/admin/providers",
+    );
+    expect(screen.getByRole("link", { name: "Task monitor" })).toHaveAttribute(
+      "href",
+      "/admin/tasks",
+    );
+    expect(screen.getByRole("link", { name: "Storage vault" })).toHaveAttribute(
+      "href",
+      "/admin/storage",
+    );
+    expect(screen.getByText(/API Key/)).toBeInTheDocument();
   });
 });
