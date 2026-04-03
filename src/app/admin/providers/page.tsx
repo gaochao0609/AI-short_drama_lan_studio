@@ -526,6 +526,7 @@ const inputStyle = {
   padding: "12px 14px",
   font: "inherit",
   background: "#fff",
+  color: "#1f1b16",
 } satisfies CSSProperties;
 
 const hintStyle = {

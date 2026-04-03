@@ -47,4 +47,19 @@ describe("force password page", () => {
       expect(routerPushMock).toHaveBeenCalledWith("/");
     });
   });
+
+  it("keeps white-background password fields readable under the global theme", async () => {
+    const pageModule = await import("@/app/(auth)/force-password/page");
+    const { container } = render(createElement(pageModule.default));
+    const inputs = container.querySelectorAll("input");
+
+    expect(inputs[0]).toHaveStyle({
+      background: "#fff",
+      color: "#1f1b16",
+    });
+    expect(inputs[1]).toHaveStyle({
+      background: "#fff",
+      color: "#1f1b16",
+    });
+  });
 });
