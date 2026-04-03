@@ -13,6 +13,9 @@ import { hash } from "bcryptjs";
 
 const databaseUrl =
   process.env.DATABASE_URL ?? "postgresql://postgres:postgres@localhost:5432/ai_short_drama";
+const appUrl = process.env.APP_URL ?? "http://127.0.0.1:3000";
+const workspaceHeroTitle = "\u4eca\u65e5\u521b\u4f5c\u63a7\u5236\u53f0";
+const createProjectCta = "\u521b\u5efa\u9879\u76ee\u5e76\u8fdb\u5165\u811a\u672c\u6d41\u7a0b";
 
 const ONE_BY_ONE_PNG_BYTES = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7GZxkAAAAASUVORK5CYII=",
@@ -118,19 +121,16 @@ test("workflow shows all generated artifacts in project detail", async ({ page }
     });
     userId = user.id;
 
-    await page.goto("http://127.0.0.1:3000/login");
+    await page.goto(`${appUrl}/login`);
     await page.locator('input[autocomplete="username"]').fill(username);
     await page.locator('input[autocomplete="current-password"]').fill(password);
     await page.locator('button[type="submit"]').click();
     await expect(page).toHaveURL(/\/workspace$/);
-    await expect(
-      page.getByRole("heading", { name: "今日创作控制台" }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: "创建项目并进入脚本流程" }),
-    ).toBeVisible();
-    await expect(page.getByText("Script")).toBeVisible();
-    await expect(page.getByText("Storyboard")).toBeVisible();
+    await expect(page.getByRole("heading", { name: workspaceHeroTitle })).toBeVisible();
+    await expect(page.getByRole("button", { name: createProjectCta })).toBeVisible();
+    const workflowOverview = page.getByLabel("Workflow Overview");
+    await expect(workflowOverview.getByText("Script", { exact: true })).toBeVisible();
+    await expect(workflowOverview.getByText("Storyboard", { exact: true })).toBeVisible();
 
     const createProjectPayload = await page.evaluate(async () => {
       const response = await fetch("/api/projects", {
@@ -432,7 +432,7 @@ test("workflow shows all generated artifacts in project detail", async ({ page }
       });
     });
 
-    await page.goto(`http://127.0.0.1:3000/projects/${projectId}/script`);
+    await page.goto(`${appUrl}/projects/${projectId}/script`);
     await page.getByLabel("Script idea input").fill(
       "A courier opens the vault that can rewrite every memory in the city.",
     );
@@ -444,23 +444,23 @@ test("workflow shows all generated artifacts in project detail", async ({ page }
     await page.getByRole("button", { name: "Finalize script" }).click();
     await expect(page.getByText("INT. CONTROL ROOM - NIGHT")).toBeVisible();
 
-    await page.goto(`http://127.0.0.1:3000/projects/${projectId}/storyboard`);
+    await page.goto(`${appUrl}/projects/${projectId}/storyboard`);
     await page.getByRole("button", { name: "Generate storyboard" }).click();
     await expect(page.getByText("Storyboard generated.")).toBeVisible();
     await expect(page.getByText("2 segments")).toBeVisible();
 
-    await page.goto(`http://127.0.0.1:3000/projects/${projectId}/images`);
+    await page.goto(`${appUrl}/projects/${projectId}/images`);
     await page.getByLabel("Image prompt input").fill("Generate a cinematic still of the courier.");
     await page.getByRole("button", { name: "Generate image" }).click();
     await expect(page.getByText("Image generated.")).toBeVisible();
 
-    await page.goto(`http://127.0.0.1:3000/projects/${projectId}/videos`);
+    await page.goto(`${appUrl}/projects/${projectId}/videos`);
     await page.getByLabel("Video prompt input").fill("Animate the still with a slow push-in.");
     await page.getByRole("button", { name: new RegExp(`asset-image-${suffix}`) }).click();
     await page.getByRole("button", { name: "Generate video" }).click();
     await expect(page.getByText("Video generated.")).toBeVisible();
 
-    await page.goto(`http://127.0.0.1:3000/projects/${projectId}`);
+    await page.goto(`${appUrl}/projects/${projectId}`);
     await expect(page.getByRole("heading", { name: "Script Versions" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Storyboard Versions" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Image Assets" })).toBeVisible();

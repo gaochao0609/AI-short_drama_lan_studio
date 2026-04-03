@@ -8,6 +8,9 @@ process.env.DEFAULT_ADMIN_USERNAME ??= "admin";
 process.env.DEFAULT_ADMIN_PASSWORD ??= "replace-with-a-strong-password";
 process.env.STORAGE_ROOT ??= "./storage";
 
+const appUrl = new URL(process.env.APP_URL);
+const appPort = appUrl.port || (appUrl.protocol === "https:" ? "443" : "80");
+
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: false,
@@ -16,7 +19,7 @@ export default defineConfig({
   workers: 1,
   reporter: "html",
   use: {
-    baseURL: "http://127.0.0.1:3000",
+    baseURL: process.env.APP_URL,
     trace: "on-first-retry",
   },
   projects: [
@@ -26,8 +29,8 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "pnpm dev",
-    url: "http://127.0.0.1:3000",
+    command: `pnpm dev --port ${appPort}`,
+    url: process.env.APP_URL,
     reuseExistingServer: !process.env.CI,
     timeout: 120000,
   },

@@ -9,6 +9,62 @@ import { listRecentProjects } from "@/lib/services/projects";
 import { countFailedTasks, listRecentTasks } from "@/lib/services/tasks";
 import CreateProjectForm from "./create-project-form";
 
+const copy = {
+  heroTitle: "\u4eca\u65e5\u521b\u4f5c\u63a7\u5236\u53f0",
+  heroDescription:
+    "\u4ece\u4e00\u4e2a\u4e3b\u5165\u53e3\u8fdb\u5165\u9879\u76ee\u521b\u5efa\uff0c\u7136\u540e\u6cbf\u7740 Script\u3001Storyboard\u3001Images\u3001Videos \u56db\u6bb5\u6d41\u7a0b\u63a8\u8fdb\u3002\u8fd9\u91cc\u4f18\u5148\u5448\u73b0\u5f53\u524d\u8282\u594f\u3001\u98ce\u9669\u548c\u4e0b\u4e00\u6b65\u52a8\u4f5c\u3002",
+  heroAction: "\u524d\u5f80\u521b\u5efa\u5165\u53e3",
+  recentActivity: "\u6700\u8fd1\u52a8\u6001",
+  noRecentTasks:
+    "\u4eca\u5929\u8fd8\u6ca1\u6709\u65b0\u7684\u4efb\u52a1\u8bb0\u5f55\uff0c\u5148\u521b\u5efa\u4e00\u4e2a\u9879\u76ee\u5f00\u59cb\u6d41\u7a0b\u3002",
+  createdAtPrefix: "\u521b\u5efa\u4e8e ",
+  failedTasksFootnotePrefix: "\u5931\u8d25\u4efb\u52a1 ",
+  failedTasksFootnoteSuffix:
+    " \u4e2a\uff0c\u9700\u8981\u56de\u770b\u6216\u91cd\u8bd5\u7684\u5185\u5bb9\u4f1a\u4f18\u5148\u51fa\u73b0\u5728\u8fd9\u91cc\u3002",
+  metricsAria: "\u5de5\u4f5c\u533a\u6982\u89c8\u6307\u6807",
+  recentProjects: "\u6700\u8fd1\u9879\u76ee",
+  recentTasks: "\u6700\u8fd1\u4efb\u52a1",
+  failedTasks: "\u5931\u8d25\u4efb\u52a1",
+  recentProjectsDetail: "\u4ecd\u6309\u539f\u670d\u52a1\u8fd4\u56de\u6700\u8fd1\u9879\u76ee\u5217\u8868\u3002",
+  recentTasksDetail: "\u6c47\u603b\u6700\u8fd1\u4e00\u6b21\u63d0\u4ea4\u5230\u5404\u9636\u6bb5\u7684\u4efb\u52a1\u6570\u91cf\u3002",
+  failedTasksDetail: "\u4fdd\u7559\u539f\u5931\u8d25\u8ba1\u6570\u903b\u8f91\uff0c\u7528\u4e8e\u5feb\u901f\u53d1\u73b0\u963b\u585e\u3002",
+  keepMomentum: "\u5f53\u524d\u4f18\u5148\uff1a\u4fdd\u6301\u811a\u672c\u5230\u5206\u955c\u7684\u8fde\u7eed\u63a8\u8fdb",
+  latestStagePrefix: "\u6700\u65b0\u9636\u6bb5\uff1a",
+  investigateSoon: "\u9700\u8981\u5c3d\u5feb\u6392\u67e5",
+  noBlockers: "\u5f53\u524d\u6ca1\u6709\u963b\u585e",
+  workflowTitle: "Workflow Overview",
+  workflowScriptDetail: "\u6574\u7406\u9879\u76ee\u65b9\u5411\u3001\u89d2\u8272\u5173\u7cfb\u548c\u5267\u60c5\u4e3b\u8f74\u3002",
+  workflowStoryboardDetail: "\u628a\u811a\u672c\u62c6\u6210\u53ef\u6267\u884c\u7684\u955c\u5934\u6bb5\u843d\u4e0e\u8282\u594f\u3002",
+  workflowImagesDetail: "\u4e3a\u5173\u952e\u955c\u5934\u751f\u6210\u89c6\u89c9\u57fa\u5e95\u4e0e\u53c2\u8003\u56fe\u3002",
+  workflowVideosDetail: "\u628a\u5173\u952e\u5e27\u63a8\u8fdb\u4e3a\u53ef\u4ea4\u4ed8\u7684\u89c6\u9891\u8d44\u4ea7\u3002",
+  projectsEyebrow: "Projects",
+  projectsHeading: "\u6700\u8fd1\u9879\u76ee\u63a8\u8fdb\u9762\u677f",
+  projectsSummary:
+    "\u5361\u7247\u4f1a\u663e\u793a\u9879\u76ee\u72b6\u6001\u3001\u6700\u8fd1\u66f4\u65b0\u65f6\u95f4\u3001\u5f53\u524d\u9636\u6bb5\u548c\u5efa\u8bae\u52a8\u4f5c\u3002",
+  noProjects:
+    "\u8fd8\u6ca1\u6709\u9879\u76ee\uff0c\u5148\u4ece\u53f3\u4fa7\u5165\u53e3\u521b\u5efa\u7b2c\u4e00\u4e2a\u521b\u4f5c\u4efb\u52a1\u3002",
+  noIdea:
+    "\u9879\u76ee\u6982\u5ff5\u5c1a\u672a\u586b\u5199\uff0c\u5efa\u8bae\u5148\u8865\u5145\u4e00\u53e5\u8bdd\u6545\u4e8b\u65b9\u5411\u3002",
+  updatedAtPrefix: "\u66f4\u65b0\u4e8e ",
+  currentPhasePrefix: "\u5f53\u524d\u9636\u6bb5\uff1a",
+  recentTasksEyebrow: "Recent Tasks",
+  recentTasksHeading: "\u8fd1\u671f\u4efb\u52a1\u8282\u594f",
+  noTaskRecords: "\u6682\u65e0\u4efb\u52a1\u8bb0\u5f55\u3002",
+  queued: "\u6392\u961f\u4e2d",
+  running: "\u8fdb\u884c\u4e2d",
+  succeeded: "\u5df2\u5b8c\u6210",
+  failed: "\u5931\u8d25",
+  canceled: "\u5df2\u53d6\u6d88",
+  active: "\u8fdb\u884c\u4e2d",
+  draft: "\u8349\u7a3f",
+  archived: "\u5df2\u5f52\u6863",
+  scriptNext: "\u811a\u672c\u5df2\u843d\u5730\uff0c\u5efa\u8bae\u63a8\u8fdb\u5206\u955c\u3002",
+  storyboardNext: "\u5206\u955c\u5df2\u66f4\u65b0\uff0c\u5efa\u8bae\u751f\u6210\u5173\u952e\u753b\u9762\u3002",
+  imageNext: "\u753b\u9762\u5df2\u751f\u6210\uff0c\u5efa\u8bae\u8fdb\u5165\u89c6\u9891\u5236\u4f5c\u3002",
+  videoNext: "\u89c6\u9891\u9636\u6bb5\u5df2\u542f\u52a8\uff0c\u53ef\u56de\u770b\u9879\u76ee\u8be6\u60c5\u3002",
+  defaultNext: "\u9879\u76ee\u521a\u5efa\u7acb\uff0c\u5148\u8fdb\u5165\u811a\u672c\u6d41\u7a0b\u3002",
+} as const;
+
 function formatDate(value: Date) {
   return new Intl.DateTimeFormat("zh-CN", {
     month: "numeric",
@@ -36,15 +92,15 @@ function mapTaskType(type?: string) {
 function mapTaskStatus(status: string) {
   switch (status) {
     case "QUEUED":
-      return "排队中";
+      return copy.queued;
     case "RUNNING":
-      return "进行中";
+      return copy.running;
     case "SUCCEEDED":
-      return "已完成";
+      return copy.succeeded;
     case "FAILED":
-      return "失败";
+      return copy.failed;
     case "CANCELED":
-      return "已取消";
+      return copy.canceled;
     default:
       return status;
   }
@@ -53,11 +109,11 @@ function mapTaskStatus(status: string) {
 function mapProjectStatus(status: string) {
   switch (status.toUpperCase()) {
     case "ACTIVE":
-      return "进行中";
+      return copy.active;
     case "DRAFT":
-      return "草稿";
+      return copy.draft;
     case "ARCHIVED":
-      return "已归档";
+      return copy.archived;
     default:
       return status;
   }
@@ -81,15 +137,15 @@ function mapProjectStatusTone(
 function mapNextActionLabel(type?: string) {
   switch (type) {
     case "SCRIPT_FINALIZE":
-      return "脚本已落地，建议推进分镜。";
+      return copy.scriptNext;
     case "STORYBOARD":
-      return "分镜已更新，建议生成关键画面。";
+      return copy.storyboardNext;
     case "IMAGE":
-      return "画面已生成，建议进入视频制作。";
+      return copy.imageNext;
     case "VIDEO":
-      return "视频阶段已启动，可回看项目详情。";
+      return copy.videoNext;
     default:
-      return "项目刚建立，先进入脚本流程。";
+      return copy.defaultNext;
   }
 }
 
@@ -123,18 +179,18 @@ export default async function WorkspaceDashboardPage() {
     <div style={pageStyle}>
       <PageHero
         eyebrow="Workspace"
-        title="今日创作控制台"
-        description="从一个主入口进入项目创建，然后沿着 Script、Storyboard、Images、Videos 四段流程推进。这里优先呈现当前节奏、风险和下一步动作。"
+        title={copy.heroTitle}
+        description={copy.heroDescription}
         actions={
           <Link href="#create-project-entry" style={heroActionStyle}>
-            前往创建入口
+            {copy.heroAction}
           </Link>
         }
         supportingContent={
           <>
-            <p style={supportingLabelStyle}>最近动态</p>
+            <p style={supportingLabelStyle}>{copy.recentActivity}</p>
             {recentTasks.length === 0 ? (
-              <p style={supportingEmptyStyle}>今天还没有新的任务记录，先创建一个项目开始流程。</p>
+              <p style={supportingEmptyStyle}>{copy.noRecentTasks}</p>
             ) : (
               <ul style={supportingListStyle}>
                 {recentTasks.slice(0, 3).map((task) => (
@@ -143,66 +199,70 @@ export default async function WorkspaceDashboardPage() {
                       {mapTaskType(task.type)} · {mapTaskStatus(task.status)}
                     </span>
                     <span style={supportingSecondaryStyle}>
-                      {task.id} · 创建于 {formatDate(task.createdAt)}
+                      {task.id} · {copy.createdAtPrefix}
+                      {formatDate(task.createdAt)}
                     </span>
                   </li>
                 ))}
               </ul>
             )}
             <p style={supportingFootnoteStyle}>
-              失败任务 {failedTaskCount} 个，需要回看或重试的内容会优先出现在这里。
+              {copy.failedTasksFootnotePrefix}
+              {failedTaskCount}
+              {copy.failedTasksFootnoteSuffix}
             </p>
           </>
         }
       />
 
-      <section style={statsGridStyle} aria-label="工作区概览指标">
+      <section style={statsGridStyle} aria-label={copy.metricsAria}>
         <MetricCard
-          label="最近项目"
+          label={copy.recentProjects}
           value={recentProjects.length}
-          detail="仍按原服务返回最近项目列表。"
-          emphasis={<span>当前优先：保持脚本到分镜的连续推进</span>}
+          detail={copy.recentProjectsDetail}
+          emphasis={<span>{copy.keepMomentum}</span>}
         />
         <MetricCard
-          label="最近任务"
+          label={copy.recentTasks}
           value={recentTasks.length}
-          detail="汇总最近一次提交到各阶段的任务数量。"
+          detail={copy.recentTasksDetail}
           emphasis={
             recentTasks[0] ? (
               <span>
-                最新阶段：{mapTaskType(recentTasks[0].type)} · {formatDate(recentTasks[0].createdAt)}
+                {copy.latestStagePrefix}
+                {mapTaskType(recentTasks[0].type)} · {formatDate(recentTasks[0].createdAt)}
               </span>
             ) : null
           }
         />
         <MetricCard
-          label="失败任务"
+          label={copy.failedTasks}
           value={failedTaskCount}
-          detail="保留原失败计数逻辑，用于快速发现阻塞。"
-          emphasis={<span>{failedTaskCount > 0 ? "需要尽快排查" : "当前没有阻塞"}</span>}
+          detail={copy.failedTasksDetail}
+          emphasis={<span>{failedTaskCount > 0 ? copy.investigateSoon : copy.noBlockers}</span>}
         />
       </section>
 
       <section style={contentGridStyle}>
         <div style={primaryColumnStyle}>
           <WorkflowRail
-            title="Workflow Overview"
+            title={copy.workflowTitle}
             items={[
               {
                 label: "Script",
-                detail: "整理项目方向、角色关系和剧情主轴。",
+                detail: copy.workflowScriptDetail,
               },
               {
                 label: "Storyboard",
-                detail: "把脚本拆成可执行的镜头段落与节奏。",
+                detail: copy.workflowStoryboardDetail,
               },
               {
                 label: "Images",
-                detail: "为关键镜头生成视觉基底与参考图。",
+                detail: copy.workflowImagesDetail,
               },
               {
                 label: "Videos",
-                detail: "把关键帧推进为可交付的视频资产。",
+                detail: copy.workflowVideosDetail,
               },
             ]}
           />
@@ -210,17 +270,15 @@ export default async function WorkspaceDashboardPage() {
           <section style={projectsSectionStyle} aria-labelledby="recent-projects-heading">
             <div style={sectionHeaderStyle}>
               <div>
-                <p style={sectionEyebrowStyle}>Projects</p>
+                <p style={sectionEyebrowStyle}>{copy.projectsEyebrow}</p>
                 <h2 id="recent-projects-heading" style={sectionTitleStyle}>
-                  最近项目推进面板
+                  {copy.projectsHeading}
                 </h2>
               </div>
-              <p style={sectionSummaryStyle}>
-                卡片会显示项目状态、最近更新时间、当前阶段和建议动作。
-              </p>
+              <p style={sectionSummaryStyle}>{copy.projectsSummary}</p>
             </div>
             {recentProjects.length === 0 ? (
-              <p style={emptyStyle}>还没有项目，先从右侧入口创建第一个创作任务。</p>
+              <p style={emptyStyle}>{copy.noProjects}</p>
             ) : (
               <div style={projectGridStyle}>
                 {recentProjects.map((project) => {
@@ -230,11 +288,11 @@ export default async function WorkspaceDashboardPage() {
                     <ProjectCard
                       key={project.id}
                       title={project.title}
-                      summary={project.idea?.trim() || "项目概念尚未填写，建议先补充一句话故事方向。"}
+                      summary={project.idea?.trim() || copy.noIdea}
                       status={mapProjectStatus(project.status)}
                       statusTone={mapProjectStatusTone(project.status)}
-                      updatedAtLabel={`更新于 ${formatDate(project.updatedAt)}`}
-                      currentPhase={`当前阶段：${mapTaskType(currentTask?.type)}`}
+                      updatedAtLabel={`${copy.updatedAtPrefix}${formatDate(project.updatedAt)}`}
+                      currentPhase={`${copy.currentPhasePrefix}${mapTaskType(currentTask?.type)}`}
                       nextActionLabel={mapNextActionLabel(currentTask?.type)}
                       nextActionHref={mapNextActionHref(project.id, currentTask?.type)}
                     />
@@ -250,12 +308,12 @@ export default async function WorkspaceDashboardPage() {
           <article style={panelStyle}>
             <div style={sectionHeaderStyle}>
               <div>
-                <p style={sectionEyebrowStyle}>Recent Tasks</p>
-                <h2 style={sectionTitleStyle}>近期任务节奏</h2>
+                <p style={sectionEyebrowStyle}>{copy.recentTasksEyebrow}</p>
+                <h2 style={sectionTitleStyle}>{copy.recentTasksHeading}</h2>
               </div>
             </div>
             {recentTasks.length === 0 ? (
-              <p style={emptyStyle}>暂无任务记录。</p>
+              <p style={emptyStyle}>{copy.noTaskRecords}</p>
             ) : (
               <ul style={listStyle}>
                 {recentTasks.map((task) => (
@@ -263,7 +321,8 @@ export default async function WorkspaceDashboardPage() {
                     <strong style={taskHeadingStyle}>{mapTaskType(task.type)}</strong>
                     <span style={metaStyle}>{task.id}</span>
                     <span style={metaStyle}>
-                      {mapTaskStatus(task.status)} · 创建于 {formatDate(task.createdAt)}
+                      {mapTaskStatus(task.status)} · {copy.createdAtPrefix}
+                      {formatDate(task.createdAt)}
                     </span>
                   </li>
                 ))}

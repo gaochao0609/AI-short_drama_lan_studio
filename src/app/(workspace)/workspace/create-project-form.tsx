@@ -4,6 +4,18 @@ import type { CSSProperties, FormEvent } from "react";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
+const copy = {
+  title: "\u521b\u5efa\u9879\u76ee\u5e76\u8fdb\u5165\u811a\u672c\u6d41\u7a0b",
+  description:
+    "\u4ece\u8fd9\u91cc\u5efa\u7acb\u65b0\u7684\u77ed\u5267\u9879\u76ee\u3002\u6807\u9898\u4e0e\u6982\u5ff5\u4f1a\u6309\u539f\u6837\u63d0\u4ea4\u5230\u9879\u76ee\u63a5\u53e3\uff0c\u521b\u5efa\u6210\u529f\u540e\u4ecd\u7136\u76f4\u63a5\u8fdb\u5165\u9879\u76ee\u8be6\u60c5\u9875\u3002",
+  name: "\u9879\u76ee\u540d\u79f0",
+  idea: "\u9879\u76ee\u6982\u5ff5",
+  namePlaceholder: "\u4f8b\u5982\uff1a\u8bb0\u5fc6\u9ed1\u7bb1",
+  ideaPlaceholder:
+    "\u4e00\u53e5\u8bdd\u8bf4\u660e\u6545\u4e8b\u51b2\u7a81\u3001\u4e3b\u89d2\u5904\u5883\u6216\u89c6\u89c9\u65b9\u5411\u3002",
+  creating: "\u6b63\u5728\u521b\u5efa\u9879\u76ee...",
+} as const;
+
 type CreateProjectResponse = {
   id: string;
   title: string;
@@ -70,32 +82,30 @@ export default function CreateProjectForm() {
   return (
     <article id="create-project-entry" style={panelStyle}>
       <p style={panelEyebrowStyle}>Create Project</p>
-      <h2 style={panelTitleStyle}>创建项目并进入脚本流程</h2>
-      <p style={panelCopyStyle}>
-        从这里建立新的短剧项目。标题与概念会按原样提交到项目接口，创建成功后仍然直接进入项目详情页。
-      </p>
+      <h2 style={panelTitleStyle}>{copy.title}</h2>
+      <p style={panelCopyStyle}>{copy.description}</p>
       <form onSubmit={handleSubmit} style={formStyle}>
         <label style={fieldStyle}>
-          <span>项目名称</span>
+          <span>{copy.name}</span>
           <input
-            aria-label="项目名称"
+            aria-label={copy.name}
             value={title}
             onChange={(event) => setTitle(event.target.value)}
             style={inputStyle}
             disabled={isSubmitting}
-            placeholder="例如：记忆黑箱"
+            placeholder={copy.namePlaceholder}
           />
         </label>
         <label style={fieldStyle}>
-          <span>项目概念</span>
+          <span>{copy.idea}</span>
           <textarea
-            aria-label="项目概念"
+            aria-label={copy.idea}
             value={idea}
             onChange={(event) => setIdea(event.target.value)}
             rows={4}
             style={textareaStyle}
             disabled={isSubmitting}
-            placeholder="一句话说明故事冲突、主角处境或视觉方向。"
+            placeholder={copy.ideaPlaceholder}
           />
         </label>
         {error ? (
@@ -104,7 +114,7 @@ export default function CreateProjectForm() {
           </p>
         ) : null}
         <button type="submit" style={buttonStyle} disabled={isSubmitting}>
-          {isSubmitting ? "正在创建项目..." : "创建项目并进入脚本流程"}
+          {isSubmitting ? copy.creating : copy.title}
         </button>
       </form>
     </article>
