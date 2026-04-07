@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
 import AppShell from "@/components/studio/app-shell";
-import { requireUser } from "@/lib/auth/guards";
+import { AuthGuardError, requireUser } from "@/lib/auth/guards";
 
 const navItems = [
   { href: "/admin/users", label: "用户与权限" },
@@ -21,12 +21,18 @@ export default async function AdminLayout({
 
   try {
     user = await requireUser();
-  } catch {
-    redirect("/login");
+  } catch (error) {
+    if (error instanceof AuthGuardError && error.status === 401) {
+      redirect("/login");
+      return null;
+    }
+
+    throw error;
   }
 
   if (user.forcePasswordChange) {
     redirect("/force-password");
+    return null;
   }
 
   if (user.role !== "ADMIN") {
