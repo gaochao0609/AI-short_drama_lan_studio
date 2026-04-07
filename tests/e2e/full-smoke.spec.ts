@@ -12,7 +12,7 @@ import {
   UserRole,
   UserStatus,
 } from "@prisma/client";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { hash } from "bcryptjs";
 
 const databaseUrl =
@@ -31,14 +31,12 @@ const SAMPLE_MP4_DATA_URL = `data:video/mp4;base64,${SAMPLE_MP4_BYTES.toString("
 const RETRY_VIDEO_PROMPT = "FAIL_FOR_ADMIN_RETRY";
 const CANCEL_VIDEO_PROMPT = "WAIT_FOR_ADMIN_CANCEL";
 const PROVIDER_MODELS = {
-  script: "fake-script-model",
   storyboard: "fake-storyboard-model",
   image: "fake-image-model",
   video: "fake-video-model",
 } as const;
 
 type ProviderKeys = {
-  script: string;
   storyboard: string;
   image: string;
   video: string;
@@ -47,8 +45,7 @@ type ProviderKeys = {
 type ProxyExpectations = {
   projectId: string;
   userId: string;
-  scriptSessionId: string;
-  scriptVersionId: string;
+  storyboardScriptAssetId: string;
   referenceAssetId: string;
 };
 
@@ -130,11 +127,6 @@ function validateCommonRequest(input: {
   );
 }
 
-function assertEmptyInputFiles(payload: FakeProxyPayload, taskType: string) {
-  const inputFiles = readStringArray(payload.inputFiles, `${taskType}.inputFiles`);
-  assertCondition(inputFiles.length === 0, `${taskType} must not send inputFiles`);
-}
-
 function assertSingleDataUrlInputFile(payload: FakeProxyPayload, taskType: string, prefix: string) {
   const inputFiles = readStringArray(payload.inputFiles, `${taskType}.inputFiles`);
   assertCondition(inputFiles.length === 1, `${taskType} must send exactly one input file`);
@@ -142,6 +134,62 @@ function assertSingleDataUrlInputFile(payload: FakeProxyPayload, taskType: strin
     inputFiles[0].startsWith(prefix),
     `${taskType} input file must start with ${prefix}`,
   );
+}
+
+function readMetadataObject(metadata: unknown) {
+  if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
+    return metadata as Record<string, unknown>;
+  }
+
+  return {};
+}
+
+async function findProjectAssetByName(
+  prisma: PrismaClient,
+  input: {
+    projectId: string;
+    originalName: string;
+  },
+) {
+  return prisma.asset.findFirst({
+    where: {
+      projectId: input.projectId,
+      originalName: input.originalName,
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+    select: {
+      id: true,
+      metadata: true,
+    },
+  });
+}
+
+function assetCard(page: Page, assetId: string) {
+  return page.locator(`article[aria-label^="${assetId} "]`);
+}
+
+async function openBindingMenu(page: Page, assetId: string) {
+  const card = assetCard(page, assetId);
+  await expect(card).toHaveCount(1);
+  await card.locator("button[aria-expanded]").click();
+  return card;
+}
+
+async function uploadAssetThroughPicker(
+  page: Page,
+  input: {
+    name: string;
+    mimeType: string;
+    buffer: Buffer;
+  },
+) {
+  await page.locator('input[type="file"]').setInputFiles({
+    name: input.name,
+    mimeType: input.mimeType,
+    buffer: input.buffer,
+  });
 }
 
 async function startWorkerProcess() {
@@ -376,7 +424,6 @@ async function startFakeProxyServer(input: {
   expected: ProxyExpectations;
 }) {
   const retryAttemptsByPrompt = new Map<string, number>();
-  let scriptQuestionCount = 0;
   let releaseCancelVideo: (() => void) | null = null;
   let cancelVideoPromise = Promise.resolve();
 
@@ -405,84 +452,6 @@ async function startFakeProxyServer(input: {
       const taskType = readTrimmedString(payload.taskType, "taskType");
       const headers = request.headers;
 
-      if (taskType === "script_question_generate") {
-        validateCommonRequest({
-          headers,
-          payload,
-          expectedTaskType: "script_question_generate",
-          expectedProviderKey: input.providerKeys.script,
-          expectedModel: PROVIDER_MODELS.script,
-        });
-        assertEmptyInputFiles(payload, taskType);
-
-        const options = readObjectRecord(payload.options, "options");
-        const sessionId = readTrimmedString(options.sessionId, "options.sessionId");
-        const projectId = readTrimmedString(options.projectId, "options.projectId");
-        const mode = readTrimmedString(options.mode, "options.mode");
-        const inputText = readTrimmedString(payload.inputText, "inputText");
-
-        assertCondition(projectId === input.expected.projectId, "script_question_generate projectId mismatch");
-        assertCondition(inputText.includes("Session idea:"), "script_question_generate prompt is missing session idea");
-
-        if (input.expected.scriptSessionId) {
-          assertCondition(sessionId === input.expected.scriptSessionId, "script_question_generate sessionId mismatch");
-        } else {
-          input.expected.scriptSessionId = sessionId;
-        }
-
-        const expectedMode = scriptQuestionCount === 0 ? "start" : "next";
-        assertCondition(mode === expectedMode, `script_question_generate mode must be ${expectedMode}`);
-
-        const question =
-          scriptQuestionCount === 0 ? "Who is the protagonist?" : "What is at stake?";
-        scriptQuestionCount += 1;
-
-        response.writeHead(200, {
-          "content-type": "text/plain; charset=utf-8",
-          "cache-control": "no-cache",
-        });
-        const midpoint = Math.max(1, Math.floor(question.length / 2));
-        response.write(question.slice(0, midpoint));
-        setTimeout(() => {
-          response.end(question.slice(midpoint));
-        }, 30);
-        return;
-      }
-
-      if (taskType === "script_finalize") {
-        validateCommonRequest({
-          headers,
-          payload,
-          expectedTaskType: "script_finalize",
-          expectedProviderKey: input.providerKeys.script,
-          expectedModel: PROVIDER_MODELS.script,
-        });
-        assertEmptyInputFiles(payload, taskType);
-
-        const options = readObjectRecord(payload.options, "options");
-        assertCondition(
-          readTrimmedString(options.projectId, "options.projectId") === input.expected.projectId,
-          "script_finalize projectId mismatch",
-        );
-        assertCondition(
-          readTrimmedString(options.sessionId, "options.sessionId") === input.expected.scriptSessionId,
-          "script_finalize sessionId mismatch",
-        );
-        assertCondition(
-          readTrimmedString(payload.inputText, "inputText").includes("Return only the completed script body."),
-          "script_finalize prompt is missing finalization instruction",
-        );
-
-        response.writeHead(200, { "content-type": "application/json" });
-        response.end(
-          JSON.stringify({
-            status: "ok",
-            textOutput: "INT. ARCHIVE ROOM - NIGHT\nA courier unlocks the memory vault.",
-          }),
-        );
-        return;
-      }
-
       if (taskType === "storyboard_split") {
         validateCommonRequest({
           headers,
@@ -491,7 +460,9 @@ async function startFakeProxyServer(input: {
           expectedProviderKey: input.providerKeys.storyboard,
           expectedModel: PROVIDER_MODELS.storyboard,
         });
-        assertEmptyInputFiles(payload, taskType);
+
+        const inputFiles = readStringArray(payload.inputFiles, `${taskType}.inputFiles`);
+        assertCondition(inputFiles.length === 0, "storyboard_split must not send inputFiles");
 
         const options = readObjectRecord(payload.options, "options");
         assertCondition(
@@ -499,9 +470,11 @@ async function startFakeProxyServer(input: {
           "storyboard_split projectId mismatch",
         );
         assertCondition(
-          readTrimmedString(options.scriptVersionId, "options.scriptVersionId") === input.expected.scriptVersionId,
-          "storyboard_split scriptVersionId mismatch",
+          readTrimmedString(options.scriptAssetId, "options.scriptAssetId") ===
+            input.expected.storyboardScriptAssetId,
+          "storyboard_split scriptAssetId mismatch",
         );
+        readTrimmedString(options.scriptVersionId, "options.scriptVersionId");
         assertCondition(
           readTrimmedString(options.userId, "options.userId") === input.expected.userId,
           "storyboard_split userId mismatch",
@@ -548,7 +521,8 @@ async function startFakeProxyServer(input: {
           expectedProviderKey: input.providerKeys.image,
           expectedModel: PROVIDER_MODELS.image,
         });
-        assertEmptyInputFiles(payload, taskType);
+        const inputFiles = readStringArray(payload.inputFiles, `${taskType}.inputFiles`);
+        assertCondition(inputFiles.length === 0, "image_generate must not send inputFiles");
 
         const options = readObjectRecord(payload.options, "options");
         assertCondition(
@@ -559,7 +533,6 @@ async function startFakeProxyServer(input: {
           readTrimmedString(options.userId, "options.userId") === input.expected.userId,
           "image_generate userId mismatch",
         );
-        assertCondition(!("sourceAssetId" in options), "image_generate must not send sourceAssetId");
         readTrimmedString(payload.inputText, "inputText");
 
         response.writeHead(200, { "content-type": "application/json" });
@@ -720,8 +693,11 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
   const finalPassword = "WriterPass123!";
   const projectTitle = `Smoke Project ${suffix}`;
   const projectIdea = "Build a complete short-drama project through every workflow.";
+  const uploadedScriptName = `uploaded-script-${suffix}.md`;
+  const uploadedScriptBody = "INT. ARCHIVE ROOM - NIGHT\nA courier unlocks the memory vault.";
+  const imageReferenceName = `image-reference-${suffix}.png`;
+  const videoReferenceName = `video-reference-${suffix}.png`;
   const providerKeys: ProviderKeys = {
-    script: `e2e-script-${suffix}`,
     storyboard: `e2e-storyboard-${suffix}`,
     image: `e2e-image-${suffix}`,
     video: `e2e-video-${suffix}`,
@@ -729,8 +705,7 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
   const providerExpectations: ProxyExpectations = {
     projectId: "",
     userId: "",
-    scriptSessionId: "",
-    scriptVersionId: "",
+    storyboardScriptAssetId: "",
     referenceAssetId: "",
   };
 
@@ -858,66 +833,127 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
     providerExpectations.projectId = projectId;
     await expect(page.getByRole("heading", { name: projectTitle })).toBeVisible();
 
-    await withTemporaryProvider(
-      prisma,
-      {
-        key: providerKeys.script,
-        label: "E2E Script Provider",
-        modelName: PROVIDER_MODELS.script,
-        defaultForTasks: ["script_question_generate", "script_finalize"],
-        baseUrl: fakeProxy.baseUrl,
-      },
-      async () => {
-        await page.goto(`/projects/${projectId}/script`);
-        await expect(page.getByRole("heading", { name: /^脚本$/ })).toBeVisible();
-        await expect(page.getByRole("link", { name: "返回项目制作台" })).toHaveAttribute(
-          "href",
-          `/projects/${projectId}`,
-        );
-        await expect(page.getByText("项目制作流程")).toHaveCount(2);
-        await page.getByLabel("Script idea input").fill(
-          "A courier discovers a vault that can rewrite every memory in the city.",
-        );
-        await page.getByRole("button", { name: "Start script session" }).click();
-        await expect(page.getByText("Who is the protagonist?")).toBeVisible();
-        await page.getByLabel("Script answer input").fill("A courier who smuggles forbidden memories.");
-        await page.getByRole("button", { name: "Send script answer" }).click();
-        await expect(page.getByText("What is at stake?")).toBeVisible();
+    await page.goto(`/projects/${projectId}/assets`);
+    await expect(page).toHaveURL(new RegExp(`/projects/${projectId}/assets$`));
+    await expect(page.locator('input[type="file"]')).toHaveCount(1);
 
-        const scriptSubmittedAt = new Date();
-        await page.getByRole("button", { name: "Finalize script" }).click();
-        await expect(page.getByText("INT. ARCHIVE ROOM - NIGHT")).toBeVisible({ timeout: 15_000 });
+    await uploadAssetThroughPicker(page, {
+      name: uploadedScriptName,
+      mimeType: "text/markdown",
+      buffer: Buffer.from(uploadedScriptBody, "utf8"),
+    });
 
-        await expect
-          .poll(
-            async () => {
-              const task = await findTaskByTypeAfter(prisma, {
-                projectId,
-                createdById: userId,
-                type: TaskType.SCRIPT_FINALIZE,
-                createdAfter: scriptSubmittedAt,
-              });
-              return task?.status ?? null;
-            },
-            { timeout: 15_000 },
-          )
-          .toBe(TaskStatus.SUCCEEDED);
-
-        const scriptVersion = await prisma.scriptVersion.findFirstOrThrow({
-          where: {
+    let uploadedScriptAssetId = "";
+    await expect
+      .poll(
+        async () => {
+          const asset = await findProjectAssetByName(prisma, {
             projectId,
-            scriptSessionId: providerExpectations.scriptSessionId,
-          },
-          orderBy: {
-            versionNumber: "desc",
-          },
-          select: {
-            id: true,
-          },
-        });
-        providerExpectations.scriptVersionId = scriptVersion.id;
-      },
-    );
+            originalName: uploadedScriptName,
+          });
+          uploadedScriptAssetId = asset?.id ?? "";
+          return Boolean(uploadedScriptAssetId);
+        },
+        { timeout: 15_000 },
+      )
+      .toBe(true);
+
+    await expect
+      .poll(
+        async () => {
+          const asset = await prisma.asset.findUnique({
+            where: {
+              id: uploadedScriptAssetId,
+            },
+            select: {
+              metadata: true,
+            },
+          });
+
+          return readMetadataObject(asset?.metadata).parseStatus ?? null;
+        },
+        { timeout: 20_000 },
+      )
+      .toBe("ready");
+
+    await uploadAssetThroughPicker(page, {
+      name: imageReferenceName,
+      mimeType: "image/png",
+      buffer: ONE_BY_ONE_PNG_BYTES,
+    });
+    await uploadAssetThroughPicker(page, {
+      name: videoReferenceName,
+      mimeType: "image/png",
+      buffer: ONE_BY_ONE_PNG_BYTES,
+    });
+
+    let uploadedImageReferenceId = "";
+    let uploadedVideoReferenceId = "";
+    await expect
+      .poll(
+        async () => {
+          const [imageReferenceAsset, videoReferenceAsset] = await Promise.all([
+            findProjectAssetByName(prisma, {
+              projectId,
+              originalName: imageReferenceName,
+            }),
+            findProjectAssetByName(prisma, {
+              projectId,
+              originalName: videoReferenceName,
+            }),
+          ]);
+          uploadedImageReferenceId = imageReferenceAsset?.id ?? "";
+          uploadedVideoReferenceId = videoReferenceAsset?.id ?? "";
+          return Boolean(uploadedImageReferenceId && uploadedVideoReferenceId);
+        },
+        { timeout: 15_000 },
+      )
+      .toBe(true);
+
+    providerExpectations.storyboardScriptAssetId = uploadedScriptAssetId;
+    providerExpectations.referenceAssetId = uploadedVideoReferenceId;
+
+    await page.reload();
+    await expect(page.getByText(uploadedScriptName).first()).toBeVisible();
+    await expect(page.getByText(imageReferenceName).first()).toBeVisible();
+    await expect(page.getByText(videoReferenceName).first()).toBeVisible();
+
+    const uploadedScriptCard = await openBindingMenu(page, uploadedScriptAssetId);
+    await uploadedScriptCard.locator(`button[aria-label^="${uploadedScriptAssetId} "]`).first().click();
+
+    const imageReferenceCard = await openBindingMenu(page, uploadedImageReferenceId);
+    await imageReferenceCard.locator(`button[aria-label^="${uploadedImageReferenceId} "]`).nth(0).click();
+
+    const videoReferenceCard = await openBindingMenu(page, uploadedVideoReferenceId);
+    await videoReferenceCard.locator(`button[aria-label^="${uploadedVideoReferenceId} "]`).nth(1).click();
+
+    await expect
+      .poll(
+        async () => {
+          const binding = await prisma.projectWorkflowBinding.findUnique({
+            where: {
+              projectId,
+            },
+            select: {
+              storyboardScriptAssetId: true,
+              imageReferenceAssetIds: true,
+              videoReferenceAssetIds: true,
+            },
+          });
+
+          return {
+            storyboardScriptAssetId: binding?.storyboardScriptAssetId ?? null,
+            imageReferenceAssetIds: binding?.imageReferenceAssetIds ?? [],
+            videoReferenceAssetIds: binding?.videoReferenceAssetIds ?? [],
+          };
+        },
+        { timeout: 15_000 },
+      )
+      .toEqual({
+        storyboardScriptAssetId: uploadedScriptAssetId,
+        imageReferenceAssetIds: [uploadedImageReferenceId],
+        videoReferenceAssetIds: [uploadedVideoReferenceId],
+      });
 
     await withTemporaryProvider(
       prisma,
@@ -930,14 +966,13 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
       },
       async () => {
         await page.goto(`/projects/${projectId}/storyboard`);
-        await expect(page.getByRole("heading", { name: /^分镜$/ })).toBeVisible();
-        await expect(page.getByRole("link", { name: "返回项目制作台" })).toHaveAttribute(
-          "href",
-          `/projects/${projectId}`,
-        );
+        await expect(page.getByText(uploadedScriptName).first()).toBeVisible();
+        await expect(page.getByText(uploadedScriptBody).first()).toBeVisible();
         const storyboardSubmittedAt = new Date();
         await page.getByRole("button", { name: /\u751f\u6210\u5206\u955c|Generate storyboard/i }).click();
-        await expect(page.getByText("Archive room")).toBeVisible({ timeout: 15_000 });
+        await expect(page.getByText("Archive room", { exact: true })).toBeVisible({
+          timeout: 15_000,
+        });
 
         await expect
           .poll(
@@ -956,6 +991,31 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
       },
     );
 
+    let storyboardTaskId = "";
+    await expect
+      .poll(
+        async () => {
+          const storyboardTask = await prisma.task.findFirst({
+            where: {
+              projectId,
+              createdById: userId,
+              type: TaskType.STORYBOARD,
+            },
+            orderBy: {
+              createdAt: "desc",
+            },
+            select: {
+              id: true,
+            },
+          });
+
+          storyboardTaskId = storyboardTask?.id ?? "";
+          return Boolean(storyboardTaskId);
+        },
+        { timeout: 10_000 },
+      )
+      .toBe(true);
+
     await withTemporaryProvider(
       prisma,
       {
@@ -968,12 +1028,12 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
       async () => {
         await page.goto(`/projects/${projectId}/images`);
         await expect(page.getByRole("heading", { name: /^图片$/ })).toBeVisible();
-        await expect(page.getByRole("link", { name: "返回项目制作台" })).toHaveAttribute(
-          "href",
-          `/projects/${projectId}`,
-        );
+        await expect(page.getByText(imageReferenceName).first()).toBeVisible();
+
         const imageSubmittedAt = new Date();
-        await page.getByLabel("Image prompt input").fill("Generate a cinematic still of the courier.");
+        await page.getByLabel(/图片提示词输入框|Image prompt input/i).fill(
+          "Generate a cinematic still of the courier.",
+        );
         await page.getByRole("button", { name: /\u751f\u6210\u56fe\u7247|Generate image/i }).click();
 
         let imageTaskId = "";
@@ -1002,52 +1062,11 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
           },
         });
         happyImageAssetId = imageAsset.id;
-        providerExpectations.referenceAssetId = imageAsset.id;
-        await expect(page.getByText(happyImageAssetId)).toBeVisible();
+        await expect(page.getByText(happyImageAssetId, { exact: true }).first()).toBeVisible();
       },
     );
 
-    let scriptTaskId = "";
-    let storyboardTaskId = "";
-    await expect
-      .poll(
-        async () => {
-          const [scriptTask, storyboardTask] = await Promise.all([
-            prisma.task.findFirst({
-              where: {
-                projectId,
-                createdById: userId,
-                type: TaskType.SCRIPT_FINALIZE,
-              },
-              orderBy: {
-                createdAt: "desc",
-              },
-              select: {
-                id: true,
-              },
-            }),
-            prisma.task.findFirst({
-              where: {
-                projectId,
-                createdById: userId,
-                type: TaskType.STORYBOARD,
-              },
-              orderBy: {
-                createdAt: "desc",
-              },
-              select: {
-                id: true,
-              },
-            }),
-          ]);
-          scriptTaskId = scriptTask?.id ?? "";
-          storyboardTaskId = storyboardTask?.id ?? "";
-          return Boolean(scriptTaskId && storyboardTaskId);
-        },
-        { timeout: 10_000 },
-      )
-      .toBe(true);
-
+    let happyVideoAssetId = "";
     await withTemporaryProvider(
       prisma,
       {
@@ -1060,14 +1079,17 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
       async () => {
         await page.goto(`/projects/${projectId}/videos`);
         await expect(page.getByRole("heading", { name: /^视频$/ })).toBeVisible();
-        await expect(page.getByRole("link", { name: "返回项目制作台" })).toHaveAttribute(
-          "href",
-          `/projects/${projectId}`,
+        await expect(page.getByText(videoReferenceName).first()).toBeVisible();
+
+        await page.getByLabel(/视频提示词输入框|Video prompt input/i).fill(
+          "Animate the still with a slow push-in.",
         );
-        await page.getByLabel("Video prompt input").fill("Animate the still with a slow push-in.");
-        await page.getByRole("button", { name: new RegExp(happyImageAssetId) }).click();
         const happyVideoSubmittedAt = new Date();
-        await page.getByRole("button", { name: /\u751f\u6210\u89c6\u9891|Generate video/i }).click();
+        const generateVideoButton = page.getByRole("button", {
+          name: /\u751f\u6210\u89c6\u9891|Generate video/i,
+        });
+        await expect(generateVideoButton).toBeEnabled();
+        await generateVideoButton.click();
 
         let happyVideoTaskId = "";
         await expect
@@ -1082,7 +1104,7 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
               happyVideoTaskId = task?.id ?? "";
               return task?.status ?? null;
             },
-            { timeout: 15_000 },
+            { timeout: 20_000 },
           )
           .toBe(TaskStatus.SUCCEEDED);
 
@@ -1094,21 +1116,33 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
             id: true,
           },
         });
+        happyVideoAssetId = happyVideoAsset.id;
+        await expect(page.getByText(happyVideoAssetId, { exact: true }).first()).toBeVisible();
+
+        await page.goto(`/projects/${projectId}/assets`);
+        await expect(page.getByText(uploadedScriptName).first()).toBeVisible();
+        await expect(page.getByText(imageReferenceName).first()).toBeVisible();
+        await expect(page.getByText(videoReferenceName).first()).toBeVisible();
+        await expect(page.getByText(happyImageAssetId, { exact: true }).first()).toBeVisible();
+        await expect(page.getByText(happyVideoAssetId, { exact: true }).first()).toBeVisible();
 
         await page.goto(`/projects/${projectId}`);
+        await expect(page.getByRole("heading", { name: projectTitle })).toBeVisible();
         await expect(page.getByRole("heading", { name: "脚本记录" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "分镜记录" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "图片资产" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "视频资产" })).toBeVisible();
         await expect(page.getByRole("heading", { name: "任务历史" })).toBeVisible();
+        await expect(page.getByText(uploadedScriptName).first()).toBeVisible();
+        await expect(page.getByText(imageReferenceName).first()).toBeVisible();
+        await expect(page.getByText(videoReferenceName).first()).toBeVisible();
         await expect(page.getByText(happyImageAssetId, { exact: true }).first()).toBeVisible();
-        await expect(page.getByText(happyVideoAsset.id, { exact: true }).first()).toBeVisible();
-        await expect(page.getByText(scriptTaskId).first()).toBeVisible();
-        await expect(page.getByText(storyboardTaskId).first()).toBeVisible();
+        await expect(page.getByText(happyVideoAssetId, { exact: true }).first()).toBeVisible();
+        await expect(page.getByText(storyboardTaskId, { exact: true }).first()).toBeVisible();
 
         await page.goto(`/projects/${projectId}/videos`);
-        await page.getByLabel("Video prompt input").fill(RETRY_VIDEO_PROMPT);
-        await page.getByRole("button", { name: new RegExp(happyImageAssetId) }).click();
+        await expect(page.getByText(videoReferenceName).first()).toBeVisible();
+        await page.getByLabel(/视频提示词输入框|Video prompt input/i).fill(RETRY_VIDEO_PROMPT);
         const failedVideoSubmittedAt = new Date();
         await page.getByRole("button", { name: /\u751f\u6210\u89c6\u9891|Generate video/i }).click();
 
@@ -1130,14 +1164,11 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
           .toBe(TaskStatus.FAILED);
 
         await page.goto(`/projects/${projectId}/videos`);
-        await page.getByLabel("Video prompt input").fill(CANCEL_VIDEO_PROMPT);
-        const referenceButton = page.getByRole("button", { name: new RegExp(happyImageAssetId) });
-        await referenceButton.click();
+        await expect(page.getByText(videoReferenceName).first()).toBeVisible();
+        await page.getByLabel(/视频提示词输入框|Video prompt input/i).fill(CANCEL_VIDEO_PROMPT);
         const cancelVideoSubmittedAt = new Date();
-        await expect(
-          page.getByRole("button", { name: /\u751f\u6210\u89c6\u9891|Generate video/i }),
-        ).toBeEnabled();
-        await page.getByRole("button", { name: /\u751f\u6210\u89c6\u9891|Generate video/i }).click();
+        await expect(generateVideoButton).toBeEnabled();
+        await generateVideoButton.click();
 
         let cancelVideoTaskId = "";
         await expect

@@ -122,6 +122,7 @@ describe("database schema", () => {
         ]),
       );
       expect(enumRows.map((row) => row.enumlabel).sort()).toEqual([
+        "ASSET_SCRIPT_PARSE",
         "IMAGE",
         "SCRIPT_FINALIZE",
         "STORYBOARD",
