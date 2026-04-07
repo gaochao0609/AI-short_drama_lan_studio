@@ -288,7 +288,7 @@ test("admin flow covers approval, task monitoring, retry, cancel, storage stats,
       },
     });
 
-    await page.goto("http://127.0.0.1:3000/login");
+    await page.goto("/login");
     await page.locator('input[autocomplete="username"]').fill(adminUsername);
     await page.locator('input[autocomplete="current-password"]').fill(adminPassword);
     await page.locator('button[type="submit"]').click();
@@ -318,7 +318,7 @@ test("admin flow covers approval, task monitoring, retry, cancel, storage stats,
       }),
     );
 
-    await page.goto("http://127.0.0.1:3000/admin/tasks");
+    await page.goto("/admin/tasks");
     await expect(page.getByRole("heading", { name: "任务监控" })).toBeVisible();
     await expect(page.getByRole("heading", { name: /任务列表（共 \d+ 条）/ })).toBeVisible();
     const failedTaskCard = page.locator("article").filter({ hasText: failedTaskId }).first();
@@ -400,7 +400,7 @@ test("admin flow covers approval, task monitoring, retry, cancel, storage stats,
       }),
     );
 
-    await page.goto("http://127.0.0.1:3000/admin/storage");
+    await page.goto("/admin/storage");
     await expect(page.getByRole("heading", { name: "存储管理" })).toBeVisible();
     await expect(page.getByText("可用磁盘空间", { exact: true })).toBeVisible();
     const generatedImagesCard = page.locator("article").filter({ hasText: "generated-images" });
