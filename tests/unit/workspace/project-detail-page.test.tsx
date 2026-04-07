@@ -75,6 +75,22 @@ describe("project detail page", () => {
           previewUrl: "/api/assets/video-1/download",
         },
       ],
+      assetCounts: {
+        total: 3,
+        script: 1,
+        image: 1,
+        video: 1,
+      },
+      bindingSummary: {
+        storyboardScriptAssetId: "script-upload-1",
+        storyboardScriptLabel: "scene.txt",
+        imageReferenceAssetIds: ["image-1"],
+        imageReferenceLabels: ["keyframe.png"],
+        imageReferenceCount: 1,
+        videoReferenceAssetIds: [],
+        videoReferenceLabels: [],
+        videoReferenceCount: 0,
+      },
       taskHistory: [
         {
           id: "task-video-1",
@@ -128,6 +144,13 @@ describe("project detail page", () => {
     );
     expect(screen.getByText("Script")).toBeInTheDocument();
     expect(screen.getByText("Images")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "资产概览" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "进入资产中心" })).toHaveAttribute(
+      "href",
+      "/projects/project-1/assets",
+    );
+    expect(screen.getByText("当前默认分镜剧本")).toBeInTheDocument();
+    expect(screen.getByText("scene.txt")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "脚本记录" })).toBeInTheDocument();
     expect(screen.getByText("Version 2")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "分镜记录" })).toBeInTheDocument();
@@ -196,6 +219,22 @@ describe("project detail page", () => {
         },
       ],
       videoAssets: [],
+      assetCounts: {
+        total: 2,
+        script: 1,
+        image: 1,
+        video: 0,
+      },
+      bindingSummary: {
+        storyboardScriptAssetId: null,
+        storyboardScriptLabel: null,
+        imageReferenceAssetIds: [],
+        imageReferenceLabels: [],
+        imageReferenceCount: 0,
+        videoReferenceAssetIds: [],
+        videoReferenceLabels: [],
+        videoReferenceCount: 0,
+      },
       taskHistory: [
         {
           id: "task-image-1",

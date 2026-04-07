@@ -54,6 +54,17 @@ const copy = {
   taskHistoryHeading: "任务历史",
   taskHistoryDescription: "任务历史数据保持原样展示，用于回看阶段状态和处理时间。",
   taskHistoryEmpty: "还没有任务记录。",
+  assetOverviewHeading: "资产概览",
+  assetOverviewDescription: "统一查看项目资产数量、当前默认绑定，并进入资产中心集中管理。",
+  assetOverviewLink: "进入资产中心",
+  assetOverviewScriptCount: "脚本资产",
+  assetOverviewImageCount: "图片资产",
+  assetOverviewVideoCount: "视频资产",
+  currentStoryboardBinding: "当前默认分镜剧本",
+  currentImageBindings: "图片默认参考",
+  currentVideoBindings: "视频默认参考",
+  noDefaultBinding: "还没有设置默认绑定",
+  itemsSuffix: " 项",
   taskCreatedPrefix: "创建于 ",
   taskFinishedPrefix: "完成于 ",
   taskErrorPrefix: "错误：",
@@ -189,6 +200,14 @@ function getStageBadge(hasOutput: boolean, isReady: boolean) {
   };
 }
 
+function formatBindingSummary(labels: string[], count: number) {
+  if (count === 0) {
+    return copy.noDefaultBinding;
+  }
+
+  return `${count}${copy.itemsSuffix} · ${labels.join("、")}`;
+}
+
 export default async function ProjectDetailPage({ params }: PageProps) {
   const [{ projectId }, user] = await Promise.all([
     Promise.resolve(params),
@@ -305,6 +324,52 @@ export default async function ProjectDetailPage({ params }: PageProps) {
           },
         ]}
       />
+
+      <article style={panelStyle}>
+        <div style={sectionHeaderStyle}>
+          <h2 style={sectionTitleStyle}>{copy.assetOverviewHeading}</h2>
+          <p style={sectionDescriptionStyle}>{copy.assetOverviewDescription}</p>
+        </div>
+        <div style={assetOverviewGridStyle}>
+          <article style={summaryCardStyle}>
+            <span style={summaryLabelStyle}>{copy.assetOverviewScriptCount}</span>
+            <strong style={summaryValueStyle}>{project.assetCounts.script}</strong>
+          </article>
+          <article style={summaryCardStyle}>
+            <span style={summaryLabelStyle}>{copy.assetOverviewImageCount}</span>
+            <strong style={summaryValueStyle}>{project.assetCounts.image}</strong>
+          </article>
+          <article style={summaryCardStyle}>
+            <span style={summaryLabelStyle}>{copy.assetOverviewVideoCount}</span>
+            <strong style={summaryValueStyle}>{project.assetCounts.video}</strong>
+          </article>
+          <article style={summaryCardStyle}>
+            <span style={summaryLabelStyle}>{copy.currentStoryboardBinding}</span>
+            <strong style={summaryValueStyle}>
+              {project.bindingSummary.storyboardScriptLabel ?? copy.noDefaultBinding}
+            </strong>
+            <span style={summaryMetaStyle}>
+              {copy.currentImageBindings}：{" "}
+              {formatBindingSummary(
+                project.bindingSummary.imageReferenceLabels,
+                project.bindingSummary.imageReferenceCount,
+              )}
+            </span>
+            <span style={summaryMetaStyle}>
+              {copy.currentVideoBindings}：{" "}
+              {formatBindingSummary(
+                project.bindingSummary.videoReferenceLabels,
+                project.bindingSummary.videoReferenceCount,
+              )}
+            </span>
+          </article>
+        </div>
+        <div style={overviewActionRowStyle}>
+          <Link href={`/projects/${project.id}/assets`} style={secondaryActionStyle}>
+            {copy.assetOverviewLink}
+          </Link>
+        </div>
+      </article>
 
       <div style={historyStackStyle}>
         <section style={sectionGridStyle}>
@@ -613,6 +678,43 @@ const sectionDescriptionStyle = {
 const stackStyle = {
   display: "grid",
   gap: "14px",
+} satisfies CSSProperties;
+
+const assetOverviewGridStyle = {
+  display: "grid",
+  gap: "16px",
+  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+} satisfies CSSProperties;
+
+const summaryCardStyle = {
+  display: "grid",
+  gap: "8px",
+  padding: "16px",
+  borderRadius: "18px",
+  border: "1px solid rgba(129, 140, 248, 0.16)",
+  background: "rgba(8, 10, 26, 0.26)",
+} satisfies CSSProperties;
+
+const summaryLabelStyle = {
+  color: "var(--text-muted)",
+  lineHeight: 1.6,
+} satisfies CSSProperties;
+
+const summaryValueStyle = {
+  fontSize: "1.15rem",
+  lineHeight: 1.5,
+  wordBreak: "break-word",
+} satisfies CSSProperties;
+
+const summaryMetaStyle = {
+  color: "var(--text-muted)",
+  lineHeight: 1.6,
+  wordBreak: "break-word",
+} satisfies CSSProperties;
+
+const overviewActionRowStyle = {
+  display: "flex",
+  justifyContent: "flex-start",
 } satisfies CSSProperties;
 
 const historyCardStyle = {

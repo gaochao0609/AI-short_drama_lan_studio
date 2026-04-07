@@ -1,4 +1,5 @@
 import { readFile, stat } from "node:fs/promises";
+import { AssetCategory } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { ServiceError } from "@/lib/services/errors";
 import { listProjectTaskHistory } from "@/lib/services/tasks";
@@ -34,6 +35,56 @@ async function toInlineImagePreview(storagePath: string, mimeType: string, sizeB
 
 function toDownloadUrl(assetId: string) {
   return `/api/assets/${assetId}/download`;
+}
+
+function isScriptAsset(input: {
+  category: AssetCategory | null;
+  mimeType: string;
+}) {
+  return (
+    input.category === AssetCategory.SCRIPT_SOURCE ||
+    input.category === AssetCategory.SCRIPT_GENERATED ||
+    input.mimeType.startsWith("text/")
+  );
+}
+
+function isImageAsset(input: {
+  category: AssetCategory | null;
+  mimeType: string;
+}) {
+  return (
+    input.category === AssetCategory.IMAGE_SOURCE ||
+    input.category === AssetCategory.IMAGE_GENERATED ||
+    input.mimeType.startsWith("image/")
+  );
+}
+
+function isVideoAsset(input: {
+  category: AssetCategory | null;
+  mimeType: string;
+}) {
+  return (
+    input.category === AssetCategory.VIDEO_GENERATED || input.mimeType.startsWith("video/")
+  );
+}
+
+function readAssetLabel(
+  assetMap: Map<
+    string,
+    {
+      id: string;
+      originalName: string | null;
+    }
+  >,
+  assetId: string,
+) {
+  const asset = assetMap.get(assetId);
+
+  if (!asset) {
+    return assetId;
+  }
+
+  return asset.originalName?.trim() || asset.id;
 }
 
 export async function createProject(input: {
@@ -91,7 +142,7 @@ export async function getProject(projectId: string, ownerId: string) {
 export async function getProjectDetail(projectId: string, ownerId: string) {
   const project = await getProject(projectId, ownerId);
 
-  const [scriptVersions, storyboardVersions, assets, taskHistory] = await Promise.all([
+  const [scriptVersions, storyboardVersions, assets, taskHistory, workflowBinding] = await Promise.all([
     prisma.scriptVersion.findMany({
       where: {
         projectId: project.id,
@@ -136,6 +187,7 @@ export async function getProjectDetail(projectId: string, ownerId: string) {
       select: {
         id: true,
         kind: true,
+        category: true,
         mimeType: true,
         sizeBytes: true,
         storagePath: true,
@@ -145,10 +197,66 @@ export async function getProjectDetail(projectId: string, ownerId: string) {
       },
     }),
     listProjectTaskHistory(project.id, ownerId),
+    prisma.projectWorkflowBinding.findUnique({
+      where: {
+        projectId: project.id,
+      },
+      select: {
+        storyboardScriptAssetId: true,
+        imageReferenceAssetIds: true,
+        videoReferenceAssetIds: true,
+      },
+    }),
   ]);
 
-  const imageAssets = assets.filter((asset) => asset.mimeType.startsWith("image/"));
-  const videoAssets = assets.filter((asset) => asset.mimeType.startsWith("video/"));
+  const assetMap = new Map(
+    assets.map((asset) => [
+      asset.id,
+      {
+        id: asset.id,
+        originalName: asset.originalName,
+      },
+    ]),
+  );
+  const imageAssets = assets.filter((asset) =>
+    isImageAsset({
+      category: asset.category,
+      mimeType: asset.mimeType,
+    }),
+  );
+  const videoAssets = assets.filter((asset) =>
+    isVideoAsset({
+      category: asset.category,
+      mimeType: asset.mimeType,
+    }),
+  );
+  const assetCounts = {
+    total: assets.length,
+    script: assets.filter((asset) =>
+      isScriptAsset({
+        category: asset.category,
+        mimeType: asset.mimeType,
+      }),
+    ).length,
+    image: imageAssets.length,
+    video: videoAssets.length,
+  };
+  const bindingSummary = {
+    storyboardScriptAssetId: workflowBinding?.storyboardScriptAssetId ?? null,
+    storyboardScriptLabel: workflowBinding?.storyboardScriptAssetId
+      ? readAssetLabel(assetMap, workflowBinding.storyboardScriptAssetId)
+      : null,
+    imageReferenceAssetIds: workflowBinding?.imageReferenceAssetIds ?? [],
+    imageReferenceLabels: (workflowBinding?.imageReferenceAssetIds ?? []).map((assetId) =>
+      readAssetLabel(assetMap, assetId),
+    ),
+    imageReferenceCount: workflowBinding?.imageReferenceAssetIds.length ?? 0,
+    videoReferenceAssetIds: workflowBinding?.videoReferenceAssetIds ?? [],
+    videoReferenceLabels: (workflowBinding?.videoReferenceAssetIds ?? []).map((assetId) =>
+      readAssetLabel(assetMap, assetId),
+    ),
+    videoReferenceCount: workflowBinding?.videoReferenceAssetIds.length ?? 0,
+  };
 
   return {
     ...project,
@@ -184,6 +292,8 @@ export async function getProjectDetail(projectId: string, ownerId: string) {
       downloadUrl: toDownloadUrl(asset.id),
       previewUrl: toDownloadUrl(asset.id),
     })),
+    assetCounts,
+    bindingSummary,
     taskHistory,
   };
 }
