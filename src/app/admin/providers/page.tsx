@@ -52,6 +52,17 @@ type ProviderFormState = {
 
 type JsonWithError = { error?: string };
 
+function isProviderPayload(
+  payload: ProviderPayload | JsonWithError | null,
+): payload is ProviderPayload {
+  return Boolean(
+    payload &&
+      "providers" in payload &&
+      Array.isArray(payload.providers) &&
+      "defaultModels" in payload,
+  );
+}
+
 const taskOptions: Array<{ value: ModelTaskType; label: string }> = [
   { value: "script_question_generate", label: "脚本问答" },
   { value: "script_finalize", label: "脚本定稿" },
@@ -129,7 +140,7 @@ export default function AdminProvidersPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function fetchAdminData() {
+  async function fetchAdminData(): Promise<ProviderPayload> {
     const { response } = await requestSafe("/api/admin/providers", { cache: "no-store" });
     const payload = await parseJsonSafe<ProviderPayload | JsonWithError>(response);
 
@@ -141,7 +152,7 @@ export default function AdminProvidersPage() {
       throw new Error("加载提供方失败");
     }
 
-    if (!payload || "error" in payload) {
+    if (!isProviderPayload(payload)) {
       throw new Error("加载提供方失败");
     }
 

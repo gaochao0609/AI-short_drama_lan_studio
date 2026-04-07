@@ -47,6 +47,10 @@ type TasksPayload = {
   pagination: PaginationInfo;
 };
 
+type JsonWithError = {
+  error?: string;
+};
+
 type AdminTaskActionPayload =
   | {
       taskId: string;
@@ -58,6 +62,15 @@ type AdminTaskActionPayload =
     };
 
 const STATUS_ORDER: TaskStatus[] = ["FAILED", "RUNNING", "QUEUED", "SUCCEEDED", "CANCELED"];
+
+function isTasksPayload(payload: TasksPayload | JsonWithError | null): payload is TasksPayload {
+  return Boolean(
+    payload &&
+      "tasks" in payload &&
+      Array.isArray(payload.tasks) &&
+      "pagination" in payload,
+  );
+}
 
 function formatStatus(status: TaskStatus) {
   if (status === "FAILED") {
@@ -114,9 +127,9 @@ export default function AdminTasksPage() {
   const [error, setError] = useState<string | null>(null);
   const [pendingActionTaskId, setPendingActionTaskId] = useState<string | null>(null);
 
-  async function fetchTasks(page = 1) {
+  async function fetchTasks(page = 1): Promise<TasksPayload> {
     const response = await fetch(`/api/admin/tasks?page=${page}&pageSize=50`, { cache: "no-store" });
-    const payload = (await response.json().catch(() => null)) as TasksPayload | { error?: string } | null;
+    const payload = (await response.json().catch(() => null)) as TasksPayload | JsonWithError | null;
 
     if (!response.ok) {
       if (payload && "error" in payload) {
@@ -126,7 +139,7 @@ export default function AdminTasksPage() {
       throw new Error("加载任务失败");
     }
 
-    if (!payload || "error" in payload) {
+    if (!isTasksPayload(payload)) {
       throw new Error("加载任务失败");
     }
 

@@ -130,7 +130,7 @@ function parseSseMessages(buffer: string) {
 export default function ProjectScriptPage() {
   const params = useParams<{ projectId: string }>();
   const [projectId, setProjectId] = useState("");
-  const [projectTitle, setProjectTitle] = useState(copy.loadingProject);
+  const [projectTitle, setProjectTitle] = useState<string>(copy.loadingProject);
   const [idea, setIdea] = useState("");
   const [projectIdea, setProjectIdea] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(null);
