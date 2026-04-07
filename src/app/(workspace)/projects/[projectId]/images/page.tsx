@@ -47,6 +47,7 @@ type TaskPollResponse = {
 };
 
 const EMPTY_ASSETS: ImageAssetSummary[] = [];
+const MAX_REFERENCE_ASSETS = 8;
 
 const copy = {
   workflowTitle: "项目制作流程",
@@ -101,6 +102,7 @@ const copy = {
   missingProjectId: "缺少项目 ID",
   enterPrompt: "请先输入图片提示词。",
   enqueueFailed: "图片任务提交失败",
+  referenceLimit: `单次最多选择 ${MAX_REFERENCE_ASSETS} 张参考图。`,
   taskPrefix: "任务：",
   scriptDetail: "脚本确认后继续细化画面提示。",
   storyboardDetail: "分镜输出后可继续生成关键画面。",
@@ -124,18 +126,38 @@ function formatAssetMeta(asset: ImageAssetSummary) {
   return `${asset.mimeType} · ${Math.max(1, Math.round(asset.sizeBytes / 1024))} KB`;
 }
 
+function normalizeReferenceSelection(assetIds: string[], validAssetIds: Set<string>) {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+
+  for (const assetId of assetIds) {
+    if (!validAssetIds.has(assetId) || seen.has(assetId)) {
+      continue;
+    }
+
+    seen.add(assetId);
+    normalized.push(assetId);
+
+    if (normalized.length >= MAX_REFERENCE_ASSETS) {
+      break;
+    }
+  }
+
+  return normalized;
+}
+
 function mergeSelectedReferenceIds(
   workspace: ImagesWorkspaceResponse,
   currentSelection: string[],
 ) {
   const validAssetIds = new Set(workspace.referenceAssets.map((asset) => asset.id));
-  const preservedSelection = currentSelection.filter((assetId) => validAssetIds.has(assetId));
+  const preservedSelection = normalizeReferenceSelection(currentSelection, validAssetIds);
 
   if (preservedSelection.length > 0) {
     return preservedSelection;
   }
 
-  return workspace.binding.imageReferenceAssetIds.filter((assetId) => validAssetIds.has(assetId));
+  return normalizeReferenceSelection(workspace.binding.imageReferenceAssetIds, validAssetIds);
 }
 
 export default function ProjectImagesPage() {
@@ -320,11 +342,22 @@ export default function ProjectImagesPage() {
   );
 
   function toggleReferenceAsset(assetId: string) {
+    if (selectedReferenceIds.includes(assetId)) {
+      setSelectedReferenceIds((current) => current.filter((value) => value !== assetId));
+      setError((current) => (current === copy.referenceLimit ? null : current));
+      return;
+    }
+
+    if (selectedReferenceIds.length >= MAX_REFERENCE_ASSETS) {
+      setStatusMessage(null);
+      setError(copy.referenceLimit);
+      return;
+    }
+
     setSelectedReferenceIds((current) =>
-      current.includes(assetId)
-        ? current.filter((value) => value !== assetId)
-        : [...current, assetId],
+      current.includes(assetId) ? current : [...current, assetId],
     );
+    setError((current) => (current === copy.referenceLimit ? null : current));
   }
 
   async function submit() {
@@ -334,6 +367,8 @@ export default function ProjectImagesPage() {
     }
 
     const trimmedPrompt = prompt.trim();
+    const validAssetIds = new Set(referenceAssets.map((asset) => asset.id));
+    const effectiveReferenceIds = normalizeReferenceSelection(selectedReferenceIds, validAssetIds);
     if (!trimmedPrompt) {
       setError(copy.enterPrompt);
       return;
@@ -349,7 +384,7 @@ export default function ProjectImagesPage() {
       const form = new FormData();
       form.set("projectId", projectId);
       form.set("prompt", trimmedPrompt);
-      for (const assetId of selectedReferenceIds) {
+      for (const assetId of effectiveReferenceIds) {
         form.append("referenceAssetIds", assetId);
       }
 
@@ -389,7 +424,10 @@ export default function ProjectImagesPage() {
   }
 
   async function promoteDefault() {
-    if (!projectId || selectedReferenceIds.length === 0) {
+    const validAssetIds = new Set(referenceAssets.map((asset) => asset.id));
+    const effectiveReferenceIds = normalizeReferenceSelection(selectedReferenceIds, validAssetIds);
+
+    if (!projectId || effectiveReferenceIds.length === 0) {
       return;
     }
 
@@ -404,7 +442,7 @@ export default function ProjectImagesPage() {
           "content-type": "application/json",
         },
         body: JSON.stringify({
-          imageReferenceAssetIds: selectedReferenceIds,
+          imageReferenceAssetIds: effectiveReferenceIds,
         }),
       });
       const payload = (await response.json().catch(() => null)) as
@@ -421,12 +459,16 @@ export default function ProjectImagesPage() {
         }
 
         const assetsById = new Map(current.referenceAssets.map((asset) => [asset.id, asset]));
+        const nextDefaultReferenceIds = normalizeReferenceSelection(
+          payload.imageReferenceAssetIds ?? [],
+          new Set(current.referenceAssets.map((asset) => asset.id)),
+        );
         return {
           ...current,
           binding: {
-            imageReferenceAssetIds: payload.imageReferenceAssetIds ?? [],
+            imageReferenceAssetIds: nextDefaultReferenceIds,
           },
-          defaultReferenceAssets: (payload.imageReferenceAssetIds ?? [])
+          defaultReferenceAssets: nextDefaultReferenceIds
             .map((assetId) => assetsById.get(assetId))
             .filter((asset): asset is ImageAssetSummary => Boolean(asset)),
         };

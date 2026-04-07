@@ -82,6 +82,18 @@ function createWorkspacePayload(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function createReferenceAssets(count: number) {
+  return Array.from({ length: count }, (_, index) => ({
+    id: `asset-image-${index + 1}`,
+    originalName: `asset-image-${index + 1}.png`,
+    kind: "image_source",
+    mimeType: "image/png",
+    sizeBytes: 1200 + index,
+    createdAt: `2026-04-${String((index % 28) + 1).padStart(2, "0")}T08:00:00.000Z`,
+    previewDataUrl: `data:image/png;base64,asset-${index + 1}`,
+  }));
+}
+
 async function renderPage() {
   const pageModule = await import("@/app/(workspace)/projects/[projectId]/videos/page");
 
@@ -180,6 +192,85 @@ describe("project videos page", () => {
           method: "PATCH",
           body: JSON.stringify({
             videoReferenceAssetIds: ["asset-image-2", "asset-image-1"],
+          }),
+        }),
+      );
+    });
+  });
+
+  it("caps one-off and promoted video reference selections at eight ordered assets", async () => {
+    const referenceAssets = createReferenceAssets(9);
+
+    fetchMock.mockImplementation(async (input, init) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+
+      if (url === "/api/videos?projectId=project-1") {
+        return jsonResponse(
+          createWorkspacePayload({
+            binding: {
+              videoReferenceAssetIds: [],
+            },
+            defaultReferenceAssets: [],
+            referenceAssets,
+          }),
+        );
+      }
+
+      if (url === "/api/videos" && init?.method === "POST") {
+        return jsonResponse({ taskId: "task-1" }, 202);
+      }
+
+      if (url === "/api/projects/project-1/workflow-binding" && init?.method === "PATCH") {
+        const payload = JSON.parse(String(init.body ?? "{}")) as { videoReferenceAssetIds?: string[] };
+        return jsonResponse({
+          videoReferenceAssetIds: payload.videoReferenceAssetIds ?? [],
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    await renderPage();
+
+    await screen.findByRole("heading", { name: "Project One" });
+
+    for (const asset of referenceAssets) {
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(asset.originalName ?? asset.id, "i") }));
+    }
+
+    fireEvent.click(screen.getByRole("button", { name: "设为默认输入" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/projects/project-1/workflow-binding",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({
+            videoReferenceAssetIds: referenceAssets.slice(0, 8).map((asset) => asset.id),
+          }),
+        }),
+      );
+    });
+
+    fireEvent.change(screen.getByLabelText("视频提示词输入框"), {
+      target: { value: "Animate the still with a slow push-in." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "生成视频" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/videos",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({
+            projectId: "project-1",
+            prompt: "Animate the still with a slow push-in.",
+            referenceAssetIds: referenceAssets.slice(0, 8).map((asset) => asset.id),
           }),
         }),
       );

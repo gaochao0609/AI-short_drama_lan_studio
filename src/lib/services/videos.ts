@@ -29,6 +29,7 @@ function dedupeOrderedAssetIds(assetIds: string[]) {
   return result;
 }
 
+const MAX_REFERENCE_ASSET_IDS = 8;
 const INLINE_IMAGE_PREVIEW_MAX_BYTES = 64 * 1024;
 const PREVIEWABLE_IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
@@ -333,6 +334,10 @@ export async function enqueueVideoGeneration(input: {
 
   if (referenceAssetIds.length === 0) {
     throw new ServiceError(400, "referenceAssetIds is required");
+  }
+
+  if (referenceAssetIds.length > MAX_REFERENCE_ASSET_IDS) {
+    throw new ServiceError(400, `No more than ${MAX_REFERENCE_ASSET_IDS} reference assets are allowed`);
   }
 
   await getProject(input.projectId, input.userId);

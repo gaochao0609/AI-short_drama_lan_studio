@@ -51,6 +51,7 @@ type TaskPollResponse = {
 
 const EMPTY_ASSETS: AssetSummary[] = [];
 const EMPTY_TASKS: VideoTaskSummary[] = [];
+const MAX_REFERENCE_ASSETS = 8;
 
 const copy = {
   workflowTitle: "项目制作流程",
@@ -99,6 +100,7 @@ const copy = {
   enterPrompt: "请先输入视频提示词。",
   selectReference: "请至少选择一张参考图。",
   enqueueFailed: "视频任务提交失败",
+  referenceLimit: `单次最多选择 ${MAX_REFERENCE_ASSETS} 张参考图。`,
   taskPrefix: "任务：",
   statusPrefix: "状态：",
   scriptDetail: "脚本确认后保留叙事结构和对白。",
@@ -117,6 +119,26 @@ function areListsEqual(left: string[], right: string[]) {
 
 function formatAssetMeta(asset: AssetSummary) {
   return `${asset.mimeType} · ${Math.max(1, Math.round(asset.sizeBytes / 1024))} KB`;
+}
+
+function normalizeReferenceSelection(assetIds: string[], validAssetIds: Set<string>) {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+
+  for (const assetId of assetIds) {
+    if (!validAssetIds.has(assetId) || seen.has(assetId)) {
+      continue;
+    }
+
+    seen.add(assetId);
+    normalized.push(assetId);
+
+    if (normalized.length >= MAX_REFERENCE_ASSETS) {
+      break;
+    }
+  }
+
+  return normalized;
 }
 
 function formatTaskStatus(status?: string) {
@@ -202,8 +224,11 @@ export default function ProjectVideosPage() {
       try {
         const payload = await reloadWorkspace(projectId);
         if (!cancelled && payload) {
+          const validAssetIds = new Set(payload.referenceAssets.map((asset) => asset.id));
           setWorkspace(payload);
-          setSelectedReferenceIds(payload.binding.videoReferenceAssetIds);
+          setSelectedReferenceIds(
+            normalizeReferenceSelection(payload.binding.videoReferenceAssetIds, validAssetIds),
+          );
         }
       } catch (loadError) {
         if (!cancelled) {
@@ -285,11 +310,22 @@ export default function ProjectVideosPage() {
   const canSubmit = Boolean(projectId && prompt.trim() && selectedReferenceIds.length > 0 && !isBusy);
 
   function toggleReferenceAsset(assetId: string) {
+    if (selectedReferenceIds.includes(assetId)) {
+      setSelectedReferenceIds((current) => current.filter((value) => value !== assetId));
+      setError((current) => (current === copy.referenceLimit ? null : current));
+      return;
+    }
+
+    if (selectedReferenceIds.length >= MAX_REFERENCE_ASSETS) {
+      setStatusMessage(null);
+      setError(copy.referenceLimit);
+      return;
+    }
+
     setSelectedReferenceIds((current) =>
-      current.includes(assetId)
-        ? current.filter((value) => value !== assetId)
-        : [...current, assetId],
+      current.includes(assetId) ? current : [...current, assetId],
     );
+    setError((current) => (current === copy.referenceLimit ? null : current));
   }
 
   async function submit() {
@@ -303,7 +339,10 @@ export default function ProjectVideosPage() {
       return;
     }
 
-    if (selectedReferenceIds.length === 0) {
+    const validAssetIds = new Set(referenceAssets.map((asset) => asset.id));
+    const effectiveReferenceIds = normalizeReferenceSelection(selectedReferenceIds, validAssetIds);
+
+    if (effectiveReferenceIds.length === 0) {
       setError(copy.selectReference);
       return;
     }
@@ -323,7 +362,7 @@ export default function ProjectVideosPage() {
         body: JSON.stringify({
           projectId,
           prompt: prompt.trim(),
-          referenceAssetIds: selectedReferenceIds,
+          referenceAssetIds: effectiveReferenceIds,
         }),
       });
       const payload = (await response.json().catch(() => null)) as { taskId?: string; error?: string } | null;
@@ -356,7 +395,10 @@ export default function ProjectVideosPage() {
   }
 
   async function promoteDefault() {
-    if (!projectId || selectedReferenceIds.length === 0) {
+    const validAssetIds = new Set(referenceAssets.map((asset) => asset.id));
+    const effectiveReferenceIds = normalizeReferenceSelection(selectedReferenceIds, validAssetIds);
+
+    if (!projectId || effectiveReferenceIds.length === 0) {
       return;
     }
 
@@ -371,7 +413,7 @@ export default function ProjectVideosPage() {
           "content-type": "application/json",
         },
         body: JSON.stringify({
-          videoReferenceAssetIds: selectedReferenceIds,
+          videoReferenceAssetIds: effectiveReferenceIds,
         }),
       });
       const payload = (await response.json().catch(() => null)) as
@@ -387,7 +429,10 @@ export default function ProjectVideosPage() {
           ? {
               ...current,
               binding: {
-                videoReferenceAssetIds: payload.videoReferenceAssetIds ?? [],
+                videoReferenceAssetIds: normalizeReferenceSelection(
+                  payload.videoReferenceAssetIds ?? [],
+                  new Set(current.referenceAssets.map((asset) => asset.id)),
+                ),
               },
             }
           : current,

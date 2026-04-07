@@ -312,6 +312,74 @@ describe("images workspace api", () => {
     });
   });
 
+  it("rejects image generation requests with more than eight ordered one-off references", async () => {
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      const storageRoot = await mkdtemp(path.join(os.tmpdir(), "lan-studio-images-api-post-limit-"));
+
+      try {
+        await withApiTestEnv(
+          databaseUrl,
+          async () => {
+            const user = await createActiveUser(prisma, "images-post-limit-owner");
+            const project = await prisma.project.create({
+              data: {
+                ownerId: user.id,
+                title: "Images Post Limit Project",
+              },
+            });
+            const referenceAssets = await Promise.all(
+              Array.from({ length: 9 }, (_, index) =>
+                createImageAsset(prisma, {
+                  projectId: project.id,
+                  storageRoot,
+                  fileName: `asset-${index + 1}.png`,
+                  createdAt: `2026-04-${String(index + 1).padStart(2, "0")}T10:00:00.000Z`,
+                }),
+              ),
+            );
+            const session = await insertSessionForUser(prisma, user.id);
+            const route = await loadRouteModule<{
+              POST: (request: Request) => Promise<Response>;
+            }>("src/app/api/images/route.ts", {
+              sessionToken: session.token,
+            });
+
+            const form = new FormData();
+            form.set("projectId", project.id);
+            form.set("prompt", "Make the scene brighter.");
+
+            for (const asset of referenceAssets) {
+              form.append("referenceAssetIds", asset.id);
+            }
+
+            const response = await route.POST(
+              {
+                url: "http://localhost/api/images",
+                headers: new Headers({
+                  "content-type": "multipart/form-data; boundary=----vitest",
+                  "content-length": "1024",
+                }),
+                formData: async () => form,
+              } as unknown as Request,
+            );
+
+            expect(response.status).toBe(400);
+            await expect(response.json()).resolves.toEqual(
+              expect.objectContaining({
+                error: expect.stringMatching(/8/),
+              }),
+            );
+          },
+          {
+            STORAGE_ROOT: storageRoot,
+          },
+        );
+      } finally {
+        await rm(storageRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
   it("still supports text-to-image requests when no reference assets are provided", async () => {
     await withTestDatabase(async ({ databaseUrl, prisma }) => {
       await withApiTestEnv(databaseUrl, async () => {

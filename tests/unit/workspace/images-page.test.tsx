@@ -85,6 +85,19 @@ function createWorkspacePayload(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function createReferenceAssets(count: number) {
+  return Array.from({ length: count }, (_, index) => ({
+    id: `asset-${index + 1}`,
+    originalName: `asset-${index + 1}.png`,
+    kind: "image_source",
+    mimeType: "image/png",
+    sizeBytes: 1200 + index,
+    previewDataUrl: `data:image/png;base64,asset-${index + 1}`,
+    createdAt: `2026-04-${String((index % 28) + 1).padStart(2, "0")}T08:00:00.000Z`,
+    taskId: null,
+  }));
+}
+
 describe("project images page", () => {
   beforeEach(() => {
     useParamsMock.mockReset();
@@ -179,6 +192,84 @@ describe("project images page", () => {
             imageReferenceAssetIds: ["asset-b", "asset-a"],
           }),
         }),
+      );
+    });
+  });
+
+  it("caps one-off and promoted image reference selections at eight ordered assets", async () => {
+    const referenceAssets = createReferenceAssets(9);
+
+    fetchMock.mockImplementation(async (input, init) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+
+      if (url === "/api/images?projectId=project-1") {
+        return jsonResponse(
+          createWorkspacePayload({
+            binding: {
+              imageReferenceAssetIds: [],
+            },
+            defaultReferenceAssets: [],
+            referenceAssets,
+            assets: [],
+          }),
+        );
+      }
+
+      if (url === "/api/images" && init?.method === "POST") {
+        return jsonResponse({ taskId: "task-1" }, 202);
+      }
+
+      if (url === "/api/projects/project-1/workflow-binding" && init?.method === "PATCH") {
+        const payload = JSON.parse(String(init.body ?? "{}")) as { imageReferenceAssetIds?: string[] };
+        return jsonResponse({
+          imageReferenceAssetIds: payload.imageReferenceAssetIds ?? [],
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    const pageModule = await import("@/app/(workspace)/projects/[projectId]/images/page");
+
+    render(<pageModule.default />);
+
+    await screen.findByRole("heading", { name: "Project One" });
+
+    for (const asset of referenceAssets) {
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(asset.originalName ?? asset.id, "i") }));
+    }
+
+    fireEvent.click(screen.getByRole("button", { name: "设为默认输入" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/projects/project-1/workflow-binding",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({
+            imageReferenceAssetIds: referenceAssets.slice(0, 8).map((asset) => asset.id),
+          }),
+        }),
+      );
+    });
+
+    fireEvent.change(screen.getByLabelText("图片提示词输入框"), {
+      target: { value: "Generate key art." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "生成图片" }));
+
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find((entry) => entry[0] === "/api/images");
+      const init = call?.[1] as RequestInit | undefined;
+      const form = init?.body as FormData;
+
+      expect(form.getAll("referenceAssetIds")).toEqual(
+        referenceAssets.slice(0, 8).map((asset) => asset.id),
       );
     });
   });

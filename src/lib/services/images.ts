@@ -29,6 +29,7 @@ function dedupeOrderedAssetIds(assetIds: string[]) {
   return result;
 }
 
+const MAX_REFERENCE_ASSET_IDS = 8;
 const ALLOWED_PREVIEW_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 const INLINE_PREVIEW_MAX_BYTES = 64 * 1024;
 
@@ -245,6 +246,10 @@ export async function enqueueImageGeneration(input: {
     ...(input.referenceAssetIds ?? []),
     ...(input.sourceAssetId ? [input.sourceAssetId] : []),
   ]);
+
+  if (referenceAssetIds.length > MAX_REFERENCE_ASSET_IDS) {
+    throw new ServiceError(400, `No more than ${MAX_REFERENCE_ASSET_IDS} reference assets are allowed`);
+  }
 
   if (referenceAssetIds.length > 0) {
     const referenceAssets = await prisma.asset.findMany({

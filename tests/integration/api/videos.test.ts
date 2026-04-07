@@ -420,6 +420,67 @@ describe("videos workspace api", () => {
     });
   });
 
+  it("rejects video generation requests with more than eight ordered one-off references", async () => {
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      const storageRoot = await mkdtemp(path.join(os.tmpdir(), "lan-studio-videos-api-post-limit-"));
+
+      try {
+        await withApiTestEnv(
+          databaseUrl,
+          async () => {
+            const user = await createActiveUser(prisma, "videos-post-limit-owner");
+            const project = await prisma.project.create({
+              data: {
+                ownerId: user.id,
+                title: "Videos Post Limit",
+              },
+            });
+            const referenceAssets = await Promise.all(
+              Array.from({ length: 9 }, (_, index) =>
+                createImageAsset(prisma, {
+                  projectId: project.id,
+                  storageRoot,
+                  fileName: `reference-${index + 1}.png`,
+                  createdAt: `2026-04-${String(index + 1).padStart(2, "0")}T10:00:00.000Z`,
+                }),
+              ),
+            );
+            const session = await insertSessionForUser(prisma, user.id);
+            const route = await loadRouteModule<{
+              POST: (request: Request) => Promise<Response>;
+            }>("src/app/api/videos/route.ts", {
+              sessionToken: session.token,
+            });
+
+            const response = await route.POST(
+              jsonRequest(
+                "http://localhost/api/videos",
+                {
+                  projectId: project.id,
+                  prompt: "Animate the frame with a slow dolly-in.",
+                  referenceAssetIds: referenceAssets.map((asset) => asset.id),
+                },
+                { method: "POST" },
+              ),
+            );
+
+            expect(response.status).toBe(400);
+            await expect(response.json()).resolves.toEqual(
+              expect.objectContaining({
+                error: expect.stringMatching(/8/),
+              }),
+            );
+          },
+          {
+            STORAGE_ROOT: storageRoot,
+          },
+        );
+      } finally {
+        await rm(storageRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
   it("rejects video generation requests without any reference assets", async () => {
     await withTestDatabase(async ({ databaseUrl, prisma }) => {
       await withApiTestEnv(databaseUrl, async () => {
