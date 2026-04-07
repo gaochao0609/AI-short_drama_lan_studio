@@ -11,6 +11,122 @@ import { describe, expect, it } from "vitest";
 import { withTestDatabase } from "../db/test-database";
 
 describe("asset backfill service", () => {
+  it("backfills one generated script asset per historical final script version in the same project", async () => {
+    await withTestDatabase(async ({ prisma }) => {
+      const owner = await prisma.user.create({
+        data: {
+          username: "asset-backfill-multi-final-owner",
+          passwordHash: "hash",
+          role: UserRole.USER,
+          status: UserStatus.ACTIVE,
+          forcePasswordChange: false,
+        },
+      });
+      const project = await prisma.project.create({
+        data: {
+          ownerId: owner.id,
+          title: "Project With Multiple Final Scripts",
+        },
+      });
+      const [firstFinalScriptVersion, secondFinalScriptVersion] = await Promise.all([
+        prisma.scriptVersion.create({
+          data: {
+            projectId: project.id,
+            creatorId: owner.id,
+            versionNumber: 1,
+            title: "Final Script V1",
+            body: "INT. CABIN - DAWN",
+            scriptJson: { scenes: [] },
+            summary: "First finalized script",
+          },
+        }),
+        prisma.scriptVersion.create({
+          data: {
+            projectId: project.id,
+            creatorId: owner.id,
+            versionNumber: 2,
+            title: "Final Script V2",
+            body: "EXT. CITY - NIGHT",
+            scriptJson: { scenes: [] },
+            summary: "Second finalized script",
+          },
+        }),
+      ]);
+      await prisma.scriptSession.create({
+        data: {
+          projectId: project.id,
+          creatorId: owner.id,
+          idea: "First ending",
+          status: ScriptSessionStatus.COMPLETED,
+          completedRounds: 3,
+          qaRecordsJson: [],
+          finalScriptVersionId: firstFinalScriptVersion.id,
+          completedAt: new Date("2026-01-01T00:00:00.000Z"),
+        },
+      });
+      await prisma.scriptSession.create({
+        data: {
+          projectId: project.id,
+          creatorId: owner.id,
+          idea: "Second ending",
+          status: ScriptSessionStatus.COMPLETED,
+          completedRounds: 3,
+          qaRecordsJson: [],
+          finalScriptVersionId: secondFinalScriptVersion.id,
+          completedAt: new Date("2026-02-01T00:00:00.000Z"),
+        },
+      });
+
+      const { backfillAssetCenter } = await import("@/lib/services/asset-backfill");
+
+      const firstRun = await backfillAssetCenter({ prisma });
+      const generatedScriptAssets = await prisma.asset.findMany({
+        where: {
+          projectId: project.id,
+          category: AssetCategory.SCRIPT_GENERATED,
+        },
+      });
+      const generatedScriptVersionIds = generatedScriptAssets
+        .map((asset) => {
+          const metadata = asset.metadata as null | { scriptVersionId?: string };
+          return metadata?.scriptVersionId ?? null;
+        })
+        .filter((value): value is string => typeof value === "string")
+        .sort();
+      const workflowBinding = await prisma.projectWorkflowBinding.findUniqueOrThrow({
+        where: {
+          projectId: project.id,
+        },
+      });
+      const secondScriptAsset = generatedScriptAssets.find((asset) => {
+        const metadata = asset.metadata as null | { scriptVersionId?: string };
+        return metadata?.scriptVersionId === secondFinalScriptVersion.id;
+      });
+
+      expect(firstRun.createdAssets).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            projectId: project.id,
+            category: AssetCategory.SCRIPT_GENERATED,
+            origin: AssetOrigin.SYSTEM,
+          }),
+        ]),
+      );
+      expect(generatedScriptAssets).toHaveLength(2);
+      expect(generatedScriptVersionIds).toEqual(
+        [firstFinalScriptVersion.id, secondFinalScriptVersion.id].sort(),
+      );
+      expect(workflowBinding.storyboardScriptAssetId).toBe(secondScriptAsset?.id ?? null);
+
+      const secondRun = await backfillAssetCenter({ prisma });
+
+      expect(secondRun.createdAssets).toHaveLength(0);
+      expect(secondRun.updatedAssets).toHaveLength(0);
+      expect(secondRun.createdBindings).toHaveLength(0);
+      expect(secondRun.updatedBindings).toHaveLength(0);
+    });
+  });
+
   it("backfills generated script assets, normalizes legacy media assets, and remains idempotent", async () => {
     await withTestDatabase(async ({ prisma }) => {
       const owner = await prisma.user.create({

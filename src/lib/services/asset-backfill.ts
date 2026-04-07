@@ -57,7 +57,8 @@ export async function backfillAssetCenter(
     createdBindings: [],
     updatedBindings: [],
   };
-  const scriptAssetByProjectId = new Map<string, string>();
+  const scriptAssetByFinalScriptVersionId = new Map<string, string>();
+  const defaultScriptAssetByProjectId = new Map<string, string>();
   const sessionsWithFinalScripts = await db.scriptSession.findMany({
     where: {
       finalScriptVersionId: {
@@ -91,57 +92,62 @@ export async function backfillAssetCenter(
       continue;
     }
 
-    if (scriptAssetByProjectId.has(session.projectId)) {
-      continue;
+    let scriptAssetId = scriptAssetByFinalScriptVersionId.get(session.finalScriptVersionId) ?? null;
+
+    if (!scriptAssetId) {
+      const existingAsset = await db.asset.findFirst({
+        where: {
+          projectId: session.projectId,
+          category: AssetCategory.SCRIPT_GENERATED,
+          metadata: {
+            path: ["scriptVersionId"],
+            equals: session.finalScriptVersionId,
+          },
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (existingAsset) {
+        scriptAssetId = existingAsset.id;
+      } else {
+        const extractedText = session.finalScriptVersion.body ?? "";
+        const createdAsset = await db.asset.create({
+          data: {
+            projectId: session.projectId,
+            kind: "script",
+            category: AssetCategory.SCRIPT_GENERATED,
+            origin: AssetOrigin.SYSTEM,
+            storagePath: `backfill/scripts/${session.finalScriptVersion.id}.txt`,
+            originalName: `final-script-v${session.finalScriptVersion.versionNumber}.txt`,
+            mimeType: "text/plain",
+            sizeBytes: Buffer.byteLength(extractedText, "utf8"),
+            metadata: {
+              parseStatus: "ready",
+              scriptSessionId: session.id,
+              scriptVersionId: session.finalScriptVersion.id,
+              extractedText,
+            },
+          },
+          select: {
+            id: true,
+            projectId: true,
+            category: true,
+            origin: true,
+          },
+        });
+
+        result.createdAssets.push(createdAsset);
+        scriptAssetId = createdAsset.id;
+      }
+
+      scriptAssetByFinalScriptVersionId.set(session.finalScriptVersionId, scriptAssetId);
     }
 
-    const existingAsset = await db.asset.findFirst({
-      where: {
-        projectId: session.projectId,
-        category: AssetCategory.SCRIPT_GENERATED,
-        metadata: {
-          path: ["scriptVersionId"],
-          equals: session.finalScriptVersionId,
-        },
-      },
-      select: {
-        id: true,
-      },
-    });
-
-    if (existingAsset) {
-      scriptAssetByProjectId.set(session.projectId, existingAsset.id);
-      continue;
+    if (!defaultScriptAssetByProjectId.has(session.projectId)) {
+      defaultScriptAssetByProjectId.set(session.projectId, scriptAssetId);
     }
-
-    const extractedText = session.finalScriptVersion.body ?? "";
-    const createdAsset = await db.asset.create({
-      data: {
-        projectId: session.projectId,
-        kind: "script",
-        category: AssetCategory.SCRIPT_GENERATED,
-        origin: AssetOrigin.SYSTEM,
-        storagePath: `backfill/scripts/${session.finalScriptVersion.id}.txt`,
-        originalName: `final-script-v${session.finalScriptVersion.versionNumber}.txt`,
-        mimeType: "text/plain",
-        sizeBytes: Buffer.byteLength(extractedText, "utf8"),
-        metadata: {
-          parseStatus: "ready",
-          scriptSessionId: session.id,
-          scriptVersionId: session.finalScriptVersion.id,
-          extractedText,
-        },
-      },
-      select: {
-        id: true,
-        projectId: true,
-        category: true,
-        origin: true,
-      },
-    });
-
-    result.createdAssets.push(createdAsset);
-    scriptAssetByProjectId.set(session.projectId, createdAsset.id);
   }
 
   const legacyAssets = await db.asset.findMany({
@@ -237,7 +243,7 @@ export async function backfillAssetCenter(
   );
 
   for (const project of projects) {
-    const storyboardScriptAssetId = scriptAssetByProjectId.get(project.id) ?? null;
+    const storyboardScriptAssetId = defaultScriptAssetByProjectId.get(project.id) ?? null;
     const existingBinding = existingBindingByProjectId.get(project.id);
 
     if (!existingBinding) {
