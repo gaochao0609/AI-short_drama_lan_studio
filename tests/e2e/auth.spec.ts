@@ -49,11 +49,12 @@ test("main auth flow covers request approval login and forced password change", 
     });
 
     await page.goto("http://localhost:3000/register-request");
+    await expect(page.getByText("Lan Studio")).toBeVisible();
     await page.getByLabel("用户名").fill(requesterUsername);
     await page.getByLabel("显示名称").fill(requesterDisplayName);
     await page.getByLabel("申请说明").fill("Need workspace access");
-    await page.getByRole("button", { name: "提交申请" }).click();
-    await expect(page.getByText("申请已提交，等待管理员审批。")).toBeVisible();
+    await page.getByRole("button", { name: "提交注册申请" }).click();
+    await expect(page.getByText("申请已提交，请等待管理员审批。")).toBeVisible();
 
     await expect(
       prisma.accountRequest.findUniqueOrThrow({
@@ -69,9 +70,11 @@ test("main auth flow covers request approval login and forced password change", 
     );
 
     await page.goto("http://localhost:3000/login");
+    await expect(page.getByText("Lan Studio")).toBeVisible();
+    await expect(page.getByRole("button", { name: "进入创作工作区" })).toBeVisible();
     await page.getByLabel("用户名").fill(adminUsername);
     await page.getByLabel("密码").fill(adminPassword);
-    await page.getByRole("button", { name: "登录" }).click();
+    await page.getByRole("button", { name: "进入创作工作区" }).click();
     await expect(page).toHaveURL(/\/admin\/users$/);
 
     const requestCard = page.locator("article").filter({
@@ -108,13 +111,13 @@ test("main auth flow covers request approval login and forced password change", 
     await page.goto("http://localhost:3000/login");
     await page.getByLabel("用户名").fill(requesterUsername);
     await page.getByLabel("密码").fill(approvalPayload.tempPassword);
-    await page.getByRole("button", { name: "登录" }).click();
+    await page.getByRole("button", { name: "进入创作工作区" }).click();
     await expect(page).toHaveURL(/\/force-password$/);
-    await expect(page.getByRole("heading", { name: "首次登录修改密码" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "首次登录重设密码" })).toBeVisible();
 
     await page.getByLabel("新密码", { exact: true }).fill(finalPassword);
     await page.getByLabel("确认新密码", { exact: true }).fill(finalPassword);
-    await page.getByRole("button", { name: "保存新密码" }).click();
+    await page.getByRole("button", { name: "保存并进入工作区" }).click();
     await expect(page).toHaveURL("http://localhost:3000/workspace");
 
     await expect(

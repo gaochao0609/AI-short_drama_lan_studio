@@ -41,25 +41,30 @@ describe("force password page", () => {
     fireEvent.change(screen.getByLabelText("确认新密码"), {
       target: { value: "BrandNewPassword123!" },
     });
-    fireEvent.submit(screen.getByRole("button", { name: "保存新密码" }).closest("form")!);
+    fireEvent.submit(screen.getByRole("button", { name: "保存并进入工作区" }).closest("form")!);
 
     await waitFor(() => {
       expect(routerPushMock).toHaveBeenCalledWith("/");
     });
   });
 
-  it("keeps white-background password fields readable under the global theme", async () => {
+  it("renders the Lan Studio shell with corrected force-password copy", async () => {
     const pageModule = await import("@/app/(auth)/force-password/page");
-    const { container } = render(createElement(pageModule.default));
-    const inputs = container.querySelectorAll("input");
+    render(createElement(pageModule.default));
+    const passwordInput = screen.getByLabelText("新密码");
+    const submitButton = screen.getByRole("button", { name: "保存并进入工作区" });
 
-    expect(inputs[0]).toHaveStyle({
-      background: "#fff",
-      color: "#1f1b16",
-    });
-    expect(inputs[1]).toHaveStyle({
-      background: "#fff",
-      color: "#1f1b16",
-    });
+    expect(screen.getByText("Lan Studio")).toBeVisible();
+    expect(
+      screen.getByText("首次登录需要重设密码，完成后即可进入创作工作区。"),
+    ).toBeVisible();
+    expect(passwordInput).toHaveStyle("border-radius: 14px");
+    expect(passwordInput.getAttribute("style")).toContain("border: 1px solid rgba(129, 140, 248, 0.24)");
+    expect(passwordInput.getAttribute("style")).toContain("background: rgba(15, 15, 35, 0.72)");
+    expect(passwordInput).toHaveStyle("color: rgb(248, 250, 252)");
+    expect(submitButton.getAttribute("style")).toContain(
+      "background: linear-gradient(135deg, rgb(202, 138, 4), rgb(109, 94, 252))",
+    );
+    expect(submitButton).toHaveStyle("color: rgb(248, 250, 252)");
   });
 });

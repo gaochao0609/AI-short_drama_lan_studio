@@ -73,10 +73,10 @@ export default function LoginForm({ nextPath }: Readonly<LoginFormProps>) {
 
   return (
     <main style={shellStyle}>
-      <section style={cardStyle}>
+      <section style={panelStyle}>
         <p style={eyebrowStyle}>Lan Studio</p>
         <h1 style={titleStyle}>账号登录</h1>
-        <p style={copyStyle}>管理员审批通过后，使用账号和密码进入工作区。</p>
+        <p style={copyStyle}>使用工作账号登录，进入创作工作区继续推进短剧生产。</p>
         <form onSubmit={handleSubmit} style={formStyle}>
           <label style={fieldStyle}>
             <span>用户名</span>
@@ -101,11 +101,11 @@ export default function LoginForm({ nextPath }: Readonly<LoginFormProps>) {
           </label>
           {error ? <p style={errorStyle}>{error}</p> : null}
           <button type="submit" disabled={isSubmitting} style={buttonStyle}>
-            {isSubmitting ? "登录中..." : "登录"}
+            {isSubmitting ? "正在进入..." : "进入创作工作区"}
           </button>
         </form>
         <p style={footerStyle}>
-          没有账号？<a href="/register-request">提交注册申请</a>
+          还没有账号？<a href="/register-request">提交注册申请</a>
         </p>
       </section>
     </main>
@@ -119,32 +119,33 @@ const shellStyle = {
   padding: "24px",
 } satisfies CSSProperties;
 
-const cardStyle = {
+const panelStyle = {
   width: "min(460px, 100%)",
   borderRadius: "24px",
-  border: "1px solid rgba(31, 27, 22, 0.12)",
-  background: "rgba(255, 250, 243, 0.94)",
-  boxShadow: "0 24px 60px rgba(31, 27, 22, 0.12)",
+  border: "1px solid rgba(129, 140, 248, 0.24)",
+  background: "rgba(22, 24, 39, 0.9)",
+  boxShadow: "0 24px 60px rgba(3, 7, 18, 0.48)",
   padding: "32px",
 } satisfies CSSProperties;
 
 const eyebrowStyle = {
   margin: 0,
-  color: "#8c5f2d",
+  color: "#ca8a04",
   textTransform: "uppercase",
-  letterSpacing: "0.14em",
+  letterSpacing: "0.16em",
   fontSize: "0.8rem",
 } satisfies CSSProperties;
 
 const titleStyle = {
   margin: "12px 0 0",
   fontSize: "2rem",
+  lineHeight: 1.1,
 } satisfies CSSProperties;
 
 const copyStyle = {
   margin: "12px 0 0",
-  color: "#665d52",
-  lineHeight: 1.6,
+  color: "#b8c0d4",
+  lineHeight: 1.65,
 } satisfies CSSProperties;
 
 const formStyle = {
@@ -162,18 +163,18 @@ const fieldStyle = {
 const inputStyle = {
   width: "100%",
   borderRadius: "14px",
-  border: "1px solid rgba(31, 27, 22, 0.16)",
+  border: "1px solid rgba(129, 140, 248, 0.24)",
   padding: "12px 14px",
   font: "inherit",
-  background: "#fff",
-  color: "#1f1b16",
+  background: "rgba(15, 15, 35, 0.72)",
+  color: "#f8fafc",
 } satisfies CSSProperties;
 
 const buttonStyle = {
   border: 0,
   borderRadius: "999px",
-  background: "#8c5f2d",
-  color: "#fff",
+  background: "linear-gradient(135deg, #ca8a04, #6d5efc)",
+  color: "#f8fafc",
   padding: "12px 18px",
   font: "inherit",
   fontWeight: 700,
@@ -182,10 +183,10 @@ const buttonStyle = {
 
 const errorStyle = {
   margin: 0,
-  color: "#b42318",
-} satisfies React.CSSProperties;
+  color: "#f87171",
+} satisfies CSSProperties;
 
 const footerStyle = {
   margin: "18px 0 0",
-  color: "#665d52",
-} satisfies React.CSSProperties;
+  color: "#b8c0d4",
+} satisfies CSSProperties;

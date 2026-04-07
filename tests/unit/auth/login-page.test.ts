@@ -120,18 +120,23 @@ describe("login page", () => {
     expect(element.props.nextPath).toBeUndefined();
   });
 
-  it("keeps white-background login fields readable under the global theme", async () => {
+  it("renders the Lan Studio auth shell with updated copy and controls", async () => {
     const pageModule = await import("@/app/(auth)/login/login-form");
-    const { container } = render(createElement(pageModule.default));
-    const inputs = container.querySelectorAll("input");
+    render(createElement(pageModule.default));
+    const usernameInput = screen.getByLabelText("用户名");
+    const submitButton = screen.getByRole("button", { name: "进入创作工作区" });
 
-    expect(inputs[0]).toHaveStyle({
-      background: "#fff",
-      color: "#1f1b16",
-    });
-    expect(inputs[1]).toHaveStyle({
-      background: "#fff",
-      color: "#1f1b16",
-    });
+    expect(screen.getByText("Lan Studio")).toBeVisible();
+    expect(
+      screen.getByText("使用工作账号登录，进入创作工作区继续推进短剧生产。"),
+    ).toBeVisible();
+    expect(usernameInput).toHaveStyle("border-radius: 14px");
+    expect(usernameInput.getAttribute("style")).toContain("border: 1px solid rgba(129, 140, 248, 0.24)");
+    expect(usernameInput.getAttribute("style")).toContain("background: rgba(15, 15, 35, 0.72)");
+    expect(usernameInput).toHaveStyle("color: rgb(248, 250, 252)");
+    expect(submitButton.getAttribute("style")).toContain(
+      "background: linear-gradient(135deg, rgb(202, 138, 4), rgb(109, 94, 252))",
+    );
+    expect(submitButton).toHaveStyle("color: rgb(248, 250, 252)");
   });
 });
