@@ -1,5 +1,5 @@
 import path from "node:path";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import {
   TaskStatus,
@@ -75,6 +75,34 @@ async function createActiveUser(prisma: PrismaClient, username: string) {
   });
 }
 
+async function createReferenceImage(
+  prisma: PrismaClient,
+  input: {
+    projectId: string;
+    storageRoot: string;
+    name: string;
+  },
+) {
+  const relativePath = path.join("assets", input.projectId, "references", input.name);
+  const absolutePath = path.join(input.storageRoot, relativePath);
+  await mkdir(path.dirname(absolutePath), { recursive: true });
+  await writeFile(absolutePath, ONE_BY_ONE_PNG_BYTES);
+
+  return prisma.asset.create({
+    data: {
+      projectId: input.projectId,
+      kind: "image_reference",
+      storagePath: relativePath,
+      originalName: input.name,
+      mimeType: "image/png",
+      sizeBytes: ONE_BY_ONE_PNG_BYTES.length,
+      metadata: {
+        role: "reference",
+      },
+    },
+  });
+}
+
 function toDataUrl(mimeType: string, bytes: Uint8Array) {
   return `data:${mimeType};base64,${Buffer.from(bytes).toString("base64")}`;
 }
@@ -143,7 +171,7 @@ describe("image workflow", () => {
     });
   });
 
-  it("records the source asset for image-to-image jobs", async () => {
+  it("records ordered reference assets for image-to-image jobs", async () => {
     await withTestDatabase(async ({ databaseUrl, prisma }) => {
       const storageRoot = await mkdtemp(path.join(os.tmpdir(), "lan-studio-image-source-"));
 
@@ -160,24 +188,21 @@ describe("image workflow", () => {
                 title: "Image Source Project",
               },
             });
-            const referenceAsset = await prisma.asset.create({
-              data: {
-                projectId: project.id,
-                kind: "image_reference",
-                storagePath: "assets/reference.png",
-                originalName: "reference.png",
-                mimeType: "image/png",
-                sizeBytes: ONE_BY_ONE_PNG_BYTES.length,
-                metadata: {
-                  note: "seed reference",
-                },
-              },
+            const referenceAssetA = await createReferenceImage(prisma, {
+              projectId: project.id,
+              storageRoot,
+              name: "reference-a.png",
+            });
+            const referenceAssetB = await createReferenceImage(prisma, {
+              projectId: project.id,
+              storageRoot,
+              name: "reference-b.png",
             });
 
             const result = await enqueueImageGeneration({
               projectId: project.id,
               prompt: "Make this look like a watercolor poster.",
-              sourceAssetId: referenceAsset.id,
+              referenceAssetIds: [referenceAssetB.id, referenceAssetA.id],
               userId: user.id,
             });
 
@@ -191,7 +216,8 @@ describe("image workflow", () => {
                 projectId: project.id,
                 userId: user.id,
                 prompt: expect.any(String),
-                sourceAssetId: referenceAsset.id,
+                mode: "image_edit",
+                referenceAssetIds: [referenceAssetB.id, referenceAssetA.id],
               }),
             );
           },
@@ -355,6 +381,148 @@ describe("image workflow", () => {
                   outputJson: expect.objectContaining({
                     ok: true,
                     outputAssetId: asset.id,
+                  }),
+                }),
+              );
+
+              expect(
+                await prisma.assetSourceLink.count({
+                  where: {
+                    assetId: asset.id,
+                  },
+                }),
+              ).toBe(0);
+            } finally {
+              await runtime.close();
+              await queueEvents.close();
+            }
+          },
+          {
+            STORAGE_ROOT: storageRoot,
+          },
+        );
+      } finally {
+        await rm(storageRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it("writes ordered AssetSourceLink rows for image reference inputs", async () => {
+    callProxyModelMock.mockResolvedValueOnce({
+      status: "ok",
+      fileOutputs: [toDataUrl("image/png", ONE_BY_ONE_PNG_BYTES)],
+      rawResponse: {
+        usage: {
+          input: 180,
+          output: 260,
+        },
+      },
+    });
+    getDefaultModelSummaryMock.mockResolvedValue({
+      providerKey: "image",
+      model: "gpt-image-1",
+    });
+
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      const storageRoot = await mkdtemp(path.join(os.tmpdir(), "lan-studio-image-source-links-"));
+
+      try {
+        await withQueueTestEnv(
+          databaseUrl,
+          async () => {
+            const [{ enqueueImageGeneration }, { queues }] = await Promise.all([
+              import("@/lib/services/images"),
+              import("@/lib/queues"),
+            ]);
+            const { startWorkerRuntime } = await import("@/worker/index");
+            const { bullmqConnection } = await import("@/lib/redis");
+
+            const user = await createActiveUser(prisma, "image-source-links-owner");
+            const project = await prisma.project.create({
+              data: {
+                ownerId: user.id,
+                title: "Image Source Links Project",
+              },
+            });
+            const referenceAssetA = await createReferenceImage(prisma, {
+              projectId: project.id,
+              storageRoot,
+              name: "reference-a.png",
+            });
+            const referenceAssetB = await createReferenceImage(prisma, {
+              projectId: project.id,
+              storageRoot,
+              name: "reference-b.png",
+            });
+
+            const { taskId } = await enqueueImageGeneration({
+              projectId: project.id,
+              prompt: "Blend both references into one key art frame.",
+              referenceAssetIds: [referenceAssetB.id, referenceAssetA.id],
+              userId: user.id,
+            });
+
+            const step = await prisma.taskStep.findFirstOrThrow({
+              where: { taskId },
+              orderBy: { createdAt: "desc" },
+            });
+            const job = await queues.image.getJob(step.id);
+            expect(job).not.toBeNull();
+
+            const queueEvents = new QueueEvents(queues.image.name, {
+              connection: bullmqConnection,
+            });
+            await queueEvents.waitUntilReady();
+            const completionPromise = job!.waitUntilFinished(queueEvents);
+            const runtime = await startWorkerRuntime();
+
+            try {
+              await expect(completionPromise).resolves.toEqual(
+                expect.objectContaining({
+                  ok: true,
+                  traceId: expect.any(String),
+                  outputAssetId: expect.any(String),
+                  referenceAssetIds: [referenceAssetB.id, referenceAssetA.id],
+                }),
+              );
+
+              const asset = await prisma.asset.findFirstOrThrow({
+                where: { taskId, projectId: project.id },
+                orderBy: { createdAt: "desc" },
+              });
+
+              const sourceLinks = await prisma.assetSourceLink.findMany({
+                where: {
+                  assetId: asset.id,
+                },
+                orderBy: {
+                  orderIndex: "asc",
+                },
+              });
+
+              expect(sourceLinks).toEqual([
+                expect.objectContaining({
+                  assetId: asset.id,
+                  sourceAssetId: referenceAssetB.id,
+                  role: "image_reference",
+                  orderIndex: 0,
+                }),
+                expect.objectContaining({
+                  assetId: asset.id,
+                  sourceAssetId: referenceAssetA.id,
+                  role: "image_reference",
+                  orderIndex: 1,
+                }),
+              ]);
+
+              expect(callProxyModelMock).toHaveBeenCalledWith(
+                expect.objectContaining({
+                  inputFiles: [
+                    toDataUrl("image/png", ONE_BY_ONE_PNG_BYTES),
+                    toDataUrl("image/png", ONE_BY_ONE_PNG_BYTES),
+                  ],
+                  options: expect.objectContaining({
+                    referenceAssetIds: [referenceAssetB.id, referenceAssetA.id],
                   }),
                 }),
               );
