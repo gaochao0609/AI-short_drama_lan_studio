@@ -46,6 +46,7 @@ type ProxyExpectations = {
   projectId: string;
   userId: string;
   storyboardScriptAssetId: string;
+  imageReferenceAssetIds: string[];
   referenceAssetId: string;
 };
 
@@ -564,7 +565,20 @@ async function startFakeProxyServer(input: {
           readTrimmedString(options.userId, "options.userId") === input.expected.userId,
           "image_edit userId mismatch",
         );
-        readTrimmedString(options.sourceAssetId, "options.sourceAssetId");
+        const referenceAssetIds = readStringArray(options.referenceAssetIds, "options.referenceAssetIds");
+        assertCondition(
+          referenceAssetIds.length === input.expected.imageReferenceAssetIds.length,
+          "image_edit referenceAssetIds length mismatch",
+        );
+        assertCondition(
+          JSON.stringify(referenceAssetIds) === JSON.stringify(input.expected.imageReferenceAssetIds),
+          "image_edit referenceAssetIds mismatch",
+        );
+        assertCondition(
+          readTrimmedString(options.sourceAssetId, "options.sourceAssetId") ===
+            input.expected.imageReferenceAssetIds[0],
+          "image_edit sourceAssetId mismatch",
+        );
         readTrimmedString(payload.inputText, "inputText");
 
         response.writeHead(200, { "content-type": "application/json" });
@@ -706,6 +720,7 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
     projectId: "",
     userId: "",
     storyboardScriptAssetId: "",
+    imageReferenceAssetIds: [],
     referenceAssetId: "",
   };
 
@@ -911,6 +926,7 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
       .toBe(true);
 
     providerExpectations.storyboardScriptAssetId = uploadedScriptAssetId;
+    providerExpectations.imageReferenceAssetIds = [uploadedImageReferenceId];
     providerExpectations.referenceAssetId = uploadedVideoReferenceId;
 
     await page.reload();

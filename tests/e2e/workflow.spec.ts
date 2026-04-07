@@ -68,6 +68,42 @@ function assetCard(page: Page, assetId: string) {
   return page.locator(`article[aria-label^="${assetId} "]`);
 }
 
+function readMultipartFieldValues(contentType: string, body: Buffer) {
+  const boundaryMatch = /boundary=([^;]+)/i.exec(contentType);
+  expect(boundaryMatch).not.toBeNull();
+
+  const boundary = boundaryMatch?.[1]?.trim();
+  expect(boundary).toBeTruthy();
+
+  const valuesByField = new Map<string, string[]>();
+  const rawBody = body.toString("utf8");
+  const parts = rawBody.split(`--${boundary}`);
+
+  for (const part of parts) {
+    const trimmedPart = part.trim();
+    if (!trimmedPart || trimmedPart === "--") {
+      continue;
+    }
+
+    const nameMatch = /name="([^"]+)"/i.exec(part);
+    if (!nameMatch) {
+      continue;
+    }
+
+    const valueStart = part.indexOf("\r\n\r\n");
+    if (valueStart === -1) {
+      continue;
+    }
+
+    const value = part.slice(valueStart + 4).replace(/\r\n$/, "");
+    const existingValues = valuesByField.get(nameMatch[1]) ?? [];
+    existingValues.push(value);
+    valuesByField.set(nameMatch[1], existingValues);
+  }
+
+  return valuesByField;
+}
+
 async function openBindingMenu(page: Page, assetId: string) {
   const card = assetCard(page, assetId);
   await expect(card).toHaveCount(1);
@@ -441,6 +477,19 @@ test("workflow routes asset-center uploads and generated artifacts into project 
         return;
       }
 
+      const contentType = route.request().headers()["content-type"] ?? "";
+      const requestBody = route.request().postDataBuffer();
+      expect(requestBody).not.toBeNull();
+
+      const formValues = readMultipartFieldValues(contentType, requestBody!);
+      const submittedProjectIds = formValues.get("projectId") ?? [];
+      const submittedPrompts = formValues.get("prompt") ?? [];
+      const submittedReferenceAssetIds = formValues.get("referenceAssetIds") ?? [];
+
+      expect(submittedProjectIds).toEqual([projectId]);
+      expect(submittedPrompts).toEqual(["Generate a cinematic still of the courier."]);
+      expect(submittedReferenceAssetIds).toEqual([uploadedReferenceAId, uploadedReferenceBId]);
+
       const taskId = `task-image-${suffix}`;
       const assetId = `asset-image-${suffix}`;
       const relativePath = path.join("assets", projectId, "generated", `image-${suffix}.png`);
@@ -455,6 +504,8 @@ test("workflow routes asset-center uploads and generated artifacts into project 
         inputJson: {
           projectId,
           prompt: "Generate a cinematic still of the courier.",
+          referenceAssetIds: submittedReferenceAssetIds,
+          sourceAssetId: submittedReferenceAssetIds[0] ?? null,
         },
         outputJson: {
           outputAssetId: assetId,
