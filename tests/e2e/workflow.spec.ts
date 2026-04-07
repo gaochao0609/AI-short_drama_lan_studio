@@ -98,21 +98,68 @@ async function expectNoHorizontalOverflow(page: Page) {
 }
 
 async function expectVisibleFocusIndicator(page: Page) {
-  await page.keyboard.press("Tab");
-  const focusTarget = await page.evaluate(() => {
-    const active = document.activeElement as HTMLElement | null;
-    if (!active) {
-      return null;
-    }
+  const navLink = page.locator(".studio-shell__nav-link").first();
+  await expect(navLink).toBeVisible();
+  const baselineStyle = await navLink.evaluate((element) => {
+    const link = element as HTMLElement;
+    const style = getComputedStyle(link);
     return {
-      tagName: active.tagName,
-      ariaLabel: active.getAttribute("aria-label"),
-      textContent: active.textContent?.trim() ?? "",
+      borderTopColor: style.borderTopColor,
+      backgroundColor: style.backgroundColor,
+      outlineStyle: style.outlineStyle,
+      outlineWidth: style.outlineWidth,
+      boxShadow: style.boxShadow,
+      transform: style.transform,
     };
   });
 
-  expect(focusTarget).not.toBeNull();
-  expect(focusTarget!.tagName).not.toBe("BODY");
+  let focusState: {
+    isFocused: boolean;
+    isFocusVisible: boolean;
+    borderTopColor: string;
+    backgroundColor: string;
+    outlineStyle: string;
+    outlineWidth: string;
+    boxShadow: string;
+    transform: string;
+  } | null = null;
+
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    await page.keyboard.press("Tab");
+    focusState = await navLink.evaluate((element) => {
+      const link = element as HTMLElement;
+      const style = getComputedStyle(link);
+
+      return {
+        isFocused: document.activeElement === link,
+        isFocusVisible: link.matches(":focus-visible"),
+        borderTopColor: style.borderTopColor,
+        backgroundColor: style.backgroundColor,
+        outlineStyle: style.outlineStyle,
+        outlineWidth: style.outlineWidth,
+        boxShadow: style.boxShadow,
+        transform: style.transform,
+      };
+    });
+
+    if (focusState.isFocused) {
+      break;
+    }
+  }
+
+  expect(focusState).not.toBeNull();
+  expect(focusState!.isFocused).toBe(true);
+  expect(focusState!.isFocusVisible).toBe(true);
+  const hasOutline = focusState!.outlineStyle !== "none" && focusState!.outlineWidth !== "0px";
+  const hasShadow = focusState!.boxShadow !== "none";
+  const hasStyleDelta =
+    focusState!.borderTopColor !== baselineStyle.borderTopColor ||
+    focusState!.backgroundColor !== baselineStyle.backgroundColor ||
+    focusState!.outlineStyle !== baselineStyle.outlineStyle ||
+    focusState!.outlineWidth !== baselineStyle.outlineWidth ||
+    focusState!.boxShadow !== baselineStyle.boxShadow ||
+    focusState!.transform !== baselineStyle.transform;
+  expect(hasStyleDelta || hasOutline || hasShadow).toBe(true);
 }
 
 test("workspace create-project form navigates into the project flow", async ({ page }) => {
@@ -156,9 +203,13 @@ test("workspace create-project form navigates into the project flow", async ({ p
       .getByRole("region")
       .filter({ has: page.locator(`a[href="/projects/${projectId}/script"]`) })
       .first();
-    await expect(projectWorkflowRegion).toContainText(
-      /\u5df2\u5b8c\u6210|\u8fdb\u884c\u4e2d|\u4e0b\u4e00\u6b65|\u5f85\u5f00\u59cb|completed|in progress|next|pending/i,
-    );
+    await expect(projectWorkflowRegion.getByRole("link", { name: /\u8fdb\u5165\u811a\u672c\u6d41\u7a0b|script/i }))
+      .toHaveAttribute("href", `/projects/${projectId}/script`);
+    await expect(projectWorkflowRegion.getByText("Script", { exact: true })).toBeVisible();
+    await expect(projectWorkflowRegion.getByText("Storyboard", { exact: true })).toBeVisible();
+    const firstWorkflowItem = projectWorkflowRegion.getByRole("listitem").first();
+    await expect(firstWorkflowItem).toContainText("Script");
+    await expect(firstWorkflowItem).toContainText(/\u4e0b\u4e00\u6b65|next/i);
   } finally {
     if (userId) {
       await prisma.user.deleteMany({
