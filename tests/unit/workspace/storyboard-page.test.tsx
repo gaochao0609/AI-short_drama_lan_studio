@@ -246,5 +246,8 @@ describe("project storyboard page", () => {
     expect(
       screen.getByRole("button", { name: "设为该流程默认输入" }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "去资产中心设置" }),
+    ).toHaveAttribute("href", "/projects/project-1/assets");
   });
 });

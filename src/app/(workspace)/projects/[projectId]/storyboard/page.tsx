@@ -86,11 +86,13 @@ const copy = {
   defaultBindingDescription:
     "分镜页优先读取项目级默认剧本资产；如需临时改选，可在本页覆盖，不会自动改写默认绑定。",
   defaultBindingEmpty: "当前未设置默认剧本资产",
+  openAssetCenter: "去资产中心设置",
   inputHeading: "本次分镜输入",
   inputDescription:
     "可从当前项目中已就绪的剧本资产里切换本次输入。上传剧本与系统定稿都能直接用于分镜。",
   selectScriptAsset: "选择本次分镜剧本",
-  scriptAssetsEmpty: "当前项目还没有可用于分镜的剧本资产，请先在资产中心上传剧本或完成脚本定稿。",
+  scriptAssetsEmpty:
+    "当前项目还没有可用于分镜的剧本资产，请先在资产中心上传剧本或完成脚本定稿。",
   temporaryOverride: "仅本次使用",
   defaultBindingBadge: "当前默认输入",
   promoteDefault: "设为该流程默认输入",
@@ -567,7 +569,12 @@ export default function ProjectStoryboardPage() {
               </pre>
             </article>
           ) : (
-            <p style={emptyStateStyle}>{copy.defaultBindingEmpty}</p>
+            <div style={emptyStateStackStyle}>
+              <p style={emptyStateStyle}>{copy.defaultBindingEmpty}</p>
+              <Link href={`/projects/${projectId}/assets`} style={secondaryButtonStyle}>
+                {copy.openAssetCenter}
+              </Link>
+            </div>
           )}
         </section>
 
@@ -900,12 +907,19 @@ const secondaryButtonStyle = {
   background: "rgba(248, 250, 252, 0.08)",
   border: "1px solid rgba(248, 250, 252, 0.12)",
   color: "var(--text)",
+  textDecoration: "none",
 } satisfies CSSProperties;
 
 const emptyStateStyle = {
   margin: 0,
   color: "var(--text-muted)",
   lineHeight: 1.7,
+} satisfies CSSProperties;
+
+const emptyStateStackStyle = {
+  display: "grid",
+  gap: "12px",
+  justifyItems: "start",
 } satisfies CSSProperties;
 
 const resultCardStyle = {
