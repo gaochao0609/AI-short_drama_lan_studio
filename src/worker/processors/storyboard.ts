@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { callProxyModel } from "@/lib/models/proxy-client";
 import { getDefaultModelSummary } from "@/lib/models/provider-registry";
 import {
+  ensureStoryboardScriptVersion,
   resolveStoryboardScriptInput,
   StoryboardSegmentsSchema,
   type StoryboardSegment,
@@ -238,6 +239,11 @@ export async function processStoryboardJob(
       scriptVersionId: payload.scriptVersionId,
       userId: payload.userId,
     });
+    const durableScriptInput = await ensureStoryboardScriptVersion({
+      projectId: payload.projectId,
+      userId: payload.userId,
+      resolvedScriptInput,
+    });
 
     const modelSummary = await getDefaultModelSummary("storyboard_split");
     if (!modelSummary?.model) {
@@ -253,14 +259,14 @@ export async function processStoryboardJob(
       model: modelSummary.model,
       traceId: job.data.traceId,
       inputFiles: [],
-      inputText: buildStoryboardPrompt(resolvedScriptInput.scriptBody),
+      inputText: buildStoryboardPrompt(durableScriptInput.scriptBody),
       options: {
         projectId: payload.projectId,
-        ...(resolvedScriptInput.scriptAssetId
-          ? { scriptAssetId: resolvedScriptInput.scriptAssetId }
+        ...(durableScriptInput.scriptAssetId
+          ? { scriptAssetId: durableScriptInput.scriptAssetId }
           : {}),
-        ...(resolvedScriptInput.scriptVersionId
-          ? { scriptVersionId: resolvedScriptInput.scriptVersionId }
+        ...(durableScriptInput.scriptVersionId
+          ? { scriptVersionId: durableScriptInput.scriptVersionId }
           : {}),
         userId: payload.userId,
       },
@@ -279,14 +285,14 @@ export async function processStoryboardJob(
     const segments = await parseStoryboardSegments(modelResult.textOutput.trim());
     let storyboardVersionId = "";
 
-    if (resolvedScriptInput.scriptVersionId) {
+    if (durableScriptInput.scriptVersionId) {
       const storyboardVersion = await prisma.storyboardVersion.upsert({
         where: {
           taskId: job.data.taskId,
         },
         create: {
           projectId: payload.projectId,
-          scriptVersionId: resolvedScriptInput.scriptVersionId,
+          scriptVersionId: durableScriptInput.scriptVersionId,
           taskId: job.data.taskId,
           framesJson: segments as Prisma.InputJsonValue,
           modelProviderKey: modelSummary.providerKey,
@@ -295,7 +301,7 @@ export async function processStoryboardJob(
         },
         update: {
           projectId: payload.projectId,
-          scriptVersionId: resolvedScriptInput.scriptVersionId,
+          scriptVersionId: durableScriptInput.scriptVersionId,
           framesJson: segments as Prisma.InputJsonValue,
           modelProviderKey: modelSummary.providerKey,
           modelName: modelSummary.model,

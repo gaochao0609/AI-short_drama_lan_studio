@@ -462,6 +462,116 @@ export async function resolveStoryboardScriptInput(input: {
   throw new ServiceError(400, "scriptAssetId or scriptVersionId is required");
 }
 
+export async function ensureStoryboardScriptVersion(input: {
+  projectId: string;
+  userId: string;
+  resolvedScriptInput: ResolvedStoryboardScriptInput;
+}) {
+  const { resolvedScriptInput } = input;
+  const scriptAssetId = resolvedScriptInput.scriptAssetId;
+
+  if (resolvedScriptInput.scriptVersionId || !scriptAssetId) {
+    return resolvedScriptInput;
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const lockKey = [
+      "storyboard-script-version",
+      input.projectId,
+      scriptAssetId,
+    ].join(":");
+
+    await tx.$executeRaw`
+      SELECT pg_advisory_xact_lock(
+        hashtext(${lockKey}),
+        hashtext(${`${lockKey}:compat`})
+      )
+    `;
+
+    const asset = await tx.asset.findFirst({
+      where: {
+        id: scriptAssetId,
+        projectId: input.projectId,
+        project: {
+          ownerId: input.userId,
+        },
+      },
+      select: {
+        id: true,
+        originalName: true,
+        metadata: true,
+      },
+    });
+
+    if (!asset) {
+      throw new ServiceError(404, "Storyboard script asset not found");
+    }
+
+    const existingScriptVersionId = readScriptVersionId(asset.metadata);
+    if (existingScriptVersionId) {
+      const existingScriptVersion = await tx.scriptVersion.findFirst({
+        where: {
+          id: existingScriptVersionId,
+          projectId: input.projectId,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (existingScriptVersion) {
+        return {
+          ...resolvedScriptInput,
+          scriptVersionId: existingScriptVersion.id,
+        } satisfies ResolvedStoryboardScriptInput;
+      }
+    }
+
+    const versionNumber =
+      (await tx.scriptVersion.count({
+        where: {
+          projectId: input.projectId,
+        },
+      })) + 1;
+    const createdScriptVersion = await tx.scriptVersion.create({
+      data: {
+        projectId: input.projectId,
+        creatorId: input.userId,
+        versionNumber,
+        title: asset.originalName?.trim() || undefined,
+        body: resolvedScriptInput.scriptBody,
+        scriptJson: {
+          body: resolvedScriptInput.scriptBody,
+        } as Prisma.InputJsonValue,
+      },
+      select: {
+        id: true,
+      },
+    });
+
+    const metadata = {
+      ...readMetadataObject(asset.metadata),
+      extractedText:
+        readExtractedText(asset.metadata) ?? resolvedScriptInput.scriptBody,
+      scriptVersionId: createdScriptVersion.id,
+    } satisfies Prisma.InputJsonObject;
+
+    await tx.asset.update({
+      where: {
+        id: asset.id,
+      },
+      data: {
+        metadata,
+      },
+    });
+
+    return {
+      ...resolvedScriptInput,
+      scriptVersionId: createdScriptVersion.id,
+    } satisfies ResolvedStoryboardScriptInput;
+  });
+}
+
 export async function getStoryboardWorkspaceData(projectId: string, userId: string) {
   const [project, scriptAssets, binding] = await Promise.all([
     getProject(projectId, userId),
