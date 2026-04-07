@@ -156,8 +156,8 @@ const inputStyle = {
 const buttonStyle = {
   border: 0,
   borderRadius: "999px",
-  background: "linear-gradient(135deg, #7a3b00, #4338ca)",
-  color: "#f8fafc",
+  background: "linear-gradient(135deg, #ca8a04, #6d5efc)",
+  color: "#0f172a",
   padding: "12px 18px",
   font: "inherit",
   fontWeight: 700,
