@@ -135,6 +135,44 @@ function toStoryboardTaskPayload(input: {
   return payload;
 }
 
+function toStoryboardTaskDedupWhere(input: {
+  projectId: string;
+  userId: string;
+  scriptAssetId: string | null;
+  scriptVersionId: string | null;
+}): Prisma.TaskWhereInput {
+  const baseWhere: Prisma.TaskWhereInput = {
+    projectId: input.projectId,
+    createdById: input.userId,
+    type: TaskType.STORYBOARD,
+    status: {
+      notIn: [TaskStatus.FAILED, TaskStatus.CANCELED],
+    },
+  };
+
+  if (input.scriptAssetId) {
+    return {
+      ...baseWhere,
+      inputJson: {
+        path: ["scriptAssetId"],
+        equals: input.scriptAssetId,
+      },
+    } satisfies Prisma.TaskWhereInput;
+  }
+
+  if (input.scriptVersionId) {
+    return {
+      ...baseWhere,
+      inputJson: {
+        path: ["scriptVersionId"],
+        equals: input.scriptVersionId,
+      },
+    } satisfies Prisma.TaskWhereInput;
+  }
+
+  return baseWhere;
+}
+
 function isStoryboardScriptCategory(
   category: AssetCategory | null,
 ): category is AssetCategory {
@@ -620,6 +658,12 @@ export async function createStoryboardTask(input: {
     scriptAssetId: resolvedScriptInput.scriptAssetId,
     scriptVersionId: resolvedScriptInput.scriptVersionId,
   });
+  const dedupeWhere = toStoryboardTaskDedupWhere({
+    projectId: input.projectId,
+    userId: input.userId,
+    scriptAssetId: resolvedScriptInput.scriptAssetId,
+    scriptVersionId: resolvedScriptInput.scriptVersionId,
+  });
   const lockKey = [
     "storyboard",
     input.projectId,
@@ -636,17 +680,7 @@ export async function createStoryboardTask(input: {
     `;
 
     const existingTask = await tx.task.findFirst({
-      where: {
-        projectId: input.projectId,
-        createdById: input.userId,
-        type: TaskType.STORYBOARD,
-        inputJson: {
-          equals: payload as Prisma.InputJsonValue,
-        },
-        status: {
-          notIn: [TaskStatus.FAILED, TaskStatus.CANCELED],
-        },
-      },
+      where: dedupeWhere,
       select: {
         id: true,
       },

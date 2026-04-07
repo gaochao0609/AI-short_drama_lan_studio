@@ -337,6 +337,124 @@ describe("storyboards api", () => {
     });
   });
 
+  it("keeps deduplicating uploaded script asset requests after scriptVersionId backfill", async () => {
+    enqueueTaskMock.mockResolvedValue({
+      jobId: "job-storyboard-uploaded-dedupe",
+      queueName: "storyboard-queue",
+    });
+
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      await withApiTestEnv(databaseUrl, async () => {
+        const user = await createActiveUser(prisma, "storyboard-uploaded-dedupe");
+        const session = await insertSessionForUser(prisma, user.id);
+        const project = await prisma.project.create({
+          data: {
+            ownerId: user.id,
+            title: "Storyboard Uploaded Dedupe",
+          },
+        });
+        const scriptAsset = await createScriptAsset({
+          prisma,
+          projectId: project.id,
+          originalName: "uploaded-script.txt",
+          category: AssetCategory.SCRIPT_SOURCE,
+          metadata: {
+            parseStatus: "ready",
+            extractedText: "UPLOADED SCRIPT BODY",
+          },
+        });
+        const { POST } = await loadRouteModule<{
+          POST: (request: Request) => Promise<Response>;
+        }>("src/app/api/storyboards/route.ts", {
+          sessionToken: session.token,
+        });
+
+        const firstResponse = await POST(
+          jsonRequest(
+            "http://localhost/api/storyboards",
+            {
+              projectId: project.id,
+              scriptAssetId: scriptAsset.id,
+            },
+            { method: "POST" },
+          ),
+        );
+        const firstPayload = (await firstResponse.json()) as { taskId: string };
+
+        const backfilledScriptVersion = await prisma.scriptVersion.create({
+          data: {
+            projectId: project.id,
+            creatorId: user.id,
+            versionNumber: 1,
+            body: "UPLOADED SCRIPT BODY",
+            scriptJson: {
+              body: "UPLOADED SCRIPT BODY",
+            },
+          },
+        });
+        await prisma.asset.update({
+          where: {
+            id: scriptAsset.id,
+          },
+          data: {
+            metadata: {
+              parseStatus: "ready",
+              extractedText: "UPLOADED SCRIPT BODY",
+              scriptVersionId: backfilledScriptVersion.id,
+            },
+          },
+        });
+
+        const secondResponse = await POST(
+          jsonRequest(
+            "http://localhost/api/storyboards",
+            {
+              projectId: project.id,
+              scriptAssetId: scriptAsset.id,
+            },
+            { method: "POST" },
+          ),
+        );
+        const secondPayload = (await secondResponse.json()) as { taskId: string };
+
+        expect(firstResponse.status).toBe(202);
+        expect(secondResponse.status).toBe(202);
+        expect(secondPayload.taskId).toBe(firstPayload.taskId);
+        expect(enqueueTaskMock).toHaveBeenCalledTimes(1);
+        expect(enqueueTaskMock).toHaveBeenCalledWith(
+          firstPayload.taskId,
+          TaskType.STORYBOARD,
+          expect.objectContaining({
+            projectId: project.id,
+            scriptAssetId: scriptAsset.id,
+            userId: user.id,
+          }),
+        );
+        await expect(
+          prisma.task.findMany({
+            where: {
+              projectId: project.id,
+              createdById: user.id,
+              type: TaskType.STORYBOARD,
+            },
+            orderBy: {
+              createdAt: "asc",
+            },
+          }),
+        ).resolves.toEqual([
+          expect.objectContaining({
+            id: firstPayload.taskId,
+            inputJson: expect.objectContaining({
+              projectId: project.id,
+              scriptAssetId: scriptAsset.id,
+              userId: user.id,
+            }),
+          }),
+        ]);
+      });
+    });
+  });
+
   it.each(["pending", "failed"] as const)(
     "rejects %s script assets as storyboard input with 409",
     async (parseStatus) => {
