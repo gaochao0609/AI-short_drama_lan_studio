@@ -45,6 +45,38 @@ describe("admin tasks page", () => {
     vi.stubGlobal("fetch", fetchMock);
   });
 
+  it("labels summary cards as current-page scoped when global total is larger", async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+
+      if (url === "/api/admin/tasks?page=1&pageSize=50" && init?.cache === "no-store") {
+        return jsonResponse({
+          tasks: [createTask("RUNNING")],
+          pagination: {
+            page: 1,
+            pageSize: 50,
+            total: 120,
+            totalPages: 3,
+          },
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    const pageModule = await import("@/app/admin/tasks/page");
+    render(<pageModule.default />);
+
+    await screen.findByRole("heading", { name: "当前页状态分布" });
+    expect(screen.getByText("本区域统计的是当前页任务，不代表全部任务总量。")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "任务列表（共 120 条）" })).toBeInTheDocument();
+  });
+
   it("shows the finished task status when cancel returns a completed response", async () => {
     fetchMock.mockImplementation(async (input, init) => {
       const url =

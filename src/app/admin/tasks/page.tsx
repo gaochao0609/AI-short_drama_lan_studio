@@ -126,13 +126,25 @@ export default function AdminTasksPage() {
       throw new Error("加载任务失败");
     }
 
-    return payload as TasksPayload;
+    if (!payload || "error" in payload) {
+      throw new Error("加载任务失败");
+    }
+
+    return payload;
   }
 
   async function loadTasks(page?: number) {
     const result = await fetchTasks(page ?? pagination.page);
     setTasks(result.tasks);
     setPagination(result.pagination);
+  }
+
+  async function safeLoadTasks(page?: number) {
+    try {
+      await loadTasks(page);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "加载任务失败");
+    }
   }
 
   useEffect(() => {
@@ -198,8 +210,7 @@ export default function AdminTasksPage() {
         method: "POST",
       });
       const payload = (await response.json().catch(() => null)) as AdminTaskActionPayload | null;
-      const errorMessage =
-        payload && "error" in payload ? payload.error : undefined;
+      const errorMessage = payload && "error" in payload ? payload.error : undefined;
 
       if (!response.ok) {
         throw new Error(errorMessage ?? "取消任务失败");
@@ -240,16 +251,30 @@ export default function AdminTasksPage() {
         <p style={copyStyle}>查看任务状态，支持重试失败任务并取消排队或运行中的任务。</p>
       </header>
 
-      {message ? <p style={messageStyle}>{message}</p> : null}
-      {error ? <p style={errorStyle}>{error}</p> : null}
+      {message ? (
+        <p style={messageStyle} role="status" aria-live="polite">
+          {message}
+        </p>
+      ) : null}
+      {error ? (
+        <p style={errorStyle} role="alert" aria-live="assertive">
+          {error}
+        </p>
+      ) : null}
 
-      <section style={summaryGridStyle}>
-        {counts.map((entry) => (
-          <article key={entry.status} style={summaryCardStyle}>
-            <p style={summaryLabelStyle}>{formatStatus(entry.status)}</p>
-            <strong style={summaryValueStyle}>{entry.count}</strong>
-          </article>
-        ))}
+      <section style={summaryWrapStyle} aria-labelledby="task-summary-scope">
+        <h3 id="task-summary-scope" style={summaryTitleStyle}>
+          当前页状态分布
+        </h3>
+        <p style={summaryScopeStyle}>本区域统计的是当前页任务，不代表全部任务总量。</p>
+        <div style={summaryGridStyle}>
+          {counts.map((entry) => (
+            <article key={entry.status} style={summaryCardStyle}>
+              <p style={summaryLabelStyle}>{formatStatus(entry.status)}</p>
+              <strong style={summaryValueStyle}>{entry.count}</strong>
+            </article>
+          ))}
+        </div>
       </section>
 
       <section style={panelStyle}>
@@ -260,7 +285,7 @@ export default function AdminTasksPage() {
               第 {pagination.page} / {pagination.totalPages || 1} 页，每页 {pagination.pageSize} 条
             </p>
           </div>
-          <button type="button" style={secondaryButtonStyle} onClick={() => void loadTasks()}>
+          <button type="button" style={secondaryButtonStyle} onClick={() => void safeLoadTasks()}>
             刷新
           </button>
         </div>
@@ -332,7 +357,7 @@ export default function AdminTasksPage() {
               type="button"
               style={secondaryButtonStyle}
               disabled={pagination.page <= 1}
-              onClick={() => void loadTasks(pagination.page - 1)}
+              onClick={() => void safeLoadTasks(pagination.page - 1)}
             >
               上一页
             </button>
@@ -343,7 +368,7 @@ export default function AdminTasksPage() {
               type="button"
               style={secondaryButtonStyle}
               disabled={pagination.page >= pagination.totalPages}
-              onClick={() => void loadTasks(pagination.page + 1)}
+              onClick={() => void safeLoadTasks(pagination.page + 1)}
             >
               下一页
             </button>
@@ -382,6 +407,23 @@ const copyStyle = {
   margin: 0,
   color: "var(--text-muted)",
   lineHeight: 1.6,
+} satisfies CSSProperties;
+
+const summaryWrapStyle = {
+  display: "grid",
+  gap: "8px",
+} satisfies CSSProperties;
+
+const summaryTitleStyle = {
+  margin: 0,
+  fontSize: "1rem",
+  fontWeight: 700,
+} satisfies CSSProperties;
+
+const summaryScopeStyle = {
+  margin: 0,
+  color: "var(--text-muted)",
+  fontSize: "0.9rem",
 } satisfies CSSProperties;
 
 const summaryGridStyle = {

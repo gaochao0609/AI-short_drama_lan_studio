@@ -22,6 +22,8 @@ type UserItem = {
   createdAt: string;
 };
 
+type JsonWithError = { error?: string };
+
 function toUserStatusLabel(status: UserItem["status"]) {
   if (status === "ACTIVE") {
     return "已启用";
@@ -46,6 +48,23 @@ function toUserStatusTone(status: UserItem["status"]) {
   return "warning";
 }
 
+async function parseJsonSafe<T>(response: Response): Promise<T | null> {
+  try {
+    return (await response.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
+async function requestSafe(url: string, init?: RequestInit) {
+  try {
+    const response = await fetch(url, init);
+    return { response };
+  } catch {
+    throw new Error("网络请求失败");
+  }
+}
+
 export default function AdminUsersPage() {
   const [users, setUsers] = useState<UserItem[]>([]);
   const [requests, setRequests] = useState<AccountRequestItem[]>([]);
@@ -55,18 +74,23 @@ export default function AdminUsersPage() {
   const [error, setError] = useState<string | null>(null);
 
   async function fetchAdminData() {
-    const [usersResponse, requestsResponse] = await Promise.all([
-      fetch("/api/admin/users", { cache: "no-store" }),
-      fetch("/api/admin/account-requests", { cache: "no-store" }),
+    const [{ response: usersResponse }, { response: requestsResponse }] = await Promise.all([
+      requestSafe("/api/admin/users", { cache: "no-store" }),
+      requestSafe("/api/admin/account-requests", { cache: "no-store" }),
     ]);
 
     if (!usersResponse.ok || !requestsResponse.ok) {
-      const payload = (await usersResponse.json().catch(() => null)) as { error?: string } | null;
-      throw new Error(payload?.error ?? "加载失败");
+      const usersError = await parseJsonSafe<JsonWithError>(usersResponse);
+      const requestsError = await parseJsonSafe<JsonWithError>(requestsResponse);
+      throw new Error(usersError?.error ?? requestsError?.error ?? "加载失败");
     }
 
-    const usersPayload = (await usersResponse.json()) as { users: UserItem[] };
-    const requestsPayload = (await requestsResponse.json()) as { requests: AccountRequestItem[] };
+    const usersPayload = await parseJsonSafe<{ users: UserItem[] }>(usersResponse);
+    const requestsPayload = await parseJsonSafe<{ requests: AccountRequestItem[] }>(requestsResponse);
+
+    if (!usersPayload || !requestsPayload) {
+      throw new Error("加载失败");
+    }
 
     return {
       users: usersPayload.users,
@@ -78,6 +102,14 @@ export default function AdminUsersPage() {
     const data = await fetchAdminData();
     setUsers(data.users);
     setRequests(data.requests);
+  }
+
+  async function safeRefreshAfterMutation() {
+    try {
+      await loadData();
+    } catch (refreshError) {
+      setError(refreshError instanceof Error ? refreshError.message : "操作成功，但列表刷新失败");
+    }
   }
 
   useEffect(() => {
@@ -114,86 +146,102 @@ export default function AdminUsersPage() {
     setError(null);
     setMessage(null);
 
-    const response = await fetch("/api/admin/users", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ username, role }),
-    });
-    const payload = (await response.json()) as { error?: string; tempPassword?: string };
+    try {
+      const { response } = await requestSafe("/api/admin/users", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ username, role }),
+      });
+      const payload = await parseJsonSafe<{ error?: string; tempPassword?: string }>(response);
 
-    if (!response.ok) {
-      setError(payload.error ?? "创建失败");
-      return;
+      if (!response.ok) {
+        setError(payload?.error ?? "创建失败");
+        return;
+      }
+
+      setUsername("");
+      setRole("USER");
+      setMessage(`账号已创建，初始密码：${payload?.tempPassword ?? "未返回"}`);
+      await safeRefreshAfterMutation();
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : "创建失败");
     }
-
-    setUsername("");
-    setRole("USER");
-    setMessage(`账号已创建，初始密码：${payload.tempPassword}`);
-    await loadData();
   }
 
   async function approveRequest(requestId: string) {
     setError(null);
     setMessage(null);
 
-    const response = await fetch("/api/admin/account-requests", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ requestId }),
-    });
-    const payload = (await response.json()) as { error?: string; tempPassword?: string };
+    try {
+      const { response } = await requestSafe("/api/admin/account-requests", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ requestId }),
+      });
+      const payload = await parseJsonSafe<{ error?: string; tempPassword?: string }>(response);
 
-    if (!response.ok) {
-      setError(payload.error ?? "审批失败");
-      return;
+      if (!response.ok) {
+        setError(payload?.error ?? "审批失败");
+        return;
+      }
+
+      setMessage(`申请已通过，初始密码：${payload?.tempPassword ?? "未返回"}`);
+      await safeRefreshAfterMutation();
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : "审批失败");
     }
-
-    setMessage(`申请已通过，初始密码：${payload.tempPassword}`);
-    await loadData();
   }
 
   async function disableManagedUser(userId: string) {
     setError(null);
     setMessage(null);
 
-    const response = await fetch("/api/admin/users", {
-      method: "PATCH",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ userId, status: "DISABLED" }),
-    });
-    const payload = (await response.json()) as { error?: string };
+    try {
+      const { response } = await requestSafe("/api/admin/users", {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ userId, status: "DISABLED" }),
+      });
+      const payload = await parseJsonSafe<JsonWithError>(response);
 
-    if (!response.ok) {
-      setError(payload.error ?? "禁用失败");
-      return;
+      if (!response.ok) {
+        setError(payload?.error ?? "禁用失败");
+        return;
+      }
+
+      setMessage("账号已禁用，当前登录会话会在下次鉴权时失效。");
+      await safeRefreshAfterMutation();
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : "禁用失败");
     }
-
-    setMessage("账号已禁用，当前登录会话会在下次鉴权时失效。");
-    await loadData();
   }
 
   async function resetManagedPassword(userId: string) {
     setError(null);
     setMessage(null);
 
-    const response = await fetch(`/api/admin/users/${userId}/reset-password`, {
-      method: "POST",
-    });
-    const payload = (await response.json()) as { error?: string; tempPassword?: string };
+    try {
+      const { response } = await requestSafe(`/api/admin/users/${userId}/reset-password`, {
+        method: "POST",
+      });
+      const payload = await parseJsonSafe<{ error?: string; tempPassword?: string }>(response);
 
-    if (!response.ok) {
-      setError(payload.error ?? "重置失败");
-      return;
+      if (!response.ok) {
+        setError(payload?.error ?? "重置失败");
+        return;
+      }
+
+      setMessage(`密码已重置，临时密码：${payload?.tempPassword ?? "未返回"}`);
+      await safeRefreshAfterMutation();
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : "重置失败");
     }
-
-    setMessage(`密码已重置，临时密码：${payload.tempPassword}`);
-    await loadData();
   }
 
   return (
@@ -204,8 +252,16 @@ export default function AdminUsersPage() {
         <p style={copyStyle}>处理注册申请、创建内部账号、禁用账号和重置密码。</p>
       </header>
 
-      {message ? <p style={messageStyle}>{message}</p> : null}
-      {error ? <p style={errorStyle}>{error}</p> : null}
+      {message ? (
+        <p style={messageStyle} role="status" aria-live="polite">
+          {message}
+        </p>
+      ) : null}
+      {error ? (
+        <p style={errorStyle} role="alert" aria-live="assertive">
+          {error}
+        </p>
+      ) : null}
 
       <div style={gridStyle}>
         <section style={panelStyle}>

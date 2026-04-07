@@ -1,5 +1,5 @@
 import { createElement } from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { requireUserMock, redirectMock, RedirectSignal, AuthGuardError } = vi.hoisted(() => ({
@@ -57,7 +57,7 @@ describe("admin layout", () => {
     process.env.APP_URL = previousAppUrl;
   });
 
-  it("shows the shared admin chrome, nav links, and plain-http warning", async () => {
+  it("shows the shared admin chrome, nav copy, and plain-http warning copy", async () => {
     process.env.APP_URL = "http://192.168.1.20:3000";
 
     const layoutModule = await import("@/app/admin/layout");
@@ -69,11 +69,25 @@ describe("admin layout", () => {
     );
 
     expect(screen.getByText("Lan Studio")).toBeInTheDocument();
+    const titleNode = view.container.querySelector(".studio-shell__title");
+    expect(titleNode).not.toBeNull();
+    expect(titleNode?.textContent?.trim().length ?? 0).toBeGreaterThan(0);
+
+    const nav = screen.getByRole("navigation");
+    const links = within(nav).getAllByRole("link");
+    expect(links).toHaveLength(4);
+
     expect(view.container.querySelector('a[href="/admin/users"]')).not.toBeNull();
     expect(view.container.querySelector('a[href="/admin/providers"]')).not.toBeNull();
     expect(view.container.querySelector('a[href="/admin/tasks"]')).not.toBeNull();
     expect(view.container.querySelector('a[href="/admin/storage"]')).not.toBeNull();
-    expect(screen.getByText(/API Key/)).toBeInTheDocument();
+
+    for (const link of links) {
+      expect(link.textContent?.trim().length ?? 0).toBeGreaterThan(0);
+    }
+
+    expect(screen.getByText(/HTTPS/i)).toBeInTheDocument();
+    expect(screen.getByText(/API Key/i)).toBeInTheDocument();
   });
 
   it("redirects unauthenticated users to login", async () => {

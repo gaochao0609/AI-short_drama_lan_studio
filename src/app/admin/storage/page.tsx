@@ -128,8 +128,16 @@ export default function AdminStoragePage() {
         </p>
       </header>
 
-      {message ? <p style={messageStyle}>{message}</p> : null}
-      {error ? <p style={errorStyle}>{error}</p> : null}
+      {message ? (
+        <p style={messageStyle} role="status" aria-live="polite">
+          {message}
+        </p>
+      ) : null}
+      {error ? (
+        <p style={errorStyle} role="alert" aria-live="assertive">
+          {error}
+        </p>
+      ) : null}
 
       <section style={summaryGridStyle}>
         <article style={heroCardStyle}>

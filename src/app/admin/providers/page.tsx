@@ -50,6 +50,8 @@ type ProviderFormState = {
   defaultForTasks: ModelTaskType[];
 };
 
+type JsonWithError = { error?: string };
+
 const taskOptions: Array<{ value: ModelTaskType; label: string }> = [
   { value: "script_question_generate", label: "脚本问答" },
   { value: "script_finalize", label: "脚本定稿" },
@@ -101,6 +103,23 @@ function getStoredSecretSummary(providers: ProviderItem[], selectedKey: string |
   return providers.find((provider) => provider.key === selectedKey)?.apiKeyMaskedTail ?? "已存储";
 }
 
+async function parseJsonSafe<T>(response: Response): Promise<T | null> {
+  try {
+    return (await response.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
+async function requestSafe(url: string, init?: RequestInit) {
+  try {
+    const response = await fetch(url, init);
+    return { response };
+  } catch {
+    throw new Error("网络请求失败");
+  }
+}
+
 export default function AdminProvidersPage() {
   const [providers, setProviders] = useState<ProviderItem[]>([]);
   const [defaultModels, setDefaultModels] = useState<Record<ModelTaskType, DefaultModelItem> | null>(null);
@@ -111,11 +130,8 @@ export default function AdminProvidersPage() {
   const [error, setError] = useState<string | null>(null);
 
   async function fetchAdminData() {
-    const response = await fetch("/api/admin/providers", { cache: "no-store" });
-    const payload = (await response.json().catch(() => null)) as
-      | ProviderPayload
-      | { error?: string }
-      | null;
+    const { response } = await requestSafe("/api/admin/providers", { cache: "no-store" });
+    const payload = await parseJsonSafe<ProviderPayload | JsonWithError>(response);
 
     if (!response.ok) {
       if (payload && "error" in payload) {
@@ -125,7 +141,11 @@ export default function AdminProvidersPage() {
       throw new Error("加载提供方失败");
     }
 
-    return payload as ProviderPayload;
+    if (!payload || "error" in payload) {
+      throw new Error("加载提供方失败");
+    }
+
+    return payload;
   }
 
   async function loadData() {
@@ -139,6 +159,14 @@ export default function AdminProvidersPage() {
       if (selectedProvider) {
         setForm(toFormState(selectedProvider));
       }
+    }
+  }
+
+  async function safeRefreshAfterMutation() {
+    try {
+      await loadData();
+    } catch (refreshError) {
+      setError(refreshError instanceof Error ? refreshError.message : "操作成功，但列表刷新失败");
     }
   }
 
@@ -208,41 +236,45 @@ export default function AdminProvidersPage() {
     setMessage(null);
     setError(null);
 
-    const response = await fetch("/api/admin/providers", {
-      method: mode === "create" ? "POST" : "PATCH",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        key: form.key,
-        label: form.label,
-        providerName: form.providerName,
-        modelName: form.modelName,
-        baseUrl: form.baseUrl,
-        timeoutMs: Number(form.timeoutMs),
-        maxRetries: Number(form.maxRetries),
-        enabled: form.enabled,
-        configJson: {
-          defaultForTasks: form.defaultForTasks,
+    try {
+      const { response } = await requestSafe("/api/admin/providers", {
+        method: mode === "create" ? "POST" : "PATCH",
+        headers: {
+          "content-type": "application/json",
         },
-        ...(mode === "create"
-          ? { apiKey: form.apiKey }
-          : form.clearStoredApiKey
-            ? { apiKey: null }
-            : form.apiKey.trim().length > 0
-              ? { apiKey: form.apiKey }
-              : {}),
-      }),
-    });
-    const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+        body: JSON.stringify({
+          key: form.key,
+          label: form.label,
+          providerName: form.providerName,
+          modelName: form.modelName,
+          baseUrl: form.baseUrl,
+          timeoutMs: Number(form.timeoutMs),
+          maxRetries: Number(form.maxRetries),
+          enabled: form.enabled,
+          configJson: {
+            defaultForTasks: form.defaultForTasks,
+          },
+          ...(mode === "create"
+            ? { apiKey: form.apiKey }
+            : form.clearStoredApiKey
+              ? { apiKey: null }
+              : form.apiKey.trim().length > 0
+                ? { apiKey: form.apiKey }
+                : {}),
+        }),
+      });
+      const payload = await parseJsonSafe<JsonWithError>(response);
 
-    if (!response.ok) {
-      setError(payload?.error ?? "保存提供方失败");
-      return;
+      if (!response.ok) {
+        setError(payload?.error ?? "保存提供方失败");
+        return;
+      }
+
+      setMessage(mode === "create" ? "提供方已创建。" : "提供方已更新。");
+      await safeRefreshAfterMutation();
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : "保存提供方失败");
     }
-
-    setMessage(mode === "create" ? "提供方已创建。" : "提供方已更新。");
-    await loadData();
   }
 
   return (
@@ -253,8 +285,16 @@ export default function AdminProvidersPage() {
         <p style={copyStyle}>统一维护代理地址、密钥、超时重试与任务默认路由。</p>
       </header>
 
-      {message ? <p style={messageStyle}>{message}</p> : null}
-      {error ? <p style={errorStyle}>{error}</p> : null}
+      {message ? (
+        <p style={messageStyle} role="status" aria-live="polite">
+          {message}
+        </p>
+      ) : null}
+      {error ? (
+        <p style={errorStyle} role="alert" aria-live="assertive">
+          {error}
+        </p>
+      ) : null}
 
       <section style={panelStyle}>
         <h3 style={panelTitleStyle}>默认模型路由</h3>
@@ -420,7 +460,10 @@ export default function AdminProvidersPage() {
                 <div style={itemContentStyle}>
                   <div style={itemTitleRowStyle}>
                     <strong>{provider.label}</strong>
-                    <StatusBadge label={provider.enabled ? "已启用" : "已停用"} tone={provider.enabled ? "success" : "danger"} />
+                    <StatusBadge
+                      label={provider.enabled ? "已启用" : "已停用"}
+                      tone={provider.enabled ? "success" : "danger"}
+                    />
                   </div>
                   <p style={metaStyle}>
                     {provider.key} / {provider.providerName} / {provider.modelName ?? "-"}
