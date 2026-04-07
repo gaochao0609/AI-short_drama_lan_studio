@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import path from "node:path";
 import {
   AssetCategory,
   AssetOrigin,
@@ -7,6 +8,8 @@ import {
   type PrismaClient,
 } from "@prisma/client";
 import { prisma } from "@/lib/db";
+import { promoteTempFile, writeTempFile } from "@/lib/storage/fs-storage";
+import { getStorageRoot, toStoredPath } from "@/lib/storage/paths";
 
 type BackfilledAsset = {
   id: string;
@@ -44,6 +47,26 @@ export function buildGeneratedScriptAssetMetadata(input: {
       traceId: input.sourceTask?.traceId ?? null,
     },
   } as Prisma.InputJsonValue;
+}
+
+export async function persistGeneratedScriptAssetFile(input: {
+  scriptVersionId: string;
+  extractedText: string;
+}) {
+  const storageRoot = getStorageRoot();
+  const destinationPath = path.join(
+    storageRoot,
+    "backfill",
+    "scripts",
+    `${input.scriptVersionId}.txt`,
+  );
+  const tempPath = await writeTempFile(Buffer.from(input.extractedText, "utf8"));
+  await promoteTempFile(tempPath, destinationPath);
+
+  return {
+    storagePath: toStoredPath(storageRoot, destinationPath),
+    sizeBytes: Buffer.byteLength(input.extractedText, "utf8"),
+  };
 }
 
 export type AssetCenterBackfillResult = {
@@ -124,6 +147,11 @@ export async function backfillAssetCenter(
     }
 
     let scriptAssetId = scriptAssetByFinalScriptVersionId.get(session.finalScriptVersionId) ?? null;
+    const extractedText = session.finalScriptVersion.body ?? "";
+    const persistedScriptFile = await persistGeneratedScriptAssetFile({
+      scriptVersionId: session.finalScriptVersion.id,
+      extractedText,
+    });
 
     if (!scriptAssetId) {
       const existingAsset = await db.asset.findFirst({
@@ -143,17 +171,16 @@ export async function backfillAssetCenter(
       if (existingAsset) {
         scriptAssetId = existingAsset.id;
       } else {
-        const extractedText = session.finalScriptVersion.body ?? "";
         const createdAsset = await db.asset.create({
           data: {
             projectId: session.projectId,
             kind: "script",
             category: AssetCategory.SCRIPT_GENERATED,
             origin: AssetOrigin.SYSTEM,
-            storagePath: `backfill/scripts/${session.finalScriptVersion.id}.txt`,
+            storagePath: persistedScriptFile.storagePath,
             originalName: `final-script-v${session.finalScriptVersion.versionNumber}.txt`,
             mimeType: "text/plain",
-            sizeBytes: Buffer.byteLength(extractedText, "utf8"),
+            sizeBytes: persistedScriptFile.sizeBytes,
             metadata: buildGeneratedScriptAssetMetadata({
               scriptSessionId: session.id,
               scriptVersionId: session.finalScriptVersion.id,

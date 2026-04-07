@@ -12,7 +12,10 @@ import { prisma } from "@/lib/db";
 import { callProxyModel } from "@/lib/models/proxy-client";
 import { getDefaultModelSummary } from "@/lib/models/provider-registry";
 import { bullmqConnection } from "@/lib/redis";
-import { buildGeneratedScriptAssetMetadata } from "@/lib/services/asset-backfill";
+import {
+  buildGeneratedScriptAssetMetadata,
+  persistGeneratedScriptAssetFile,
+} from "@/lib/services/asset-backfill";
 import { cancelTaskIfRequested } from "@/worker/processors/cancellation";
 
 type ScriptFinalizePayload = {
@@ -234,6 +237,10 @@ async function mirrorFinalScriptAsAsset(input: {
       id: true,
     },
   });
+  const persistedScriptFile = await persistGeneratedScriptAssetFile({
+    scriptVersionId: input.scriptVersionId,
+    extractedText: input.body,
+  });
 
   const assetData = {
     projectId: input.projectId,
@@ -241,10 +248,10 @@ async function mirrorFinalScriptAsAsset(input: {
     kind: "script",
     category: AssetCategory.SCRIPT_GENERATED,
     origin: AssetOrigin.SYSTEM,
-    storagePath: `backfill/scripts/${input.scriptVersionId}.txt`,
+    storagePath: persistedScriptFile.storagePath,
     originalName: `final-script-v${input.scriptVersionNumber}.txt`,
     mimeType: "text/plain",
-    sizeBytes: Buffer.byteLength(input.body, "utf8"),
+    sizeBytes: persistedScriptFile.sizeBytes,
     metadata: buildGeneratedScriptAssetMetadata({
       scriptSessionId: input.sessionId,
       scriptVersionId: input.scriptVersionId,

@@ -1,3 +1,6 @@
+import { readFile, mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import {
   AssetCategory,
   AssetOrigin,
@@ -12,7 +15,12 @@ import { withTestDatabase } from "../db/test-database";
 
 describe("asset backfill service", () => {
   it("backfills one generated script asset per historical final script version in the same project", async () => {
-    await withTestDatabase(async ({ prisma }) => {
+    const previousStorageRoot = process.env.STORAGE_ROOT;
+    const storageRoot = await mkdtemp(path.join(os.tmpdir(), "lan-backfill-multi-final-script-"));
+    process.env.STORAGE_ROOT = storageRoot;
+
+    try {
+      await withTestDatabase(async ({ prisma }) => {
       const owner = await prisma.user.create({
         data: {
           username: "asset-backfill-multi-final-owner",
@@ -124,11 +132,24 @@ describe("asset backfill service", () => {
       expect(secondRun.updatedAssets).toHaveLength(0);
       expect(secondRun.createdBindings).toHaveLength(0);
       expect(secondRun.updatedBindings).toHaveLength(0);
-    });
+      });
+    } finally {
+      await rm(storageRoot, { recursive: true, force: true });
+      if (previousStorageRoot === undefined) {
+        delete process.env.STORAGE_ROOT;
+      } else {
+        process.env.STORAGE_ROOT = previousStorageRoot;
+      }
+    }
   });
 
   it("backfills generated script assets, normalizes legacy media assets, and remains idempotent", async () => {
-    await withTestDatabase(async ({ prisma }) => {
+    const previousStorageRoot = process.env.STORAGE_ROOT;
+    const storageRoot = await mkdtemp(path.join(os.tmpdir(), "lan-backfill-generated-script-"));
+    process.env.STORAGE_ROOT = storageRoot;
+
+    try {
+      await withTestDatabase(async ({ prisma }) => {
       const owner = await prisma.user.create({
         data: {
           username: "asset-backfill-owner",
@@ -270,6 +291,9 @@ describe("asset backfill service", () => {
           extractedText: expect.stringContaining("INT. ROOFTOP"),
         }),
       );
+      const { resolveStoredPath } = await import("@/lib/storage/paths");
+      const generatedScriptFilePath = resolveStoredPath(storageRoot, generatedScriptAsset.storagePath);
+      await expect(readFile(generatedScriptFilePath, "utf8")).resolves.toContain("INT. ROOFTOP");
       expect(workflowBindingWithFinal.storyboardScriptAssetId).toBe(generatedScriptAsset.id);
       expect(workflowBindingWithoutFinal.storyboardScriptAssetId).toBeNull();
       expect(normalizedAssets).toEqual(
@@ -306,6 +330,14 @@ describe("asset backfill service", () => {
           },
         }),
       ).toBe(1);
-    });
+      });
+    } finally {
+      await rm(storageRoot, { recursive: true, force: true });
+      if (previousStorageRoot === undefined) {
+        delete process.env.STORAGE_ROOT;
+      } else {
+        process.env.STORAGE_ROOT = previousStorageRoot;
+      }
+    }
   });
 });

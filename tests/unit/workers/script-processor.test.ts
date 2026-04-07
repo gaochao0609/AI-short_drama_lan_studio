@@ -47,6 +47,7 @@ const mocks = vi.hoisted(() => {
   return {
     callProxyModel: vi.fn(),
     getDefaultModelSummary: vi.fn(),
+    persistGeneratedScriptAssetFile: vi.fn(),
     prisma: {
       $transaction: transaction,
       ...prisma,
@@ -64,6 +65,30 @@ vi.mock("@/lib/models/proxy-client", () => ({
 
 vi.mock("@/lib/models/provider-registry", () => ({
   getDefaultModelSummary: mocks.getDefaultModelSummary,
+}));
+
+vi.mock("@/lib/services/asset-backfill", () => ({
+  buildGeneratedScriptAssetMetadata: (input: {
+    scriptSessionId: string;
+    scriptVersionId: string;
+    extractedText: string;
+    sourceTask?: {
+      taskId?: string | null;
+      taskType?: TaskType;
+      traceId?: string | null;
+    };
+  }) => ({
+    parseStatus: "ready",
+    scriptSessionId: input.scriptSessionId,
+    scriptVersionId: input.scriptVersionId,
+    extractedText: input.extractedText,
+    sourceTask: {
+      taskId: input.sourceTask?.taskId ?? null,
+      taskType: input.sourceTask?.taskType ?? TaskType.SCRIPT_FINALIZE,
+      traceId: input.sourceTask?.traceId ?? null,
+    },
+  }),
+  persistGeneratedScriptAssetFile: mocks.persistGeneratedScriptAssetFile,
 }));
 
 import { processScriptFinalizeJob } from "@/worker/processors/script";
@@ -86,6 +111,11 @@ describe("processScriptFinalizeJob", () => {
     mocks.prisma.asset.create.mockReset();
     mocks.prisma.asset.update.mockReset();
     mocks.prisma.asset.deleteMany.mockReset();
+    mocks.persistGeneratedScriptAssetFile.mockReset();
+    mocks.persistGeneratedScriptAssetFile.mockResolvedValue({
+      storagePath: "backfill/scripts/version-1.txt",
+      sizeBytes: 49,
+    });
   });
 
   it("writes a script version when a finalize job succeeds", async () => {
@@ -235,6 +265,10 @@ describe("processScriptFinalizeJob", () => {
         }),
       }),
     );
+    expect(mocks.persistGeneratedScriptAssetFile).toHaveBeenCalledWith({
+      scriptVersionId: "version-1",
+      extractedText: "INT. ARCHIVE - NIGHT\nThe courier opens the vault.",
+    });
   });
 
   it("updates the existing generated-script asset and removes duplicates on retry", async () => {

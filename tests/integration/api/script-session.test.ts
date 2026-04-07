@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import {
   AssetCategory,
   AssetOrigin,
@@ -1056,8 +1059,13 @@ describe("script session api", () => {
       },
     });
 
-    await withTestDatabase(async ({ databaseUrl, prisma }) => {
-      await withApiTestEnv(databaseUrl, async () => {
+    const storageRoot = await mkdtemp(path.join(os.tmpdir(), "lan-script-finalize-asset-"));
+
+    try {
+      await withTestDatabase(async ({ databaseUrl, prisma }) => {
+        await withApiTestEnv(
+          databaseUrl,
+          async () => {
         const user = await createActiveUser(prisma, "script-session-finalize-asset");
         const session = await insertSessionForUser(prisma, user.id);
         const project = await createProjectWithProvider(prisma, user.id, "finalize-asset");
@@ -1083,6 +1091,14 @@ describe("script session api", () => {
             context: { params: Promise<{ sessionId: string }> | { sessionId: string } },
           ) => Promise<Response>;
         }>("src/app/api/script/sessions/[sessionId]/finalize/route.ts", {
+          sessionToken: session.token,
+        });
+        const { GET: downloadGet } = await loadRouteModule<{
+          GET: (
+            request: Request,
+            context: { params: Promise<{ assetId: string }> | { assetId: string } },
+          ) => Promise<Response>;
+        }>("src/app/api/assets/[assetId]/download/route.ts", {
           sessionToken: session.token,
         });
         const { processScriptFinalizeJob } = await import("@/worker/processors/script");
@@ -1188,6 +1204,21 @@ describe("script session api", () => {
             },
           }),
         );
+        const generatedAssetId = generatedAssetsAfterFirstRun[0]?.id;
+        expect(typeof generatedAssetId).toBe("string");
+        const downloadResponse = await downloadGet(
+          new Request(`http://localhost/api/assets/${generatedAssetId}/download`, {
+            method: "GET",
+          }),
+          {
+            params: { assetId: generatedAssetId as string },
+          },
+        );
+        expect(downloadResponse.status).toBe(200);
+        expect(downloadResponse.headers.get("content-type")).toBe("text/plain");
+        await expect(downloadResponse.text()).resolves.toBe(
+          "INT. ROOFTOP - NIGHT\nThe rain starts as the hero arrives.",
+        );
 
         const secondRun = await processScriptFinalizeJob({
           attemptsMade: 1,
@@ -1227,8 +1258,15 @@ describe("script session api", () => {
               asset.category === AssetCategory.SCRIPT_GENERATED,
           ),
         ).toHaveLength(0);
+          },
+          {
+            STORAGE_ROOT: storageRoot,
+          },
+        );
       });
-    });
+    } finally {
+      await rm(storageRoot, { recursive: true, force: true });
+    }
   });
 
   it("freezes the session after finalize accepts and blocks answer and regenerate requests", async () => {
