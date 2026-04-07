@@ -168,21 +168,24 @@ describe("project assets api", () => {
                   script_source: [
                     expect.objectContaining({
                       id: scriptAsset.id,
+                      originalName: "scene.txt",
                       category: "script_source",
                       origin: "upload",
                       mimeType: "text/plain",
                       parseStatus: "pending",
+                      parseError: null,
                       downloadUrl: `/api/assets/${scriptAsset.id}/download`,
                     }),
                   ],
                   script_generated: [],
                   image_source: [
-                    expect.objectContaining({ id: imageSourceB.id }),
-                    expect.objectContaining({ id: imageSourceA.id }),
+                    expect.objectContaining({ id: imageSourceB.id, originalName: "b.png" }),
+                    expect.objectContaining({ id: imageSourceA.id, originalName: "a.png" }),
                   ],
                   image_generated: [
                     expect.objectContaining({
                       id: imageGenerated.id,
+                      originalName: "image.png",
                       category: "image_generated",
                       origin: "system",
                     }),

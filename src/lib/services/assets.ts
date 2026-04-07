@@ -12,10 +12,12 @@ type ParseStatus = "pending" | "ready" | "failed" | null;
 
 export type AssetSummary = {
   id: string;
+  originalName: string | null;
   category: "script_source" | "script_generated" | "image_source" | "image_generated" | "video_generated";
   origin: "upload" | "system";
   mimeType: string;
   parseStatus: ParseStatus;
+  parseError: string | null;
   createdAt: string;
   downloadUrl: string;
 };
@@ -120,6 +122,16 @@ function readParseStatus(metadata: Prisma.JsonValue | null): ParseStatus {
   const value = readMetadataObject(metadata).parseStatus;
 
   if (value === "pending" || value === "ready" || value === "failed") {
+    return value;
+  }
+
+  return null;
+}
+
+function readParseError(metadata: Prisma.JsonValue | null) {
+  const value = readMetadataObject(metadata).parseError;
+
+  if (typeof value === "string" && value.trim()) {
     return value;
   }
 
@@ -238,6 +250,7 @@ export async function listProjectAssets(projectId: string, userId: string) {
       category: true,
       origin: true,
       mimeType: true,
+      originalName: true,
       metadata: true,
       createdAt: true,
     },
@@ -256,6 +269,7 @@ export async function listProjectAssets(projectId: string, userId: string) {
 
     groupedAssets[category].push({
       id: asset.id,
+      originalName: asset.originalName,
       category,
       origin: toOriginToken({
         origin: asset.origin,
@@ -263,6 +277,7 @@ export async function listProjectAssets(projectId: string, userId: string) {
       }),
       mimeType: asset.mimeType,
       parseStatus: readParseStatus(asset.metadata),
+      parseError: readParseError(asset.metadata),
       createdAt: asset.createdAt.toISOString(),
       downloadUrl: toDownloadUrl(asset.id),
     });

@@ -77,6 +77,10 @@ function mapAssetEntries(assets: GroupedProjectAssets) {
   return GROUP_ORDER.flatMap((groupKey) => assets[groupKey]);
 }
 
+function readAssetDisplayName(asset: AssetSummary | undefined, fallback: string) {
+  return asset?.originalName?.trim() || fallback;
+}
+
 function readErrorText(payload: unknown, fallback: string) {
   if (payload && typeof payload === "object" && "error" in payload) {
     const value = payload.error;
@@ -270,7 +274,7 @@ export default function AssetCenterClient({
       return "未设置";
     }
 
-    return assetMap.get(assetId)?.id ?? assetId;
+    return readAssetDisplayName(assetMap.get(assetId), assetId);
   }
 
   function readBindingLabels(assetIds: string[]) {

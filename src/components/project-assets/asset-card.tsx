@@ -8,10 +8,12 @@ import AssetBindingPicker from "@/components/project-assets/asset-binding-picker
 type AssetCardProps = {
   asset: {
     id: string;
+    originalName: string | null;
     category: "script_source" | "script_generated" | "image_source" | "image_generated" | "video_generated";
     origin: "upload" | "system";
     mimeType: string;
     parseStatus: "pending" | "ready" | "failed" | null;
+    parseError: string | null;
     createdAt: string;
     downloadUrl: string;
   };
@@ -86,12 +88,13 @@ export default function AssetCard({
     asset.category === "script_source" || asset.category === "script_generated";
   const isImageAsset =
     asset.category === "image_source" || asset.category === "image_generated";
+  const assetLabel = asset.originalName?.trim() || asset.id;
 
   return (
     <article aria-label={`${asset.id} 资产卡片`} style={cardStyle}>
       <div style={cardHeaderStyle}>
         <div style={cardHeadingStyle}>
-          <strong style={titleStyle}>{asset.id}</strong>
+          <strong style={titleStyle}>{assetLabel}</strong>
           <span style={metaStyle}>{formatCategoryLabel(asset.category)}</span>
         </div>
         {parseStatus ? (
@@ -102,8 +105,10 @@ export default function AssetCard({
       </div>
 
       <div style={metaStackStyle}>
+        <span style={metaStyle}>资产 ID：{asset.id}</span>
         <span style={metaStyle}>{asset.mimeType}</span>
         <span style={metaStyle}>创建于 {formatDate(asset.createdAt)}</span>
+        {asset.parseError ? <p style={errorStyle}>{asset.parseError}</p> : null}
         {isStoryboardBound ? <span style={highlightStyle}>当前分镜默认输入</span> : null}
         {isImageReferenceBound ? <span style={highlightStyle}>已加入图片默认参考</span> : null}
         {isVideoReferenceBound ? <span style={highlightStyle}>已加入视频默认参考</span> : null}
@@ -200,6 +205,12 @@ const metaStyle = {
 const highlightStyle = {
   color: "#fcd34d",
   fontWeight: 700,
+  lineHeight: 1.6,
+} satisfies CSSProperties;
+
+const errorStyle = {
+  margin: 0,
+  color: "#fecaca",
   lineHeight: 1.6,
 } satisfies CSSProperties;
 

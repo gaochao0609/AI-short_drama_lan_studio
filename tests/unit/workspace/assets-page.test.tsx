@@ -43,10 +43,12 @@ describe("project assets page", () => {
         script_source: [
           {
             id: "script-upload-1",
+            originalName: "scene-outline.md",
             category: "script_source",
             origin: "upload",
             mimeType: "text/plain",
             parseStatus: "failed",
+            parseError: "脚本解析失败：文件编码无法识别",
             createdAt: "2026-04-07T10:00:00.000Z",
             downloadUrl: "/api/assets/script-upload-1/download",
           },
@@ -56,6 +58,7 @@ describe("project assets page", () => {
         image_generated: [
           {
             id: "image-generated-1",
+            originalName: "hero-frame.png",
             category: "image_generated",
             origin: "system",
             mimeType: "image/png",
@@ -92,7 +95,9 @@ describe("project assets page", () => {
     expect(screen.getByText("Project One")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "上传剧本或图片" })).toBeInTheDocument();
     expect(screen.getByText("当前默认分镜剧本")).toBeInTheDocument();
-    expect(screen.getAllByText("script-upload-1").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("scene-outline.md").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("hero-frame.png").length).toBeGreaterThan(0);
+    expect(screen.getByText("脚本解析失败：文件编码无法识别")).toBeInTheDocument();
 
     const scriptCard = screen.getByLabelText("script-upload-1 资产卡片");
     expect(within(scriptCard).getByRole("link", { name: "预览" })).toHaveAttribute(
@@ -106,6 +111,7 @@ describe("project assets page", () => {
     expect(within(scriptCard).getByRole("button", { name: "绑定到流程" })).toBeInTheDocument();
     expect(within(scriptCard).getByRole("button", { name: "重试解析" })).toBeInTheDocument();
     expect(within(scriptCard).getByRole("button", { name: "删除资产" })).toBeInTheDocument();
+    expect(scriptCard).toHaveTextContent("script-upload-1");
   });
 
   it("renders empty states when no assets or default bindings exist", async () => {
