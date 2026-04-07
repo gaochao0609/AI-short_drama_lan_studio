@@ -48,7 +48,7 @@ test("main auth flow covers request approval login and forced password change", 
       },
     });
 
-    await page.goto("http://localhost:3000/register-request");
+    await page.goto("/register-request");
     await expect(page.getByText("Lan Studio")).toBeVisible();
     await page.getByLabel("用户名").fill(requesterUsername);
     await page.getByLabel("显示名称").fill(requesterDisplayName);
@@ -69,7 +69,7 @@ test("main auth flow covers request approval login and forced password change", 
       }),
     );
 
-    await page.goto("http://localhost:3000/login");
+    await page.goto("/login");
     await expect(page.getByText("Lan Studio")).toBeVisible();
     await expect(page.getByRole("button", { name: "进入创作工作区" })).toBeVisible();
     await page.getByLabel("用户名").fill(adminUsername);
@@ -108,7 +108,7 @@ test("main auth flow covers request approval login and forced password change", 
       }),
     );
 
-    await page.goto("http://localhost:3000/login");
+    await page.goto("/login");
     await page.getByLabel("用户名").fill(requesterUsername);
     await page.getByLabel("密码").fill(approvalPayload.tempPassword);
     await page.getByRole("button", { name: "进入创作工作区" }).click();
@@ -118,7 +118,7 @@ test("main auth flow covers request approval login and forced password change", 
     await page.getByLabel("新密码", { exact: true }).fill(finalPassword);
     await page.getByLabel("确认新密码", { exact: true }).fill(finalPassword);
     await page.getByRole("button", { name: "保存并进入工作区" }).click();
-    await expect(page).toHaveURL("http://localhost:3000/workspace");
+    await expect(page).toHaveURL(/\/workspace$/);
 
     await expect(
       prisma.user.findUniqueOrThrow({
