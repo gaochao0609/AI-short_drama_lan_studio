@@ -98,7 +98,9 @@ async function expectNoHorizontalOverflow(page: Page) {
 }
 
 async function expectVisibleFocusIndicator(page: Page) {
-  const navLink = page.locator(".studio-shell__nav-link").first();
+  const navLink = page
+    .getByRole("navigation", { name: /creative workspace navigation|\u5de5\u4f5c\u533a\u5bfc\u822a/i })
+    .getByRole("link", { name: /workspace overview|\u5de5\u4f5c\u533a\u603b\u89c8|\u5de5\u4f5c\u533a\u6982\u89c8/i });
   await expect(navLink).toBeVisible();
   const baselineStyle = await navLink.evaluate((element) => {
     const link = element as HTMLElement;
@@ -200,9 +202,10 @@ test("workspace create-project form navigates into the project flow", async ({ p
     const projectId = page.url().split("/").at(-1) ?? "";
     await expectNoHorizontalOverflow(page);
     const projectWorkflowRegion = page
-      .getByRole("region")
+      .getByRole("region", { name: /\u6d41\u7a0b\u63a7\u5236|workflow control/i })
       .filter({ has: page.locator(`a[href="/projects/${projectId}/script"]`) })
-      .first();
+      .filter({ has: page.getByRole("link", { name: /\u8fdb\u5165\u811a\u672c\u6d41\u7a0b|script/i }) });
+    await expect(projectWorkflowRegion).toHaveCount(1);
     await expect(projectWorkflowRegion.getByRole("link", { name: /\u8fdb\u5165\u811a\u672c\u6d41\u7a0b|script/i }))
       .toHaveAttribute("href", `/projects/${projectId}/script`);
     await expect(projectWorkflowRegion.getByText("Script", { exact: true })).toBeVisible();
