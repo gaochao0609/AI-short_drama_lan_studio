@@ -173,6 +173,22 @@ function toScriptPendingMetadata(input: {
   return metadata as Prisma.InputJsonValue;
 }
 
+function toScriptFailedMetadata(input: {
+  fileName: string;
+  extension: string;
+  errorText: string;
+  previousMetadata?: Prisma.JsonValue | null;
+}) {
+  const metadata = readMetadataObject(input.previousMetadata ?? null);
+
+  metadata.originalFileName = input.fileName;
+  metadata.extension = input.extension;
+  metadata.parseStatus = "failed";
+  metadata.parseError = input.errorText;
+
+  return metadata as Prisma.InputJsonValue;
+}
+
 async function getOwnedProjectAsset(input: {
   projectId: string;
   assetId: string;
@@ -193,6 +209,7 @@ async function getOwnedProjectAsset(input: {
       origin: true,
       mimeType: true,
       storagePath: true,
+      originalName: true,
       metadata: true,
     },
   });
@@ -295,6 +312,12 @@ export async function uploadProjectAsset(input: {
       throw error;
     }
 
+    const fileName = file.name || path.basename(destinationPath);
+    const pendingMetadata = toScriptPendingMetadata({
+      fileName,
+      extension: scriptUpload.extension,
+    });
+
     const createdAsset = await prisma.asset.create({
       data: {
         projectId: project.id,
@@ -305,39 +328,59 @@ export async function uploadProjectAsset(input: {
         originalName: file.name || null,
         mimeType: scriptUpload.mimeType,
         sizeBytes: bytes.length,
-        metadata: toScriptPendingMetadata({
-          fileName: file.name,
-          extension: scriptUpload.extension,
-        }),
+        metadata: pendingMetadata,
       },
       select: {
         id: true,
       },
     });
 
-    const payload = {
-      projectId: project.id,
-      userId: input.userId,
-      assetId: createdAsset.id,
-    };
-    const task = await prisma.task.create({
-      data: {
+    try {
+      const payload = {
         projectId: project.id,
-        createdById: input.userId,
-        type: TaskType.ASSET_SCRIPT_PARSE,
-        inputJson: payload,
-      },
-      select: {
-        id: true,
-      },
-    });
+        userId: input.userId,
+        assetId: createdAsset.id,
+      };
+      const task = await prisma.task.create({
+        data: {
+          projectId: project.id,
+          createdById: input.userId,
+          type: TaskType.ASSET_SCRIPT_PARSE,
+          inputJson: payload,
+        },
+        select: {
+          id: true,
+        },
+      });
 
-    await enqueueTask(task.id, TaskType.ASSET_SCRIPT_PARSE, payload);
+      await enqueueTask(task.id, TaskType.ASSET_SCRIPT_PARSE, payload);
 
-    return {
-      assetId: createdAsset.id,
-      taskId: task.id,
-    };
+      return {
+        assetId: createdAsset.id,
+        taskId: task.id,
+      };
+    } catch (error) {
+      const errorText =
+        error instanceof Error ? error.message : "Failed to enqueue script parse task";
+
+      await prisma.asset
+        .update({
+          where: {
+            id: createdAsset.id,
+          },
+          data: {
+            metadata: toScriptFailedMetadata({
+              fileName,
+              extension: scriptUpload.extension,
+              errorText,
+              previousMetadata: pendingMetadata as unknown as Prisma.JsonValue,
+            }),
+          },
+        })
+        .catch(() => undefined);
+
+      throw error;
+    }
   }
 
   if (!ALLOWED_IMAGE_MIME_TYPES.has(file.type)) {
@@ -407,42 +450,69 @@ export async function retryScriptSourceParse(input: {
     throw new ServiceError(409, "Only failed script_source assets can be retried");
   }
 
+  const fileName = asset.originalName ?? (path.basename(asset.storagePath) || asset.id);
+  const extension = path.extname(asset.storagePath) || ".txt";
+  const pendingMetadata = toScriptPendingMetadata({
+    fileName,
+    extension,
+    previousMetadata: asset.metadata,
+  });
+
   await prisma.asset.update({
     where: {
       id: asset.id,
     },
     data: {
-      metadata: toScriptPendingMetadata({
-        fileName: asset.id,
-        extension: path.extname(asset.storagePath) || ".txt",
-        previousMetadata: asset.metadata,
-      }),
+      metadata: pendingMetadata,
     },
   });
 
-  const payload = {
-    projectId: input.projectId,
-    userId: input.userId,
-    assetId: asset.id,
-  };
-  const task = await prisma.task.create({
-    data: {
+  try {
+    const payload = {
       projectId: input.projectId,
-      createdById: input.userId,
-      type: TaskType.ASSET_SCRIPT_PARSE,
-      inputJson: payload,
-    },
-    select: {
-      id: true,
-    },
-  });
+      userId: input.userId,
+      assetId: asset.id,
+    };
+    const task = await prisma.task.create({
+      data: {
+        projectId: input.projectId,
+        createdById: input.userId,
+        type: TaskType.ASSET_SCRIPT_PARSE,
+        inputJson: payload,
+      },
+      select: {
+        id: true,
+      },
+    });
 
-  await enqueueTask(task.id, TaskType.ASSET_SCRIPT_PARSE, payload);
+    await enqueueTask(task.id, TaskType.ASSET_SCRIPT_PARSE, payload);
 
-  return {
-    assetId: asset.id,
-    taskId: task.id,
-  };
+    return {
+      assetId: asset.id,
+      taskId: task.id,
+    };
+  } catch (error) {
+    const errorText =
+      error instanceof Error ? error.message : "Failed to enqueue script parse task";
+
+    await prisma.asset
+      .update({
+        where: {
+          id: asset.id,
+        },
+        data: {
+          metadata: toScriptFailedMetadata({
+            fileName,
+            extension,
+            errorText,
+            previousMetadata: pendingMetadata as unknown as Prisma.JsonValue,
+          }),
+        },
+      })
+      .catch(() => undefined);
+
+    throw error;
+  }
 }
 
 export async function deleteProjectAsset(input: {

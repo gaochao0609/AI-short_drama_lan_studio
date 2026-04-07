@@ -40,6 +40,23 @@ async function createActiveUser(prisma: PrismaClient, username: string) {
 }
 
 describe("project assets api", () => {
+  it("routes ASSET_SCRIPT_PARSE tasks to an isolated queue", async () => {
+    await withTestDatabase(async ({ databaseUrl }) => {
+      await withApiTestEnv(databaseUrl, async () => {
+        const { getQueueForTaskType, closeQueues } = await import("@/lib/queues");
+
+        try {
+          expect(getQueueForTaskType(TaskType.SCRIPT_FINALIZE).name).toBe("script-queue");
+          expect(getQueueForTaskType(TaskType.ASSET_SCRIPT_PARSE).name).toBe(
+            "asset-script-parse-queue",
+          );
+        } finally {
+          await closeQueues();
+        }
+      });
+    });
+  });
+
   it("lists grouped assets with workflow bindings for an owned project", async () => {
     await withTestDatabase(async ({ databaseUrl, prisma }) => {
       const storageRoot = await mkdtemp(path.join(os.tmpdir(), "lan-studio-project-assets-list-"));
@@ -303,6 +320,110 @@ describe("project assets api", () => {
     });
   });
 
+  it("marks uploaded script assets as failed when parse task enqueue fails", async () => {
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      const storageRoot = await mkdtemp(
+        path.join(os.tmpdir(), "lan-studio-project-assets-upload-enqueue-fail-"),
+      );
+
+      try {
+        await withApiTestEnv(
+          databaseUrl,
+          async () => {
+            enqueueTaskMock.mockRejectedValueOnce(new Error("script parse queue unavailable"));
+
+            const user = await createActiveUser(prisma, "project-assets-upload-enqueue-fail-owner");
+            const session = await insertSessionForUser(prisma, user.id);
+            const project = await prisma.project.create({
+              data: {
+                ownerId: user.id,
+                title: "Project Assets Upload Enqueue Failure",
+              },
+            });
+
+            const assetsRoute = await loadRouteModule<{
+              POST: (
+                request: Request,
+                context: { params: Promise<{ projectId: string }> | { projectId: string } },
+              ) => Promise<Response>;
+            }>("src/app/api/projects/[projectId]/assets/route.ts", {
+              sessionToken: session.token,
+            });
+
+            const scriptBytes = Buffer.from("INT. CAFE - DAWN");
+            const scriptFile = new File([scriptBytes], "scene.txt", { type: "text/plain" });
+            const scriptForm = new FormData();
+            scriptForm.set("file", scriptFile);
+
+            const uploadResponse = await assetsRoute.POST(
+              {
+                url: `http://localhost/api/projects/${project.id}/assets`,
+                headers: new Headers({
+                  "content-type": "multipart/form-data; boundary=----vitest",
+                  "content-length": String(scriptBytes.length),
+                }),
+                formData: async () => scriptForm,
+              } as unknown as Request,
+              { params: { projectId: project.id } },
+            );
+
+            expect(uploadResponse.status).toBe(500);
+
+            const uploadedScriptAsset = await prisma.asset.findFirstOrThrow({
+              where: {
+                projectId: project.id,
+                category: AssetCategory.SCRIPT_SOURCE,
+              },
+              orderBy: {
+                createdAt: "desc",
+              },
+            });
+            expect(uploadedScriptAsset.metadata).toEqual(
+              expect.objectContaining({
+                parseStatus: "failed",
+                parseError: expect.stringContaining("script parse queue unavailable"),
+              }),
+            );
+
+            enqueueTaskMock.mockResolvedValueOnce({
+              jobId: "job-recover-after-upload-enqueue-fail",
+              queueName: "asset-script-parse-queue",
+            });
+            const retryRoute = await loadRouteModule<{
+              POST: (
+                request: Request,
+                context: {
+                  params:
+                    | Promise<{ projectId: string; assetId: string }>
+                    | { projectId: string; assetId: string };
+                },
+              ) => Promise<Response>;
+            }>("src/app/api/projects/[projectId]/assets/[assetId]/retry/route.ts", {
+              sessionToken: session.token,
+            });
+
+            const retryResponse = await retryRoute.POST(
+              new Request(
+                `http://localhost/api/projects/${project.id}/assets/${uploadedScriptAsset.id}/retry`,
+                {
+                  method: "POST",
+                },
+              ),
+              { params: { projectId: project.id, assetId: uploadedScriptAsset.id } },
+            );
+
+            expect(retryResponse.status).toBe(202);
+          },
+          {
+            STORAGE_ROOT: storageRoot,
+          },
+        );
+      } finally {
+        await rm(storageRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
   it("patches workflow bindings with project ownership checks and ordered de-duplication", async () => {
     await withTestDatabase(async ({ databaseUrl, prisma }) => {
       await withApiTestEnv(databaseUrl, async () => {
@@ -545,6 +666,90 @@ describe("project assets api", () => {
                 assetId: failedScriptAsset.id,
                 projectId: project.id,
                 userId: user.id,
+              }),
+            );
+          },
+          {
+            STORAGE_ROOT: storageRoot,
+          },
+        );
+      } finally {
+        await rm(storageRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
+  it("keeps script assets recoverable when retry enqueue fails", async () => {
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      const storageRoot = await mkdtemp(
+        path.join(os.tmpdir(), "lan-studio-project-assets-retry-enqueue-fail-"),
+      );
+
+      try {
+        await withApiTestEnv(
+          databaseUrl,
+          async () => {
+            enqueueTaskMock.mockRejectedValueOnce(new Error("retry enqueue failed"));
+
+            const user = await createActiveUser(prisma, "project-assets-retry-enqueue-fail-owner");
+            const session = await insertSessionForUser(prisma, user.id);
+            const project = await prisma.project.create({
+              data: {
+                ownerId: user.id,
+                title: "Project Assets Retry Enqueue Failure",
+              },
+            });
+            const failedScriptAsset = await prisma.asset.create({
+              data: {
+                projectId: project.id,
+                kind: "script",
+                category: AssetCategory.SCRIPT_SOURCE,
+                origin: AssetOrigin.UPLOAD,
+                storagePath: "uploads/scripts/retry-enqueue-fail.txt",
+                originalName: "retry-enqueue-fail.txt",
+                mimeType: "text/plain",
+                sizeBytes: 18,
+                metadata: {
+                  parseStatus: "failed",
+                  parseError: "first failure",
+                },
+              },
+            });
+
+            const retryRoute = await loadRouteModule<{
+              POST: (
+                request: Request,
+                context: {
+                  params:
+                    | Promise<{ projectId: string; assetId: string }>
+                    | { projectId: string; assetId: string };
+                },
+              ) => Promise<Response>;
+            }>("src/app/api/projects/[projectId]/assets/[assetId]/retry/route.ts", {
+              sessionToken: session.token,
+            });
+
+            const retryResponse = await retryRoute.POST(
+              new Request(
+                `http://localhost/api/projects/${project.id}/assets/${failedScriptAsset.id}/retry`,
+                {
+                  method: "POST",
+                },
+              ),
+              { params: { projectId: project.id, assetId: failedScriptAsset.id } },
+            );
+
+            expect(retryResponse.status).toBe(500);
+
+            const retriedAsset = await prisma.asset.findUniqueOrThrow({
+              where: {
+                id: failedScriptAsset.id,
+              },
+            });
+            expect(retriedAsset.metadata).toEqual(
+              expect.objectContaining({
+                parseStatus: "failed",
+                parseError: expect.stringContaining("retry enqueue failed"),
               }),
             );
           },
