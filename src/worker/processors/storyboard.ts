@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { callProxyModel } from "@/lib/models/proxy-client";
 import { getDefaultModelSummary } from "@/lib/models/provider-registry";
 import {
+  resolveStoryboardScriptInput,
   StoryboardSegmentsSchema,
   type StoryboardSegment,
 } from "@/lib/services/storyboards";
@@ -14,7 +15,8 @@ import { cancelTaskIfRequested } from "@/worker/processors/cancellation";
 
 type StoryboardPayload = {
   projectId: string;
-  scriptVersionId: string;
+  scriptAssetId?: string;
+  scriptVersionId?: string;
   userId: string;
 };
 
@@ -48,17 +50,20 @@ function parseStoryboardPayload(value: unknown): StoryboardPayload {
 
   const candidate = value as Record<string, unknown>;
   const projectId = typeof candidate.projectId === "string" ? candidate.projectId : "";
+  const scriptAssetId =
+    typeof candidate.scriptAssetId === "string" ? candidate.scriptAssetId : "";
   const scriptVersionId =
     typeof candidate.scriptVersionId === "string" ? candidate.scriptVersionId : "";
   const userId = typeof candidate.userId === "string" ? candidate.userId : "";
 
-  if (!projectId || !scriptVersionId || !userId) {
+  if (!projectId || (!scriptAssetId && !scriptVersionId) || !userId) {
     throw new Error("Storyboard payload is incomplete");
   }
 
   return {
     projectId,
-    scriptVersionId,
+    ...(scriptAssetId ? { scriptAssetId } : {}),
+    ...(scriptVersionId ? { scriptVersionId } : {}),
     userId,
   };
 }
@@ -227,20 +232,12 @@ export async function processStoryboardJob(
       });
     }
 
-    const scriptVersion = await prisma.scriptVersion.findFirst({
-      where: {
-        id: payload.scriptVersionId,
-        projectId: payload.projectId,
-      },
-      select: {
-        id: true,
-        body: true,
-      },
+    const resolvedScriptInput = await resolveStoryboardScriptInput({
+      projectId: payload.projectId,
+      scriptAssetId: payload.scriptAssetId,
+      scriptVersionId: payload.scriptVersionId,
+      userId: payload.userId,
     });
-
-    if (typeof scriptVersion?.body !== "string" || !scriptVersion.body.trim()) {
-      throw new ServiceError(404, "Script version not found");
-    }
 
     const modelSummary = await getDefaultModelSummary("storyboard_split");
     if (!modelSummary?.model) {
@@ -256,10 +253,15 @@ export async function processStoryboardJob(
       model: modelSummary.model,
       traceId: job.data.traceId,
       inputFiles: [],
-      inputText: buildStoryboardPrompt(scriptVersion.body.trim()),
+      inputText: buildStoryboardPrompt(resolvedScriptInput.scriptBody),
       options: {
         projectId: payload.projectId,
-        scriptVersionId: payload.scriptVersionId,
+        ...(resolvedScriptInput.scriptAssetId
+          ? { scriptAssetId: resolvedScriptInput.scriptAssetId }
+          : {}),
+        ...(resolvedScriptInput.scriptVersionId
+          ? { scriptVersionId: resolvedScriptInput.scriptVersionId }
+          : {}),
         userId: payload.userId,
       },
     });
@@ -275,35 +277,41 @@ export async function processStoryboardJob(
     }
 
     const segments = await parseStoryboardSegments(modelResult.textOutput.trim());
-    const storyboardVersion = await prisma.storyboardVersion.upsert({
-      where: {
-        taskId: job.data.taskId,
-      },
-      create: {
-        projectId: payload.projectId,
-        scriptVersionId: payload.scriptVersionId,
-        taskId: job.data.taskId,
-        framesJson: segments as Prisma.InputJsonValue,
-        modelProviderKey: modelSummary.providerKey,
-        modelName: modelSummary.model,
-        modelMetadataJson: modelResult.rawResponse as Prisma.InputJsonValue,
-      },
-      update: {
-        projectId: payload.projectId,
-        scriptVersionId: payload.scriptVersionId,
-        framesJson: segments as Prisma.InputJsonValue,
-        modelProviderKey: modelSummary.providerKey,
-        modelName: modelSummary.model,
-        modelMetadataJson: modelResult.rawResponse as Prisma.InputJsonValue,
-      },
-      select: {
-        id: true,
-      },
-    });
+    let storyboardVersionId = "";
+
+    if (resolvedScriptInput.scriptVersionId) {
+      const storyboardVersion = await prisma.storyboardVersion.upsert({
+        where: {
+          taskId: job.data.taskId,
+        },
+        create: {
+          projectId: payload.projectId,
+          scriptVersionId: resolvedScriptInput.scriptVersionId,
+          taskId: job.data.taskId,
+          framesJson: segments as Prisma.InputJsonValue,
+          modelProviderKey: modelSummary.providerKey,
+          modelName: modelSummary.model,
+          modelMetadataJson: modelResult.rawResponse as Prisma.InputJsonValue,
+        },
+        update: {
+          projectId: payload.projectId,
+          scriptVersionId: resolvedScriptInput.scriptVersionId,
+          framesJson: segments as Prisma.InputJsonValue,
+          modelProviderKey: modelSummary.providerKey,
+          modelName: modelSummary.model,
+          modelMetadataJson: modelResult.rawResponse as Prisma.InputJsonValue,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      storyboardVersionId = storyboardVersion.id;
+    }
 
     return succeedJob(job.data, {
       traceId: job.data.traceId,
-      storyboardVersionId: storyboardVersion.id,
+      storyboardVersionId,
       segments,
       modelProviderKey: modelSummary.providerKey,
       modelName: modelSummary.model,

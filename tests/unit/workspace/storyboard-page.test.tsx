@@ -79,7 +79,9 @@ describe("project storyboard page", () => {
       mutate: vi.fn(),
       isFinished: taskId === "task-1",
     }));
+  });
 
+  it("shows default binding state, promotes an override, and posts scriptAssetId for generation", async () => {
     fetchMock.mockImplementation(async (input, init) => {
       const url =
         typeof input === "string"
@@ -92,17 +94,52 @@ describe("project storyboard page", () => {
         return jsonResponse({
           project: {
             id: "project-1",
-            title: "Project One",
-            idea: "Idea",
+            title: "项目一",
+            idea: "追光的信使",
           },
-          scriptVersions: [
+          binding: {
+            storyboardScriptAssetId: "script-default",
+          },
+          defaultScriptAsset: {
+            id: "script-default",
+            originalName: "默认剧本.txt",
+            category: "script_source",
+            origin: "upload",
+            createdAt: "2026-04-03T08:00:00.000Z",
+            extractedText: "默认剧本文本",
+            scriptVersionId: null,
+          },
+          scriptAssets: [
             {
-              id: "script-1",
-              versionNumber: 1,
-              body: "INT. ARCHIVE ROOM - NIGHT",
+              id: "script-default",
+              originalName: "默认剧本.txt",
+              category: "script_source",
+              origin: "upload",
               createdAt: "2026-04-03T08:00:00.000Z",
+              extractedText: "默认剧本文本",
+              scriptVersionId: null,
+            },
+            {
+              id: "script-override",
+              originalName: "系统定稿.txt",
+              category: "script_generated",
+              origin: "system",
+              createdAt: "2026-04-04T09:30:00.000Z",
+              extractedText: "仅本次使用的系统剧本",
+              scriptVersionId: "version-2",
             },
           ],
+        });
+      }
+
+      if (
+        url === "/api/projects/project-1/workflow-binding" &&
+        init?.method === "PATCH"
+      ) {
+        return jsonResponse({
+          storyboardScriptAssetId: "script-override",
+          imageReferenceAssetIds: [],
+          videoReferenceAssetIds: [],
         });
       }
 
@@ -112,21 +149,39 @@ describe("project storyboard page", () => {
 
       throw new Error(`Unexpected fetch: ${url}`);
     });
-  });
 
-  it("renders the shared workflow header and preserves storyboard generation", async () => {
     await renderPage();
 
-    expect((await screen.findAllByText("项目制作流程")).length).toBeGreaterThan(0);
+    expect(
+      (await screen.findAllByText("项目制作流程")).length,
+    ).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { name: "分镜" })).toBeInTheDocument();
-    expect(screen.getByText("Project One")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "返回项目制作台" })).toHaveAttribute(
-      "href",
-      "/projects/project-1",
-    );
-    expect(screen.getByText("脚本")).toBeInTheDocument();
+    expect(screen.getByText("项目一")).toBeInTheDocument();
+    expect(screen.getAllByText("当前默认剧本资产").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("默认剧本.txt").length).toBeGreaterThan(0);
 
-    fireEvent.click(screen.getByText("生成分镜"));
+    fireEvent.change(screen.getByLabelText("选择本次分镜剧本"), {
+      target: {
+        value: "script-override",
+      },
+    });
+
+    expect(screen.getByText("仅本次使用")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "设为该流程默认输入" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/projects/project-1/workflow-binding",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({
+            storyboardScriptAssetId: "script-override",
+          }),
+        }),
+      );
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "生成分镜" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -135,7 +190,7 @@ describe("project storyboard page", () => {
           method: "POST",
           body: JSON.stringify({
             projectId: "project-1",
-            scriptVersionId: "script-1",
+            scriptAssetId: "script-override",
           }),
         }),
       );
@@ -145,7 +200,8 @@ describe("project storyboard page", () => {
     expect(screen.getByText("Archive room")).toBeInTheDocument();
     expect(screen.getByText("1 段")).toBeInTheDocument();
   });
-  it("falls back to the stage title when project loading fails", async () => {
+
+  it("exposes the empty default-binding state when no storyboard script asset is configured", async () => {
     fetchMock.mockImplementation(async (input) => {
       const url =
         typeof input === "string"
@@ -155,7 +211,28 @@ describe("project storyboard page", () => {
             : input.url;
 
       if (url === "/api/storyboards?projectId=project-1") {
-        return jsonResponse({ error: "加载项目失败" }, 500);
+        return jsonResponse({
+          project: {
+            id: "project-1",
+            title: "项目一",
+            idea: "追光的信使",
+          },
+          binding: {
+            storyboardScriptAssetId: null,
+          },
+          defaultScriptAsset: null,
+          scriptAssets: [
+            {
+              id: "script-upload-1",
+              originalName: "上传剧本.txt",
+              category: "script_source",
+              origin: "upload",
+              createdAt: "2026-04-03T08:00:00.000Z",
+              extractedText: "上传剧本文本",
+              scriptVersionId: null,
+            },
+          ],
+        });
       }
 
       throw new Error(`Unexpected fetch: ${url}`);
@@ -163,10 +240,11 @@ describe("project storyboard page", () => {
 
     await renderPage();
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("加载项目失败");
-    await waitFor(() => {
-      expect(screen.queryByText("加载项目中...")).not.toBeInTheDocument();
-    });
-    expect(screen.getAllByRole("heading", { name: "分镜" }).length).toBeGreaterThan(1);
+    expect(await screen.findByText("当前未设置默认剧本资产")).toBeInTheDocument();
+    expect(screen.getByText("上传剧本.txt")).toBeInTheDocument();
+    expect(screen.getByText("仅本次使用")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "设为该流程默认输入" }),
+    ).toBeInTheDocument();
   });
 });

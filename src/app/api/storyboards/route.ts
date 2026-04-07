@@ -1,6 +1,7 @@
 import { requireUser } from "@/lib/auth/guards";
 import {
   createJsonObjectSchema,
+  JsonOptionalTrimmedStringSchema,
   JsonTrimmedStringSchema,
   parseJsonBody,
 } from "@/lib/http/validation";
@@ -12,11 +13,14 @@ import {
 
 const CreateStoryboardBodySchema = createJsonObjectSchema({
   projectId: JsonTrimmedStringSchema,
-  scriptVersionId: JsonTrimmedStringSchema,
+  scriptAssetId: JsonOptionalTrimmedStringSchema,
+  scriptVersionId: JsonOptionalTrimmedStringSchema,
 }).refine(
-  (body) => Boolean(body.projectId) && Boolean(body.scriptVersionId),
+  (body) =>
+    Boolean(body.projectId) &&
+    (Boolean(body.scriptAssetId) || Boolean(body.scriptVersionId)),
   {
-    message: "projectId and scriptVersionId are required",
+    message: "projectId and either scriptAssetId or scriptVersionId are required",
   },
 );
 
@@ -26,6 +30,7 @@ export async function POST(request: Request) {
     const body = await parseJsonBody(request, CreateStoryboardBodySchema);
     const result = await createStoryboardTask({
       projectId: body.projectId,
+      scriptAssetId: body.scriptAssetId,
       scriptVersionId: body.scriptVersionId,
       userId: user.userId,
     });
