@@ -146,7 +146,7 @@ describe("queue bootstrap", () => {
     },
     {
       taskType: "ASSET_SCRIPT_PARSE" as TaskType,
-      expectedQueueName: "script-queue",
+      expectedQueueName: "asset-script-parse-queue",
       expectedAttempts: 3,
     },
   ])(
@@ -154,7 +154,7 @@ describe("queue bootstrap", () => {
     async ({ taskType, expectedQueueName, expectedAttempts }) => {
       await withTestDatabase(async ({ databaseUrl, prisma }) => {
         await withQueueTestEnv(databaseUrl, async () => {
-          const [{ queues }, { enqueueTask }] = await Promise.all([
+          const [{ getQueueForTaskType }, { enqueueTask }] = await Promise.all([
             import("@/lib/queues"),
             import("@/lib/queues/enqueue"),
           ]);
@@ -168,13 +168,12 @@ describe("queue bootstrap", () => {
             projectId: ownedTask.project.id,
             userId: ownedTask.user.id,
           });
-          const queue = Object.values(queues).find(
-            (candidateQueue) => candidateQueue.name === expectedQueueName,
-          );
+          const queue = getQueueForTaskType(taskType);
 
           expect(queue).toBeDefined();
+          expect(queue.name).toBe(expectedQueueName);
 
-          const addSpy = vi.spyOn(queue!, "add");
+          const addSpy = vi.spyOn(queue, "add");
 
           try {
             await enqueueTask(ownedTask.task.id, taskType, payload);
@@ -200,17 +199,20 @@ describe("queue bootstrap", () => {
     },
   );
 
-  it("exposes the four task queues", async () => {
+  it("exposes worker queues and parse-task routing", async () => {
     await withTestDatabase(async ({ databaseUrl }) => {
       await withQueueTestEnv(databaseUrl, async () => {
         const { getQueueForTaskType, queues } = await import("@/lib/queues");
 
+        // The exported queue set remains the active worker runtime queues.
         expect(Object.keys(queues).sort()).toEqual(["image", "script", "storyboard", "video"]);
         expect(queues.script.name).toBe("script-queue");
         expect(queues.storyboard.name).toBe("storyboard-queue");
         expect(queues.image.name).toBe("image-queue");
         expect(queues.video.name).toBe("video-queue");
-        expect(getQueueForTaskType("ASSET_SCRIPT_PARSE" as TaskType).name).toBe("script-queue");
+        expect(getQueueForTaskType("ASSET_SCRIPT_PARSE" as TaskType).name).toBe(
+          "asset-script-parse-queue",
+        );
       });
     });
   });
