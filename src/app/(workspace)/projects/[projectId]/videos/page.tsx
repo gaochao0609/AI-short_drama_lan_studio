@@ -5,6 +5,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import PageHero from "@/components/studio/page-hero";
+import StatusBadge from "@/components/studio/status-badge";
+import WorkflowRail from "@/components/studio/workflow-rail";
 import useTaskPolling from "@/hooks/useTaskPolling";
 
 type AssetSummary = {
@@ -53,6 +56,100 @@ type TaskPollResponse = {
 const EMPTY_ASSETS: AssetSummary[] = [];
 const EMPTY_TASKS: VideoTaskSummary[] = [];
 
+const copy = {
+  workflowTitle: "项目制作流程",
+  stageTitle: "视频",
+  stageDescription:
+    "从项目内已有关键画面中选择参考图，补充运动、镜头和节奏描述，生成最终视频镜头。",
+  projectLabel: "当前项目",
+  backToProject: "返回项目制作台",
+  activeStage: "当前阶段",
+  noIdea: "项目还没有补充创意说明，先确认图片方向后再进入视频阶段。",
+  scriptStage: "脚本",
+  storyboardStage: "分镜",
+  imagesStage: "图片",
+  videosStage: "视频",
+  stageDone: "已完成",
+  stageActive: "进行中",
+  stageWaiting: "待开始",
+  generateHeading: "生成设置",
+  generateDescription:
+    "视频任务只接受项目内已有图片 ID，不会在这里重复上传素材。",
+  promptLabel: "视频提示词",
+  promptPlaceholder: "描述镜头运动、主体动作和节奏...",
+  referencesLabel: "参考图片",
+  referencesDescription:
+    "至少选择一张项目内图片作为参考素材，再发起视频任务。",
+  selectedReferencesPrefix: "已选参考图：",
+  taskProgressHeading: "任务状态",
+  taskProgressDescription:
+    "任务提交后会在这里显示当前轮询状态和近期任务历史。",
+  videosHeading: "视频结果",
+  videosDescription:
+    "生成完成的视频会保留在项目结果区，方便继续回看和筛选。",
+  noReferenceAssets: "当前项目还没有可用图片，请先完成图片阶段。",
+  noRunningTask: "当前没有正在运行的视频任务。",
+  noVideos: "当前项目还没有生成视频。",
+  previewUnavailable: "暂无预览",
+  loadingProject: "加载项目中...",
+  loadWorkspaceFailed: "加载视频工作区失败",
+  fetchTaskFailed: "获取任务状态失败",
+  refreshing: "正在刷新结果...",
+  generating: "正在生成视频...",
+  generated: "视频已生成。",
+  queued: "视频任务已加入队列。",
+  failed: "视频生成失败",
+  refreshFailedPrefix: "视频已生成，但刷新结果失败：",
+  missingProjectId: "缺少项目 ID",
+  enterPrompt: "请先输入提示词，再生成视频。",
+  selectReference: "请至少选择一张参考图片。",
+  enqueueFailed: "视频任务提交失败",
+  scriptDetail: "脚本定稿后保留故事结构和对白。",
+  storyboardDetail: "分镜确认镜头段落和视频提示词。",
+  imagesDetail: "从关键画面中筛选可进入视频阶段的参考图。",
+  videosDetail: "当前页负责管理视频任务和输出结果。",
+  enterScript: "前往脚本",
+  enterStoryboard: "前往分镜",
+  enterImages: "前往图片",
+  enterVideos: "继续视频",
+  taskPrefix: "任务：",
+  statusPrefix: "状态：",
+} as const;
+
+function formatAssetMeta(asset: AssetSummary) {
+  return `${asset.mimeType} · ${Math.round(asset.sizeBytes / 1024)} KB`;
+}
+
+function formatAssetKind(kind: string) {
+  switch (kind) {
+    case "image_generated":
+      return "生成图片";
+    case "image_reference":
+      return "参考图片";
+    case "video_generated":
+      return "生成视频";
+    default:
+      return kind;
+  }
+}
+
+function formatTaskStatus(status?: string) {
+  switch (status) {
+    case "QUEUED":
+      return "排队中";
+    case "RUNNING":
+      return "进行中";
+    case "SUCCEEDED":
+      return "已完成";
+    case "FAILED":
+      return "失败";
+    case "CANCELED":
+      return "已取消";
+    default:
+      return status ?? "未知";
+  }
+}
+
 export default function ProjectVideosPage() {
   const params = useParams<{ projectId: string }>();
   const routeProjectId = params.projectId ?? "";
@@ -61,7 +158,9 @@ export default function ProjectVideosPage() {
   const workspaceRequestSeq = useRef(0);
   const submitRequestSeq = useRef(0);
   const [projectId, setProjectId] = useState("");
-  const [workspace, setWorkspace] = useState<VideosWorkspaceResponse | null>(null);
+  const [workspace, setWorkspace] = useState<VideosWorkspaceResponse | null>(
+    null,
+  );
   const [isLoading, setIsLoading] = useState(true);
   const [prompt, setPrompt] = useState("");
   const [selectedReferenceIds, setSelectedReferenceIds] = useState<string[]>([]);
@@ -79,9 +178,12 @@ export default function ProjectVideosPage() {
     const requestId = (workspaceRequestSeq.current += 1);
 
     try {
-      const response = await fetch(`/api/videos?projectId=${encodeURIComponent(nextProjectId)}`, {
-        cache: "no-store",
-      });
+      const response = await fetch(
+        `/api/videos?projectId=${encodeURIComponent(nextProjectId)}`,
+        {
+          cache: "no-store",
+        },
+      );
       const payload = (await response.json().catch(() => null)) as
         | VideosWorkspaceResponse
         | { error?: string }
@@ -94,8 +196,8 @@ export default function ProjectVideosPage() {
 
         throw new Error(
           payload && "error" in payload
-            ? payload.error ?? "Failed to load videos"
-            : "Failed to load videos",
+            ? payload.error ?? copy.loadWorkspaceFailed
+            : copy.loadWorkspaceFailed,
         );
       }
 
@@ -134,7 +236,11 @@ export default function ProjectVideosPage() {
         await reloadWorkspace(projectId);
       } catch (loadError) {
         if (!cancelled) {
-          setError(loadError instanceof Error ? loadError.message : "Failed to load videos");
+          setError(
+            loadError instanceof Error
+              ? loadError.message
+              : copy.loadWorkspaceFailed,
+          );
         }
       } finally {
         if (!cancelled) {
@@ -157,7 +263,9 @@ export default function ProjectVideosPage() {
 
     setActiveTaskId(null);
     setStatusMessage(null);
-    setError(pollingError instanceof Error ? pollingError.message : "Failed to fetch task");
+    setError(
+      pollingError instanceof Error ? pollingError.message : copy.fetchTaskFailed,
+    );
   }, [activeTaskId, pollingError]);
 
   useEffect(() => {
@@ -168,7 +276,7 @@ export default function ProjectVideosPage() {
     }
 
     if (polledTask.status === "RUNNING" || polledTask.status === "QUEUED") {
-      setStatusMessage("Generating video...");
+      setStatusMessage(copy.generating);
       setError(null);
       return;
     }
@@ -176,10 +284,10 @@ export default function ProjectVideosPage() {
     if (polledTask.status === "SUCCEEDED") {
       setError(null);
       setActiveTaskId(null);
-      setStatusMessage("Refreshing results...");
+      setStatusMessage(copy.refreshing);
 
       if (!projectId) {
-        setStatusMessage("Video generated.");
+        setStatusMessage(copy.generated);
         return;
       }
 
@@ -190,12 +298,14 @@ export default function ProjectVideosPage() {
             return;
           }
 
-          setStatusMessage("Video generated.");
+          setStatusMessage(copy.generated);
         } catch (refreshError) {
           setStatusMessage(null);
           const message =
-            refreshError instanceof Error ? refreshError.message : "Failed to load videos";
-          setError(`Video generated, but failed to refresh results: ${message}`);
+            refreshError instanceof Error
+              ? refreshError.message
+              : copy.loadWorkspaceFailed;
+          setError(`${copy.refreshFailedPrefix}${message}`);
         }
       })();
       return;
@@ -203,7 +313,7 @@ export default function ProjectVideosPage() {
 
     if (polledTask.status === "FAILED" || polledTask.status === "CANCELED") {
       setStatusMessage(null);
-      setError(polledTask.errorText ?? "Video generation failed");
+      setError(polledTask.errorText ?? copy.failed);
       setActiveTaskId(null);
     }
   }, [activeTaskId, projectId, task]);
@@ -230,7 +340,7 @@ export default function ProjectVideosPage() {
 
   async function submit() {
     if (!projectId) {
-      setError("Missing projectId");
+      setError(copy.missingProjectId);
       return;
     }
 
@@ -239,12 +349,12 @@ export default function ProjectVideosPage() {
     const trimmedPrompt = prompt.trim();
 
     if (!trimmedPrompt) {
-      setError("Enter a prompt before generating a video");
+      setError(copy.enterPrompt);
       return;
     }
 
     if (selectedReferenceIds.length === 0) {
-      setError("Select at least one reference image");
+      setError(copy.selectReference);
       return;
     }
 
@@ -269,7 +379,7 @@ export default function ProjectVideosPage() {
         | null;
 
       if (!response.ok || !payload?.taskId) {
-        throw new Error(payload?.error ?? "Failed to enqueue video task");
+        throw new Error(payload?.error ?? copy.enqueueFailed);
       }
 
       if (latestRouteProjectIdRef.current !== submitRouteProjectId) {
@@ -277,14 +387,16 @@ export default function ProjectVideosPage() {
       }
 
       setActiveTaskId(payload.taskId);
-      setStatusMessage("Video task queued.");
+      setStatusMessage(copy.queued);
     } catch (submitError) {
       if (latestRouteProjectIdRef.current !== submitRouteProjectId) {
         return;
       }
 
       setStatusMessage(null);
-      setError(submitError instanceof Error ? submitError.message : "Failed to enqueue video task");
+      setError(
+        submitError instanceof Error ? submitError.message : copy.enqueueFailed,
+      );
     } finally {
       if (
         submitRequestId === submitRequestSeq.current &&
@@ -295,53 +407,127 @@ export default function ProjectVideosPage() {
     }
   }
 
+  const projectSummary = workspace?.project.idea?.trim() || copy.noIdea;
+  const heroProjectTitle = isLoading
+    ? copy.loadingProject
+    : workspace?.project.title ?? copy.stageTitle;
+  const scriptRailSummary = "当前页未加载脚本定稿结果，请先在脚本阶段确认。";
+  const storyboardRailSummary = "当前页未加载分镜结果，请先在分镜阶段确认。";
+
   return (
-    <section style={pageStyle}>
-      <header style={heroStyle}>
-        <div style={heroContentStyle}>
-          <p style={eyebrowStyle}>Video Workflow</p>
-          <h2 style={heroTitleStyle}>
-            {isLoading ? "Loading project..." : workspace?.project.title ?? "Videos"}
-          </h2>
-          <p style={heroCopyStyle}>
-            Animate storyboard stills and project images into short clips using project-scoped
-            reference assets only.
-          </p>
-        </div>
-        <div style={actionsStyle}>
-          <Link href={`/projects/${projectId}`} style={secondaryLinkStyle}>
-            Back to project
+    <div style={pageStyle}>
+      <PageHero
+        eyebrow={copy.workflowTitle}
+        title={copy.stageTitle}
+        description={copy.stageDescription}
+        actions={
+          <Link href={`/projects/${projectId}`} style={secondaryActionStyle}>
+            {copy.backToProject}
           </Link>
-        </div>
-      </header>
+        }
+        supportingContent={
+          <div style={heroSupportStyle}>
+            <div style={heroSupportHeaderStyle}>
+              <span style={heroMetaLabelStyle}>{copy.projectLabel}</span>
+              <StatusBadge label={copy.activeStage} tone="active" />
+            </div>
+            <h2 style={heroSupportTitleStyle}>{heroProjectTitle}</h2>
+            <p style={heroSupportBodyStyle}>{projectSummary}</p>
+          </div>
+        }
+      />
 
-      <article style={cardStyle}>
-        <h3 style={sectionTitleStyle}>Generate</h3>
-        <div style={fieldGroupStyle}>
-          <label style={labelStyle} htmlFor="videoPromptInput">
-            Prompt
+      <WorkflowRail
+        title={copy.workflowTitle}
+        layout="cards"
+        items={[
+          {
+            label: copy.scriptStage,
+            detail: copy.scriptDetail,
+            summary: scriptRailSummary,
+            badgeLabel: copy.stageWaiting,
+            tone: "neutral",
+            href: `/projects/${projectId}/script`,
+            ctaLabel: copy.enterScript,
+          },
+          {
+            label: copy.storyboardStage,
+            detail: copy.storyboardDetail,
+            summary: storyboardRailSummary,
+            badgeLabel: copy.stageWaiting,
+            tone: "neutral",
+            href: `/projects/${projectId}/storyboard`,
+            ctaLabel: copy.enterStoryboard,
+          },
+          {
+            label: copy.imagesStage,
+            detail: referenceAssets.length
+              ? `当前可选 ${referenceAssets.length} 张图片作为参考。`
+              : copy.imagesDetail,
+            summary: "从项目内图片中挑选要进入视频阶段的关键画面。",
+            badgeLabel: referenceAssets.length ? copy.stageDone : copy.stageWaiting,
+            tone: referenceAssets.length ? "active" : "neutral",
+            href: `/projects/${projectId}/images`,
+            ctaLabel: copy.enterImages,
+          },
+          {
+            label: copy.videosStage,
+            detail: videoAssets.length
+              ? `当前已归档 ${videoAssets.length} 条视频结果。`
+              : copy.videosDetail,
+            summary:
+              selectedReferenceIds.length > 0
+                ? "参考图已选中，可直接发起视频任务。"
+                : "先选中一张或多张参考图。",
+            badgeLabel: copy.stageActive,
+            tone: "active",
+            href: `/projects/${projectId}/videos`,
+            ctaLabel: copy.enterVideos,
+          },
+        ]}
+      />
+
+      {statusMessage ? (
+        <p role="status" style={statusNoticeStyle}>
+          {statusMessage}
+        </p>
+      ) : null}
+      {error ? (
+        <p role="alert" style={errorNoticeStyle}>
+          {error}
+        </p>
+      ) : null}
+
+      <section style={panelStyle}>
+        <div style={sectionHeaderStyle}>
+          <h2 style={sectionTitleStyle}>{copy.generateHeading}</h2>
+          <p style={sectionDescriptionStyle}>{copy.generateDescription}</p>
+        </div>
+
+        <div style={fieldGridStyle}>
+          <label style={fieldStyle} htmlFor="videoPromptInput">
+            <span style={fieldLabelStyle}>{copy.promptLabel}</span>
+            <textarea
+              id="videoPromptInput"
+              aria-label="Video prompt input"
+              value={prompt}
+              onChange={(event) => setPrompt(event.target.value)}
+              disabled={isBusy}
+              placeholder={copy.promptPlaceholder}
+              style={textareaStyle}
+              rows={5}
+            />
           </label>
-          <textarea
-            id="videoPromptInput"
-            aria-label="Video prompt input"
-            value={prompt}
-            onChange={(event) => setPrompt(event.target.value)}
-            disabled={isBusy}
-            placeholder="Describe the camera motion, subject movement, and timing..."
-            style={textareaStyle}
-            rows={5}
-          />
         </div>
 
-        <div style={fieldGroupStyle}>
-          <p style={labelStyle}>Reference images</p>
-          <p style={helperStyle}>
-            Select one or more image assets from this project. The API only accepts existing
-            `referenceAssetIds`; it does not upload files here.
-          </p>
+        <div style={fieldGridStyle}>
+          <div style={sectionHeaderStyle}>
+            <h3 style={subsectionTitleStyle}>{copy.referencesLabel}</h3>
+            <p style={sectionDescriptionStyle}>{copy.referencesDescription}</p>
+          </div>
 
           {referenceAssets.length === 0 ? (
-            <p style={emptyStyle}>No image assets are available for this project yet.</p>
+            <p style={emptyStateStyle}>{copy.noReferenceAssets}</p>
           ) : (
             <div style={referenceGridStyle}>
               {referenceAssets.map((asset) => {
@@ -353,7 +539,7 @@ export default function ProjectVideosPage() {
                     type="button"
                     onClick={() => toggleReferenceAsset(asset.id)}
                     disabled={isBusy}
-                    style={selected ? referenceCardSelectedStyle : referenceCardStyle}
+                    style={selected ? selectedReferenceCardStyle : referenceCardStyle}
                   >
                     {asset.previewDataUrl ? (
                       <Image
@@ -365,12 +551,13 @@ export default function ProjectVideosPage() {
                         style={referenceImageStyle}
                       />
                     ) : (
-                      <div style={referencePlaceholderStyle}>Preview unavailable</div>
+                      <div style={referencePlaceholderStyle}>{copy.previewUnavailable}</div>
                     )}
                     <span style={referenceMetaStyle}>
                       {asset.id}
                       <br />
-                      {asset.kind} - {Math.round(asset.sizeBytes / 1024)} KB
+                      {formatAssetKind(asset.kind)} ·{" "}
+                      {Math.round(asset.sizeBytes / 1024)} KB
                     </span>
                   </button>
                 );
@@ -380,60 +567,78 @@ export default function ProjectVideosPage() {
         </div>
 
         {selectedReferences.length > 0 ? (
-          <p style={helperStyle}>Selected references: {selectedReferences.length}</p>
+          <p style={helperTextStyle}>
+            {copy.selectedReferencesPrefix}
+            {selectedReferences.length}
+          </p>
         ) : null}
 
-        <div style={submitRowStyle}>
+        <div style={buttonRowStyle}>
           <button
             type="button"
+            aria-label="Generate video"
             onClick={() => void submit()}
             disabled={!canSubmit}
             style={primaryButtonStyle}
           >
-            Generate video
+            生成视频
           </button>
-          {activeTaskId ? <span style={metaStyle}>Task: {activeTaskId}</span> : null}
-        </div>
-
-        {statusMessage ? <p style={statusStyle}>{statusMessage}</p> : null}
-        {error ? <p style={errorStyle}>{error}</p> : null}
-      </article>
-
-      <div style={twoColumnStyle}>
-        <article style={cardStyle}>
-          <h3 style={sectionTitleStyle}>Task Progress</h3>
           {activeTaskId ? (
-            <div style={taskCardStyle}>
-              <strong>{activeTaskId}</strong>
-              <span style={taskMetaStyle}>Status: {task?.status ?? "QUEUED"}</span>
-            </div>
+            <span style={metaTextStyle}>
+              {copy.taskPrefix}
+              {activeTaskId}
+            </span>
+          ) : null}
+        </div>
+      </section>
+
+      <div style={twoColumnGridStyle}>
+        <section style={panelStyle}>
+          <div style={sectionHeaderStyle}>
+            <h2 style={sectionTitleStyle}>{copy.taskProgressHeading}</h2>
+            <p style={sectionDescriptionStyle}>{copy.taskProgressDescription}</p>
+          </div>
+          {activeTaskId ? (
+            <article style={resultCardStyle}>
+              <strong style={resultTitleStyle}>{activeTaskId}</strong>
+              <span style={resultMetaTextStyle}>
+                {copy.statusPrefix}
+                {formatTaskStatus(task?.status ?? "QUEUED")}
+              </span>
+            </article>
           ) : (
-            <p style={emptyStyle}>No video task is currently running.</p>
+            <p style={emptyStateStyle}>{copy.noRunningTask}</p>
           )}
 
           {recentTasks.length > 0 ? (
             <div style={taskListStyle}>
               {recentTasks.map((taskItem) => (
-                <div key={taskItem.id} style={taskCardStyle}>
-                  <strong>{taskItem.id}</strong>
-                  <span style={taskMetaStyle}>
-                    {taskItem.status} - {new Date(taskItem.createdAt).toLocaleString()}
+                <article key={taskItem.id} style={resultCardStyle}>
+                  <strong style={resultTitleStyle}>{taskItem.id}</strong>
+                  <span style={resultMetaTextStyle}>
+                    {formatTaskStatus(taskItem.status)} ·{" "}
+                    {new Date(taskItem.createdAt).toLocaleString("zh-CN")}
                   </span>
-                  {taskItem.errorText ? <span style={taskErrorStyle}>{taskItem.errorText}</span> : null}
-                </div>
+                  {taskItem.errorText ? (
+                    <span style={taskErrorStyle}>{taskItem.errorText}</span>
+                  ) : null}
+                </article>
               ))}
             </div>
           ) : null}
-        </article>
+        </section>
 
-        <article style={cardStyle}>
-          <h3 style={sectionTitleStyle}>Generated Videos</h3>
+        <section style={panelStyle}>
+          <div style={sectionHeaderStyle}>
+            <h2 style={sectionTitleStyle}>{copy.videosHeading}</h2>
+            <p style={sectionDescriptionStyle}>{copy.videosDescription}</p>
+          </div>
           {videoAssets.length === 0 ? (
-            <p style={emptyStyle}>No generated videos recorded for this project yet.</p>
+            <p style={emptyStateStyle}>{copy.noVideos}</p>
           ) : (
             <div style={videoGridStyle}>
               {videoAssets.map((asset) => (
-                <figure key={asset.id} style={videoCardStyle}>
+                <article key={asset.id} style={videoCardStyle}>
                   {asset.previewUrl || asset.previewDataUrl ? (
                     <video
                       controls
@@ -442,123 +647,149 @@ export default function ProjectVideosPage() {
                       src={asset.previewUrl ?? asset.previewDataUrl ?? undefined}
                     />
                   ) : (
-                    <div style={videoPlaceholderStyle}>Preview unavailable</div>
+                    <div style={videoPlaceholderStyle}>{copy.previewUnavailable}</div>
                   )}
-                  <figcaption style={assetCaptionStyle}>
-                    <strong style={assetIdStyle}>{asset.id}</strong>
-                    <span style={assetMetaStyle}>
-                      {asset.mimeType} - {Math.round(asset.sizeBytes / 1024)} KB
-                    </span>
-                  </figcaption>
-                </figure>
+                  <div style={videoCopyStyle}>
+                    <strong style={videoTitleStyle}>{asset.id}</strong>
+                    <span style={videoMetaStyle}>{formatAssetMeta(asset)}</span>
+                  </div>
+                </article>
               ))}
             </div>
           )}
-        </article>
+        </section>
       </div>
-    </section>
+    </div>
   );
 }
 
 const pageStyle = {
   display: "grid",
-  gap: "20px",
+  gap: "24px",
 } satisfies CSSProperties;
 
-const heroStyle = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "flex-start",
-  gap: "16px",
-  padding: "24px",
-  borderRadius: "24px",
-  border: "1px solid rgba(31, 27, 22, 0.12)",
-  background: "rgba(255, 250, 243, 0.92)",
-} satisfies CSSProperties;
-
-const heroContentStyle = {
+const heroSupportStyle = {
   display: "grid",
   gap: "10px",
-  maxWidth: "760px",
 } satisfies CSSProperties;
 
-const eyebrowStyle = {
-  margin: 0,
-  color: "#8c5f2d",
-  textTransform: "uppercase",
-  letterSpacing: "0.12em",
-  fontSize: "0.8rem",
-} satisfies CSSProperties;
-
-const heroTitleStyle = {
-  margin: 0,
-  fontSize: "2rem",
-} satisfies CSSProperties;
-
-const heroCopyStyle = {
-  margin: 0,
-  color: "#665d52",
-  lineHeight: 1.6,
-} satisfies CSSProperties;
-
-const actionsStyle = {
+const heroSupportHeaderStyle = {
   display: "flex",
-  gap: "10px",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: "12px",
   flexWrap: "wrap",
 } satisfies CSSProperties;
 
-const secondaryLinkStyle = {
+const heroMetaLabelStyle = {
+  color: "var(--text-muted)",
+  fontSize: "0.82rem",
+  letterSpacing: "0.08em",
+  textTransform: "uppercase",
+} satisfies CSSProperties;
+
+const heroSupportTitleStyle = {
+  margin: 0,
+  fontSize: "1.15rem",
+  lineHeight: 1.4,
+} satisfies CSSProperties;
+
+const heroSupportBodyStyle = {
+  margin: 0,
+  color: "var(--text-muted)",
+  lineHeight: 1.7,
+} satisfies CSSProperties;
+
+const secondaryActionStyle = {
   display: "inline-flex",
   alignItems: "center",
   justifyContent: "center",
+  minHeight: "42px",
+  padding: "0 18px",
   borderRadius: "999px",
-  padding: "12px 18px",
+  background: "rgba(248, 250, 252, 0.08)",
+  border: "1px solid rgba(248, 250, 252, 0.12)",
+  color: "var(--text)",
   textDecoration: "none",
-  background: "rgba(140, 95, 45, 0.12)",
-  color: "#4b3a27",
   fontWeight: 700,
 } satisfies CSSProperties;
 
-const cardStyle = {
+const panelStyle = {
   display: "grid",
-  gap: "14px",
-  padding: "20px",
+  gap: "16px",
+  padding: "22px",
   borderRadius: "24px",
-  border: "1px solid rgba(31, 27, 22, 0.12)",
-  background: "rgba(255, 250, 243, 0.88)",
+  border: "1px solid var(--border)",
+  background: "rgba(22, 24, 39, 0.88)",
+  boxShadow: "var(--shadow-panel)",
 } satisfies CSSProperties;
 
-const sectionTitleStyle = {
-  margin: 0,
-  fontSize: "1.1rem",
-} satisfies CSSProperties;
-
-const fieldGroupStyle = {
+const sectionHeaderStyle = {
   display: "grid",
   gap: "8px",
 } satisfies CSSProperties;
 
-const labelStyle = {
+const sectionTitleStyle = {
   margin: 0,
+  fontSize: "1.2rem",
+} satisfies CSSProperties;
+
+const subsectionTitleStyle = {
+  margin: 0,
+  fontSize: "1rem",
+} satisfies CSSProperties;
+
+const sectionDescriptionStyle = {
+  margin: 0,
+  color: "var(--text-muted)",
+  lineHeight: 1.6,
+} satisfies CSSProperties;
+
+const statusNoticeStyle = {
+  margin: 0,
+  padding: "16px 18px",
+  borderRadius: "18px",
+  border: "1px solid rgba(74, 222, 128, 0.2)",
+  background: "rgba(21, 128, 61, 0.16)",
+  color: "#dcfce7",
+  lineHeight: 1.6,
+} satisfies CSSProperties;
+
+const errorNoticeStyle = {
+  margin: 0,
+  padding: "16px 18px",
+  borderRadius: "18px",
+  border: "1px solid rgba(248, 113, 113, 0.24)",
+  background: "rgba(127, 29, 29, 0.24)",
+  color: "#fecaca",
+  lineHeight: 1.6,
+} satisfies CSSProperties;
+
+const fieldGridStyle = {
+  display: "grid",
+  gap: "12px",
+} satisfies CSSProperties;
+
+const fieldStyle = {
+  display: "grid",
+  gap: "8px",
+} satisfies CSSProperties;
+
+const fieldLabelStyle = {
   fontWeight: 700,
-  color: "#4b3a27",
+  color: "var(--text)",
 } satisfies CSSProperties;
 
 const textareaStyle = {
-  padding: "10px 12px",
-  borderRadius: "12px",
-  border: "1px solid rgba(31, 27, 22, 0.18)",
-  background: "#fff",
-  color: "#1f1b16",
-  resize: "vertical",
+  width: "100%",
   minHeight: "120px",
-} satisfies CSSProperties;
-
-const helperStyle = {
-  margin: 0,
-  color: "#665d52",
-  fontSize: "0.9rem",
-  lineHeight: 1.5,
+  borderRadius: "18px",
+  border: "1px solid rgba(129, 140, 248, 0.2)",
+  padding: "14px 16px",
+  font: "inherit",
+  color: "var(--text)",
+  background: "rgba(8, 10, 26, 0.4)",
+  resize: "vertical",
 } satisfies CSSProperties;
 
 const referenceGridStyle = {
@@ -572,16 +803,17 @@ const referenceCardStyle = {
   gap: "8px",
   padding: "10px",
   borderRadius: "18px",
-  border: "1px solid rgba(31, 27, 22, 0.12)",
-  background: "#fff",
+  border: "1px solid rgba(129, 140, 248, 0.16)",
+  background: "rgba(8, 10, 26, 0.26)",
+  color: "var(--text)",
   cursor: "pointer",
   textAlign: "left",
 } satisfies CSSProperties;
 
-const referenceCardSelectedStyle = {
+const selectedReferenceCardStyle = {
   ...referenceCardStyle,
-  border: "1px solid rgba(140, 95, 45, 0.8)",
-  boxShadow: "0 0 0 2px rgba(140, 95, 45, 0.14)",
+  border: "1px solid rgba(202, 138, 4, 0.55)",
+  boxShadow: "0 0 0 2px rgba(202, 138, 4, 0.12)",
 } satisfies CSSProperties;
 
 const referenceImageStyle = {
@@ -589,7 +821,7 @@ const referenceImageStyle = {
   height: "150px",
   objectFit: "cover",
   borderRadius: "14px",
-  border: "1px solid rgba(31, 27, 22, 0.12)",
+  border: "1px solid rgba(129, 140, 248, 0.16)",
 } satisfies CSSProperties;
 
 const referencePlaceholderStyle = {
@@ -598,65 +830,80 @@ const referencePlaceholderStyle = {
   display: "grid",
   placeItems: "center",
   borderRadius: "14px",
-  border: "1px dashed rgba(31, 27, 22, 0.2)",
-  color: "#665d52",
-  background: "rgba(255, 250, 243, 0.7)",
+  border: "1px dashed rgba(129, 140, 248, 0.26)",
+  background: "rgba(15, 23, 42, 0.52)",
+  color: "var(--text-muted)",
 } satisfies CSSProperties;
 
 const referenceMetaStyle = {
-  color: "#4b3a27",
-  fontSize: "0.9rem",
+  lineHeight: 1.6,
   wordBreak: "break-word",
-  lineHeight: 1.5,
 } satisfies CSSProperties;
 
-const submitRowStyle = {
+const helperTextStyle = {
+  margin: 0,
+  color: "var(--text-muted)",
+  lineHeight: 1.6,
+} satisfies CSSProperties;
+
+const buttonRowStyle = {
   display: "flex",
-  alignItems: "center",
   gap: "12px",
   flexWrap: "wrap",
+  alignItems: "center",
 } satisfies CSSProperties;
 
 const primaryButtonStyle = {
   display: "inline-flex",
   alignItems: "center",
   justifyContent: "center",
+  minHeight: "42px",
+  padding: "0 18px",
   borderRadius: "999px",
-  padding: "12px 18px",
-  border: "none",
-  background: "#8c5f2d",
+  border: 0,
+  background:
+    "linear-gradient(135deg, rgba(109, 94, 252, 0.95), rgba(129, 140, 248, 0.72))",
   color: "#fff",
   fontWeight: 700,
   cursor: "pointer",
 } satisfies CSSProperties;
 
-const metaStyle = {
-  color: "#665d52",
-  fontSize: "0.9rem",
-} satisfies CSSProperties;
-
-const statusStyle = {
-  margin: 0,
-  color: "#245f3f",
-  fontWeight: 700,
-} satisfies CSSProperties;
-
-const errorStyle = {
-  margin: 0,
-  color: "#a11d1d",
-  fontWeight: 700,
-} satisfies CSSProperties;
-
-const emptyStyle = {
-  margin: 0,
-  color: "#665d52",
+const metaTextStyle = {
+  color: "var(--text-muted)",
   lineHeight: 1.6,
 } satisfies CSSProperties;
 
-const twoColumnStyle = {
+const emptyStateStyle = {
+  margin: 0,
+  color: "var(--text-muted)",
+  lineHeight: 1.7,
+} satisfies CSSProperties;
+
+const twoColumnGridStyle = {
   display: "grid",
   gap: "20px",
   gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+} satisfies CSSProperties;
+
+const resultCardStyle = {
+  display: "grid",
+  gap: "6px",
+  padding: "16px",
+  borderRadius: "18px",
+  border: "1px solid rgba(129, 140, 248, 0.16)",
+  background: "rgba(8, 10, 26, 0.26)",
+} satisfies CSSProperties;
+
+const resultTitleStyle = {
+  fontSize: "1rem",
+  lineHeight: 1.6,
+  wordBreak: "break-word",
+} satisfies CSSProperties;
+
+const resultMetaTextStyle = {
+  color: "var(--text-muted)",
+  lineHeight: 1.6,
+  wordBreak: "break-word",
 } satisfies CSSProperties;
 
 const taskListStyle = {
@@ -664,46 +911,31 @@ const taskListStyle = {
   gap: "10px",
 } satisfies CSSProperties;
 
-const taskCardStyle = {
-  display: "grid",
-  gap: "4px",
-  padding: "14px",
-  borderRadius: "18px",
-  border: "1px solid rgba(31, 27, 22, 0.1)",
-  background: "rgba(255, 255, 255, 0.7)",
-} satisfies CSSProperties;
-
-const taskMetaStyle = {
-  color: "#665d52",
-  fontSize: "0.9rem",
-} satisfies CSSProperties;
-
 const taskErrorStyle = {
-  color: "#a11d1d",
-  fontSize: "0.85rem",
+  color: "#fecaca",
+  lineHeight: 1.6,
 } satisfies CSSProperties;
 
 const videoGridStyle = {
   display: "grid",
-  gap: "14px",
+  gap: "16px",
   gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
 } satisfies CSSProperties;
 
 const videoCardStyle = {
-  margin: 0,
   display: "grid",
-  gap: "10px",
-  padding: "14px",
+  gap: "12px",
+  padding: "16px",
   borderRadius: "20px",
-  border: "1px solid rgba(31, 27, 22, 0.12)",
-  background: "rgba(255, 255, 255, 0.7)",
+  border: "1px solid rgba(129, 140, 248, 0.16)",
+  background: "rgba(8, 10, 26, 0.26)",
 } satisfies CSSProperties;
 
 const videoPreviewStyle = {
   width: "100%",
   height: "220px",
-  borderRadius: "14px",
-  border: "1px solid rgba(31, 27, 22, 0.12)",
+  borderRadius: "16px",
+  border: "1px solid rgba(129, 140, 248, 0.16)",
   background: "#000",
   objectFit: "cover",
 } satisfies CSSProperties;
@@ -713,24 +945,25 @@ const videoPlaceholderStyle = {
   height: "220px",
   display: "grid",
   placeItems: "center",
-  borderRadius: "14px",
-  border: "1px dashed rgba(31, 27, 22, 0.2)",
-  color: "#665d52",
-  background: "rgba(255, 250, 243, 0.7)",
+  borderRadius: "16px",
+  border: "1px dashed rgba(129, 140, 248, 0.26)",
+  background: "rgba(15, 23, 42, 0.52)",
+  color: "var(--text-muted)",
 } satisfies CSSProperties;
 
-const assetCaptionStyle = {
+const videoCopyStyle = {
   display: "grid",
-  gap: "4px",
+  gap: "6px",
 } satisfies CSSProperties;
 
-const assetIdStyle = {
-  color: "#1f1b16",
-  fontSize: "0.95rem",
+const videoTitleStyle = {
+  fontSize: "1rem",
+  lineHeight: 1.5,
   wordBreak: "break-word",
 } satisfies CSSProperties;
 
-const assetMetaStyle = {
-  color: "#665d52",
-  fontSize: "0.85rem",
+const videoMetaStyle = {
+  color: "var(--text-muted)",
+  lineHeight: 1.6,
+  wordBreak: "break-word",
 } satisfies CSSProperties;

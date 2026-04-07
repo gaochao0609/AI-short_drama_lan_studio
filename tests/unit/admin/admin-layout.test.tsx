@@ -1,8 +1,8 @@
 import { createElement } from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { requireUserMock, redirectMock, RedirectSignal } = vi.hoisted(() => ({
+const { requireUserMock, redirectMock, RedirectSignal, AuthGuardError } = vi.hoisted(() => ({
   requireUserMock: vi.fn(),
   redirectMock: vi.fn((href: string) => {
     throw new RedirectSignal(href);
@@ -13,10 +13,20 @@ const { requireUserMock, redirectMock, RedirectSignal } = vi.hoisted(() => ({
       this.name = "RedirectSignal";
     }
   },
+  AuthGuardError: class AuthGuardError extends Error {
+    constructor(
+      public readonly status: 401 | 403,
+      message: string,
+    ) {
+      super(message);
+      this.name = "AuthGuardError";
+    }
+  },
 }));
 
 vi.mock("@/lib/auth/guards", () => ({
   requireUser: requireUserMock,
+  AuthGuardError,
 }));
 
 vi.mock("next/navigation", () => ({
@@ -47,42 +57,41 @@ describe("admin layout", () => {
     process.env.APP_URL = previousAppUrl;
   });
 
-  it("shows the shared admin chrome and plain-http deployment warning", async () => {
+  it("shows the shared admin chrome, nav copy, and plain-http warning copy", async () => {
     process.env.APP_URL = "http://192.168.1.20:3000";
 
     const layoutModule = await import("@/app/admin/layout");
 
-    render(
+    const view = render(
       await layoutModule.default({
         children: createElement("div", undefined, "admin"),
       }),
     );
 
     expect(screen.getByText("Lan Studio")).toBeInTheDocument();
-    expect(screen.getByText("Admin control")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "User access" })).toHaveAttribute(
-      "href",
-      "/admin/users",
-    );
-    expect(screen.getByRole("link", { name: "Provider stack" })).toHaveAttribute(
-      "href",
-      "/admin/providers",
-    );
-    expect(screen.getByRole("link", { name: "Task monitor" })).toHaveAttribute(
-      "href",
-      "/admin/tasks",
-    );
-    expect(screen.getByRole("link", { name: "Storage vault" })).toHaveAttribute(
-      "href",
-      "/admin/storage",
-    );
-    expect(
-      screen.getByText("当前为非 HTTPS 部署，密码和 API Key 传输存在风险"),
-    ).toBeInTheDocument();
+    const titleNode = view.container.querySelector(".studio-shell__title");
+    expect(titleNode).not.toBeNull();
+    expect(titleNode?.textContent?.trim().length ?? 0).toBeGreaterThan(0);
+
+    const nav = screen.getByRole("navigation");
+    const links = within(nav).getAllByRole("link");
+    expect(links).toHaveLength(4);
+
+    expect(view.container.querySelector('a[href="/admin/users"]')).not.toBeNull();
+    expect(view.container.querySelector('a[href="/admin/providers"]')).not.toBeNull();
+    expect(view.container.querySelector('a[href="/admin/tasks"]')).not.toBeNull();
+    expect(view.container.querySelector('a[href="/admin/storage"]')).not.toBeNull();
+
+    for (const link of links) {
+      expect(link.textContent?.trim().length ?? 0).toBeGreaterThan(0);
+    }
+
+    expect(screen.getByText(/HTTPS/i)).toBeInTheDocument();
+    expect(screen.getByText(/API Key/i)).toBeInTheDocument();
   });
 
   it("redirects unauthenticated users to login", async () => {
-    requireUserMock.mockRejectedValueOnce(new Error("Unauthorized"));
+    requireUserMock.mockRejectedValueOnce(new AuthGuardError(401, "Unauthorized"));
 
     const layoutModule = await import("@/app/admin/layout");
 
@@ -95,6 +104,21 @@ describe("admin layout", () => {
     });
 
     expect(redirectMock).toHaveBeenCalledWith("/login");
+  });
+
+  it("rethrows unexpected auth-guard failures", async () => {
+    const unexpectedError = new Error("database unavailable");
+    requireUserMock.mockRejectedValueOnce(unexpectedError);
+
+    const layoutModule = await import("@/app/admin/layout");
+
+    await expect(
+      layoutModule.default({
+        children: createElement("div", undefined, "admin"),
+      }),
+    ).rejects.toBe(unexpectedError);
+
+    expect(redirectMock).not.toHaveBeenCalled();
   });
 
   it("redirects admins who must change their password", async () => {

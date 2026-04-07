@@ -1,9 +1,12 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import { startTransition, useEffect, useState } from "react";
+import { startTransition, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import PageHero from "@/components/studio/page-hero";
+import StatusBadge from "@/components/studio/status-badge";
+import WorkflowRail from "@/components/studio/workflow-rail";
 import useTaskPolling from "@/hooks/useTaskPolling";
 
 type QuestionItem = {
@@ -32,6 +35,68 @@ type SseEventMessage = {
   event: string;
   data: string;
 };
+
+const copy = {
+  workflowTitle: "项目制作流程",
+  stageTitle: "脚本",
+  stageDescription:
+    "通过多轮问答把项目想法整理成可定稿的短剧剧本，再交给后台任务队列完成最终定稿。",
+  projectLabel: "当前项目",
+  noIdea: "还没有填写项目创意，先补一句故事方向，再开始脚本问答。",
+  activeStage: "当前阶段",
+  backToProject: "返回项目制作台",
+  scriptStage: "脚本",
+  storyboardStage: "分镜",
+  imagesStage: "图片",
+  videosStage: "视频",
+  stageActive: "进行中",
+  stageNext: "下一步",
+  stageWaiting: "待开始",
+  startIdeaHeading: "创意输入",
+  startIdeaDescription:
+    "先写下故事核心想法，系统会围绕角色、冲突和世界设定连续追问。",
+  ideaLabel: "项目创意",
+  startSession: "开始脚本会话",
+  resetSession: "重新开始",
+  questionsHeading: "问答记录",
+  questionsDescription:
+    "每一轮提问都会保留在这里，便于继续追问、回看和定稿前检查。",
+  questionEmpty: "脚本会话开始后，AI 的问题会显示在这里。",
+  answerLabel: "本轮回答",
+  sendAnswer: "发送回答",
+  regenerateQuestion: "重新生成当前问题",
+  finalize: "定稿剧本",
+  finalScriptHeading: "定稿结果",
+  finalScriptDescription:
+    "定稿后页面会持续轮询任务状态，成功时把最终剧本正文展示在这里。",
+  finalScriptEmpty: "还没有生成最终剧本。",
+  streamingLabel: "实时生成中",
+  roundPrefix: "第",
+  roundSuffix: "轮",
+  answerPrefix: "回答：",
+  loadingProject: "加载项目中...",
+  finalizeRunning: "正在生成最终剧本...",
+  finalizeSuccess: "最终剧本已生成。",
+  finalizeFailed: "剧本定稿任务失败",
+  loadProjectFailed: "加载项目失败",
+  fetchTaskFailed: "获取任务状态失败",
+  streamRequestFailed: "脚本会话请求失败",
+  streamFailed: "脚本流式生成失败",
+  startValidation: "请先填写项目创意，再开始脚本会话。",
+  startFailed: "启动脚本会话失败",
+  answerValidation: "请输入回答后再继续。",
+  answerFailed: "提交回答失败",
+  regenerateFailed: "重新生成问题失败",
+  finalizeFailedRequest: "剧本定稿失败",
+  scriptDetailInitial: "通过问答细化人物、冲突和情绪节奏。",
+  storyboardDetail: "把定稿剧本拆成 15 秒分镜段落。",
+  imagesDetail: "根据分镜提示生成关键画面。",
+  videosDetail: "把关键画面推进成视频镜头。",
+  enterScript: "继续脚本",
+  enterStoryboard: "前往分镜",
+  enterImages: "前往图片",
+  enterVideos: "前往视频",
+} as const;
 
 function parseSseMessages(buffer: string) {
   const parts = buffer.split("\n\n");
@@ -65,8 +130,9 @@ function parseSseMessages(buffer: string) {
 export default function ProjectScriptPage() {
   const params = useParams<{ projectId: string }>();
   const [projectId, setProjectId] = useState("");
-  const [projectTitle, setProjectTitle] = useState("Script Workspace");
+  const [projectTitle, setProjectTitle] = useState<string>(copy.loadingProject);
   const [idea, setIdea] = useState("");
+  const [projectIdea, setProjectIdea] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [questions, setQuestions] = useState<QuestionItem[]>([]);
   const [answer, setAnswer] = useState("");
@@ -107,21 +173,20 @@ export default function ProjectScriptPage() {
         if (!response.ok) {
           throw new Error(
             payload && "error" in payload
-              ? payload.error ?? "Failed to load project"
-              : "Failed to load project",
+              ? payload.error ?? copy.loadProjectFailed
+              : copy.loadProjectFailed,
           );
         }
 
         if (!cancelled && payload && "title" in payload) {
           setProjectTitle(payload.title);
+          setProjectIdea(payload.idea?.trim() ?? "");
           setIdea((current) => current || payload.idea || "");
         }
       } catch (loadError) {
         if (!cancelled) {
           setError(
-            loadError instanceof Error
-              ? loadError.message
-              : "Failed to load project",
+            loadError instanceof Error ? loadError.message : copy.loadProjectFailed,
           );
         }
       } finally {
@@ -145,9 +210,7 @@ export default function ProjectScriptPage() {
 
     setStatusMessage(null);
     setError(
-      pollingError instanceof Error
-        ? pollingError.message
-        : "Failed to fetch task",
+      pollingError instanceof Error ? pollingError.message : copy.fetchTaskFailed,
     );
     setActiveTaskId(null);
   }, [activeTaskId, pollingError]);
@@ -160,13 +223,13 @@ export default function ProjectScriptPage() {
     }
 
     if (polledTask.status === "RUNNING") {
-      setStatusMessage("正在生成最终剧本...");
+      setStatusMessage(copy.finalizeRunning);
       setError(null);
       return;
     }
 
     if (polledTask.status === "SUCCEEDED") {
-      setStatusMessage("最终剧本已生成。");
+      setStatusMessage(copy.finalizeSuccess);
       setFinalScript(polledTask.outputJson?.body ?? "");
       setAnswer("");
       setStreamingQuestion("");
@@ -179,7 +242,7 @@ export default function ProjectScriptPage() {
     if (polledTask.status === "FAILED" || polledTask.status === "CANCELED") {
       setStatusMessage(null);
       setIsSessionCompleted(false);
-      setError(polledTask.errorText ?? "剧本定稿任务失败");
+      setError(polledTask.errorText ?? copy.finalizeFailed);
       setActiveTaskId(null);
     }
   }, [activeTaskId, task]);
@@ -193,7 +256,7 @@ export default function ProjectScriptPage() {
       const payload = (await response.json().catch(() => null)) as
         | { error?: string }
         | null;
-      throw new Error(payload?.error ?? "Script session request failed");
+      throw new Error(payload?.error ?? copy.streamRequestFailed);
     }
 
     setIsStreaming(true);
@@ -274,15 +337,17 @@ export default function ProjectScriptPage() {
                 ];
               });
             });
+
             if (mode === "next") {
               setAnswer("");
             }
+
             setStreamingQuestion("");
           }
 
           if (message.event === "error") {
             const payload = JSON.parse(message.data) as { message?: string };
-            throw new Error(payload.message ?? "Script stream failed");
+            throw new Error(payload.message ?? copy.streamFailed);
           }
         }
       }
@@ -297,7 +362,7 @@ export default function ProjectScriptPage() {
 
   async function handleStartSession() {
     if (!projectId || !idea.trim()) {
-      setError("请输入创意后再开始会话");
+      setError(copy.startValidation);
       return;
     }
 
@@ -325,9 +390,7 @@ export default function ProjectScriptPage() {
       await consumeQuestionStream(response, "start");
     } catch (submitError) {
       setError(
-        submitError instanceof Error
-          ? submitError.message
-          : "启动剧本会话失败",
+        submitError instanceof Error ? submitError.message : copy.startFailed,
       );
     } finally {
       setIsSubmitting(false);
@@ -336,7 +399,7 @@ export default function ProjectScriptPage() {
 
   async function handleSendAnswer() {
     if (!sessionId || !answer.trim()) {
-      setError("请输入回答后再继续");
+      setError(copy.answerValidation);
       return;
     }
 
@@ -346,25 +409,20 @@ export default function ProjectScriptPage() {
     const submittedAnswer = answer;
 
     try {
-      const response = await fetch(
-        `/api/script/sessions/${sessionId}/message`,
-        {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({
-            answer: submittedAnswer,
-          }),
+      const response = await fetch(`/api/script/sessions/${sessionId}/message`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
         },
-      );
+        body: JSON.stringify({
+          answer: submittedAnswer,
+        }),
+      });
 
       await consumeQuestionStream(response, "next", submittedAnswer);
     } catch (submitError) {
       setError(
-        submitError instanceof Error
-          ? submitError.message
-          : "提交回答失败",
+        submitError instanceof Error ? submitError.message : copy.answerFailed,
       );
     } finally {
       setIsSubmitting(false);
@@ -381,19 +439,16 @@ export default function ProjectScriptPage() {
     setIsSubmitting(true);
 
     try {
-      const response = await fetch(
-        `/api/script/sessions/${sessionId}/regenerate`,
-        {
-          method: "POST",
-        },
-      );
+      const response = await fetch(`/api/script/sessions/${sessionId}/regenerate`, {
+        method: "POST",
+      });
 
       await consumeQuestionStream(response, "regenerate");
     } catch (submitError) {
       setError(
         submitError instanceof Error
           ? submitError.message
-          : "重新生成问题失败",
+          : copy.regenerateFailed,
       );
     } finally {
       setIsSubmitting(false);
@@ -406,22 +461,19 @@ export default function ProjectScriptPage() {
     }
 
     setError(null);
-    setStatusMessage("正在生成最终剧本...");
+    setStatusMessage(copy.finalizeRunning);
     setIsSubmitting(true);
 
     try {
-      const response = await fetch(
-        `/api/script/sessions/${sessionId}/finalize`,
-        {
-          method: "POST",
-        },
-      );
+      const response = await fetch(`/api/script/sessions/${sessionId}/finalize`, {
+        method: "POST",
+      });
       const payload = (await response.json().catch(() => null)) as
         | { taskId?: string; error?: string }
         | null;
 
       if (!response.ok || !payload?.taskId) {
-        throw new Error(payload?.error ?? "剧本定稿失败");
+        throw new Error(payload?.error ?? copy.finalizeFailedRequest);
       }
 
       setActiveTaskId(payload.taskId);
@@ -430,7 +482,7 @@ export default function ProjectScriptPage() {
       setError(
         submitError instanceof Error
           ? submitError.message
-          : "剧本定稿失败",
+          : copy.finalizeFailedRequest,
       );
     } finally {
       setIsSubmitting(false);
@@ -454,53 +506,124 @@ export default function ProjectScriptPage() {
   const isFinalizePolling = Boolean(activeTaskId);
   const isSessionLocked = isBusy || isFinalizePolling;
   const isQuestionControlsLocked = isSessionLocked || isSessionCompleted;
+  const projectSummary = useMemo(() => {
+    if (idea.trim()) {
+      return idea.trim();
+    }
+
+    if (projectIdea.trim()) {
+      return projectIdea.trim();
+    }
+
+    return copy.noIdea;
+  }, [idea, projectIdea]);
+  const scriptSummary = finalScript
+    ? "已生成最终剧本，可直接进入分镜阶段。"
+    : questions.length > 0
+      ? `已完成 ${questions.length} 轮问答，继续完善后可提交定稿。`
+      : copy.scriptDetailInitial;
+
+  const heroProjectTitle =
+    isLoadingProject
+      ? copy.loadingProject
+      : projectTitle === copy.loadingProject
+        ? copy.stageTitle
+        : projectTitle;
 
   return (
-    <section style={pageStyle}>
-      <header style={heroStyle}>
-        <div>
-          <p style={eyebrowStyle}>Script Workflow</p>
-          <h2 style={heroTitleStyle}>
-            {isLoadingProject ? "Loading project..." : projectTitle}
-          </h2>
-          <p style={heroCopyStyle}>
-            用会话式提问逐步澄清短剧设定，完成后把剧本定稿任务交给后端队列。
-          </p>
-        </div>
-        <div style={heroActionsStyle}>
-          <Link href="/workspace" style={secondaryLinkStyle}>
-            返回工作区
+    <div style={pageStyle}>
+      <PageHero
+        eyebrow={copy.workflowTitle}
+        title={copy.stageTitle}
+        description={copy.stageDescription}
+        actions={
+          <Link href={`/projects/${projectId}`} style={secondaryActionStyle}>
+            {copy.backToProject}
           </Link>
-          <Link href={`/projects/${projectId}`} style={secondaryLinkStyle}>
-            返回项目详情
-          </Link>
-        </div>
-      </header>
+        }
+        supportingContent={
+          <div style={heroSupportStyle}>
+            <div style={heroSupportHeaderStyle}>
+              <span style={heroMetaLabelStyle}>{copy.projectLabel}</span>
+              <StatusBadge label={copy.activeStage} tone="active" />
+            </div>
+            <h2 style={heroSupportTitleStyle}>{heroProjectTitle}</h2>
+            <p style={heroSupportBodyStyle}>{projectSummary}</p>
+          </div>
+        }
+      />
+
+      <WorkflowRail
+        title={copy.workflowTitle}
+        layout="cards"
+        items={[
+          {
+            label: copy.scriptStage,
+            detail: scriptSummary,
+            summary: finalScript
+              ? "定稿结果已返回，可继续拆成分镜。"
+              : "从想法提炼角色、冲突和场景节奏。",
+            badgeLabel: copy.stageActive,
+            tone: "active",
+            href: `/projects/${projectId}/script`,
+            ctaLabel: copy.enterScript,
+          },
+          {
+            label: copy.storyboardStage,
+            detail: copy.storyboardDetail,
+            summary: finalScript
+              ? "脚本已具备分镜输入条件。"
+              : "等待脚本定稿后生成结构化镜头段落。",
+            badgeLabel: finalScript ? copy.stageNext : copy.stageWaiting,
+            tone: finalScript ? "warning" : "neutral",
+            href: `/projects/${projectId}/storyboard`,
+            ctaLabel: copy.enterStoryboard,
+          },
+          {
+            label: copy.imagesStage,
+            detail: copy.imagesDetail,
+            summary: "根据分镜提示产出关键画面与参考图。",
+            badgeLabel: copy.stageWaiting,
+            tone: "neutral",
+            href: `/projects/${projectId}/images`,
+            ctaLabel: copy.enterImages,
+          },
+          {
+            label: copy.videosStage,
+            detail: copy.videosDetail,
+            summary: "使用关键画面推进镜头运动与视频结果。",
+            badgeLabel: copy.stageWaiting,
+            tone: "neutral",
+            href: `/projects/${projectId}/videos`,
+            ctaLabel: copy.enterVideos,
+          },
+        ]}
+      />
 
       {error ? (
-        <p role="alert" style={errorStyle}>
+        <p role="alert" style={errorNoticeStyle}>
           {error}
         </p>
       ) : null}
       {statusMessage ? (
-        <p role="status" style={messageStyle}>
+        <p role="status" style={statusNoticeStyle}>
           {statusMessage}
         </p>
       ) : null}
 
-      <div style={gridStyle}>
+      <div style={twoColumnGridStyle}>
         <section style={panelStyle}>
-          <h3 style={panelTitleStyle}>创意输入</h3>
-          <p style={panelCopyStyle}>
-            先给出一个足够模糊但方向明确的短剧想法，系统会继续追问关键设定。
-          </p>
+          <div style={sectionHeaderStyle}>
+            <h2 style={sectionTitleStyle}>{copy.startIdeaHeading}</h2>
+            <p style={sectionDescriptionStyle}>{copy.startIdeaDescription}</p>
+          </div>
           <label style={fieldStyle}>
-            <span>创意</span>
+            <span style={fieldLabelStyle}>{copy.ideaLabel}</span>
             <textarea
               aria-label="Script idea input"
               value={idea}
               onChange={(event) => setIdea(event.target.value)}
-              rows={5}
+              rows={6}
               style={textareaStyle}
               disabled={isSessionLocked}
             />
@@ -513,7 +636,7 @@ export default function ProjectScriptPage() {
               style={primaryButtonStyle}
               disabled={isSessionLocked || !projectId}
             >
-              开始会话
+              {copy.startSession}
             </button>
             <button
               type="button"
@@ -522,41 +645,48 @@ export default function ProjectScriptPage() {
               style={secondaryButtonStyle}
               disabled={isSessionLocked}
             >
-              开始新会话
+              {copy.resetSession}
             </button>
           </div>
         </section>
 
         <section style={panelStyle}>
-          <h3 style={panelTitleStyle}>问题列表</h3>
-          <p style={panelCopyStyle}>
-            当前轮的问题会以流式方式逐步出现，重新生成只会替换最后一个问题。
-          </p>
+          <div style={sectionHeaderStyle}>
+            <h2 style={sectionTitleStyle}>{copy.questionsHeading}</h2>
+            <p style={sectionDescriptionStyle}>{copy.questionsDescription}</p>
+          </div>
 
           {questions.length === 0 && !streamingQuestion ? (
-            <p style={emptyStyle}>会话开始后，AI 问题会显示在这里。</p>
+            <p style={emptyStateStyle}>{copy.questionEmpty}</p>
           ) : (
-            <div style={questionListStyle}>
+            <div style={stackStyle}>
               {questions.map((question, index) => (
-                <article key={question.id} style={questionCardStyle}>
-                  <p style={questionIndexStyle}>Round {index + 1}</p>
-                  <strong>{question.text}</strong>
+                <article key={question.id} style={resultCardStyle}>
+                  <p style={resultMetaStyle}>
+                    {copy.roundPrefix}
+                    {index + 1}
+                    {copy.roundSuffix}
+                  </p>
+                  <strong style={resultTitleStyle}>{question.text}</strong>
                   {question.answer ? (
-                    <p style={answerPreviewStyle}>回答：{question.answer}</p>
+                    <p style={resultBodyStyle}>
+                      {copy.answerPrefix}
+                      {question.answer}
+                    </p>
                   ) : null}
                 </article>
               ))}
               {streamingQuestion ? (
                 <article style={streamingCardStyle}>
-                  <p style={questionIndexStyle}>Streaming</p>
-                  <strong>{streamingQuestion}</strong>
+                  <p style={resultMetaStyle}>{copy.streamingLabel}</p>
+                  <strong style={resultTitleStyle}>{streamingQuestion}</strong>
                 </article>
               ) : null}
             </div>
           )}
 
           <label style={fieldStyle}>
-            <span>回答</span>
+            <span style={fieldLabelStyle}>{copy.answerLabel}</span>
             <textarea
               aria-label="Script answer input"
               value={answer}
@@ -574,7 +704,7 @@ export default function ProjectScriptPage() {
               style={primaryButtonStyle}
               disabled={isQuestionControlsLocked || !sessionId}
             >
-              发送回答
+              {copy.sendAnswer}
             </button>
             <button
               type="button"
@@ -585,7 +715,7 @@ export default function ProjectScriptPage() {
                 isQuestionControlsLocked || !sessionId || questions.length === 0
               }
             >
-              重新生成当前问题
+              {copy.regenerateQuestion}
             </button>
             <button
               type="button"
@@ -600,206 +730,232 @@ export default function ProjectScriptPage() {
                 questions.length === 0
               }
             >
-              剧本定稿
+              {copy.finalize}
             </button>
           </div>
         </section>
       </div>
 
       <section style={panelStyle}>
-        <h3 style={panelTitleStyle}>最终剧本</h3>
-        <p style={panelCopyStyle}>
-          定稿后页面会自动短轮询后台任务，成功后在这里展示最终剧本文本。
-        </p>
+        <div style={sectionHeaderStyle}>
+          <h2 style={sectionTitleStyle}>{copy.finalScriptHeading}</h2>
+          <p style={sectionDescriptionStyle}>{copy.finalScriptDescription}</p>
+        </div>
         {finalScript ? (
-          <pre style={scriptOutputStyle}>{finalScript}</pre>
+          <pre style={outputPreStyle}>{finalScript}</pre>
         ) : (
-          <p style={emptyStyle}>尚未生成最终剧本。</p>
+          <p style={emptyStateStyle}>{copy.finalScriptEmpty}</p>
         )}
       </section>
-    </section>
+    </div>
   );
 }
 
 const pageStyle = {
   display: "grid",
-  gap: "20px",
+  gap: "24px",
 } satisfies CSSProperties;
 
-const heroStyle = {
-  display: "flex",
-  justifyContent: "space-between",
-  gap: "16px",
-  alignItems: "flex-start",
-  padding: "24px",
-  borderRadius: "24px",
-  border: "1px solid rgba(31, 27, 22, 0.12)",
-  background: "rgba(255, 250, 243, 0.92)",
-} satisfies CSSProperties;
-
-const eyebrowStyle = {
-  margin: 0,
-  color: "#8c5f2d",
-  textTransform: "uppercase",
-  letterSpacing: "0.12em",
-  fontSize: "0.8rem",
-} satisfies CSSProperties;
-
-const heroTitleStyle = {
-  margin: "10px 0 0",
-  fontSize: "2rem",
-} satisfies CSSProperties;
-
-const heroCopyStyle = {
-  margin: "12px 0 0",
-  color: "#665d52",
-  lineHeight: 1.6,
-  maxWidth: "720px",
-} satisfies CSSProperties;
-
-const heroActionsStyle = {
-  display: "flex",
+const heroSupportStyle = {
+  display: "grid",
   gap: "10px",
+} satisfies CSSProperties;
+
+const heroSupportHeaderStyle = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: "12px",
   flexWrap: "wrap",
 } satisfies CSSProperties;
 
-const gridStyle = {
-  display: "grid",
-  gap: "20px",
-  gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+const heroMetaLabelStyle = {
+  color: "var(--text-muted)",
+  fontSize: "0.82rem",
+  letterSpacing: "0.08em",
+  textTransform: "uppercase",
+} satisfies CSSProperties;
+
+const heroSupportTitleStyle = {
+  margin: 0,
+  fontSize: "1.15rem",
+  lineHeight: 1.4,
+} satisfies CSSProperties;
+
+const heroSupportBodyStyle = {
+  margin: 0,
+  color: "var(--text-muted)",
+  lineHeight: 1.7,
+} satisfies CSSProperties;
+
+const secondaryActionStyle = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  minHeight: "42px",
+  padding: "0 18px",
+  borderRadius: "999px",
+  background: "rgba(248, 250, 252, 0.08)",
+  border: "1px solid rgba(248, 250, 252, 0.12)",
+  color: "var(--text)",
+  textDecoration: "none",
+  fontWeight: 700,
 } satisfies CSSProperties;
 
 const panelStyle = {
   display: "grid",
   gap: "16px",
-  padding: "20px",
+  padding: "22px",
   borderRadius: "24px",
-  border: "1px solid rgba(31, 27, 22, 0.12)",
-  background: "rgba(255, 250, 243, 0.9)",
+  border: "1px solid var(--border)",
+  background: "rgba(22, 24, 39, 0.88)",
+  boxShadow: "var(--shadow-panel)",
 } satisfies CSSProperties;
 
-const panelTitleStyle = {
+const sectionHeaderStyle = {
+  display: "grid",
+  gap: "8px",
+} satisfies CSSProperties;
+
+const sectionTitleStyle = {
   margin: 0,
   fontSize: "1.2rem",
 } satisfies CSSProperties;
 
-const panelCopyStyle = {
+const sectionDescriptionStyle = {
   margin: 0,
-  color: "#665d52",
+  color: "var(--text-muted)",
   lineHeight: 1.6,
+} satisfies CSSProperties;
+
+const statusNoticeStyle = {
+  margin: 0,
+  padding: "16px 18px",
+  borderRadius: "18px",
+  border: "1px solid rgba(74, 222, 128, 0.2)",
+  background: "rgba(21, 128, 61, 0.16)",
+  color: "#dcfce7",
+  lineHeight: 1.6,
+} satisfies CSSProperties;
+
+const errorNoticeStyle = {
+  margin: 0,
+  padding: "16px 18px",
+  borderRadius: "18px",
+  border: "1px solid rgba(248, 113, 113, 0.24)",
+  background: "rgba(127, 29, 29, 0.24)",
+  color: "#fecaca",
+  lineHeight: 1.6,
+} satisfies CSSProperties;
+
+const twoColumnGridStyle = {
+  display: "grid",
+  gap: "20px",
+  gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
 } satisfies CSSProperties;
 
 const fieldStyle = {
   display: "grid",
   gap: "8px",
-  fontWeight: 600,
+} satisfies CSSProperties;
+
+const fieldLabelStyle = {
+  fontWeight: 700,
+  color: "var(--text)",
 } satisfies CSSProperties;
 
 const textareaStyle = {
   width: "100%",
-  borderRadius: "16px",
-  border: "1px solid rgba(31, 27, 22, 0.16)",
+  minHeight: "120px",
+  borderRadius: "18px",
+  border: "1px solid rgba(129, 140, 248, 0.2)",
   padding: "14px 16px",
   font: "inherit",
-  background: "#fff",
+  color: "var(--text)",
+  background: "rgba(8, 10, 26, 0.4)",
   resize: "vertical",
 } satisfies CSSProperties;
 
 const buttonRowStyle = {
   display: "flex",
-  gap: "10px",
+  gap: "12px",
   flexWrap: "wrap",
 } satisfies CSSProperties;
 
 const primaryButtonStyle = {
-  border: 0,
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  minHeight: "42px",
+  padding: "0 18px",
   borderRadius: "999px",
-  background: "#8c5f2d",
+  border: 0,
+  background:
+    "linear-gradient(135deg, rgba(109, 94, 252, 0.95), rgba(129, 140, 248, 0.72))",
   color: "#fff",
-  padding: "12px 18px",
-  font: "inherit",
   fontWeight: 700,
   cursor: "pointer",
 } satisfies CSSProperties;
 
 const secondaryButtonStyle = {
   ...primaryButtonStyle,
-  background: "rgba(140, 95, 45, 0.12)",
-  color: "#4b3a27",
+  background: "rgba(248, 250, 252, 0.08)",
+  border: "1px solid rgba(248, 250, 252, 0.12)",
+  color: "var(--text)",
 } satisfies CSSProperties;
 
-const secondaryLinkStyle = {
-  display: "inline-flex",
-  alignItems: "center",
-  justifyContent: "center",
-  borderRadius: "999px",
-  padding: "12px 18px",
-  textDecoration: "none",
-  background: "rgba(140, 95, 45, 0.12)",
-  color: "#4b3a27",
-  fontWeight: 700,
-} satisfies CSSProperties;
-
-const questionListStyle = {
+const stackStyle = {
   display: "grid",
-  gap: "12px",
+  gap: "14px",
 } satisfies CSSProperties;
 
-const questionCardStyle = {
-  padding: "16px",
-  borderRadius: "18px",
-  background: "rgba(140, 95, 45, 0.08)",
+const resultCardStyle = {
   display: "grid",
   gap: "8px",
+  padding: "16px",
+  borderRadius: "18px",
+  border: "1px solid rgba(129, 140, 248, 0.16)",
+  background: "rgba(8, 10, 26, 0.26)",
 } satisfies CSSProperties;
 
 const streamingCardStyle = {
-  ...questionCardStyle,
-  border: "1px dashed rgba(140, 95, 45, 0.35)",
+  ...resultCardStyle,
+  border: "1px dashed rgba(202, 138, 4, 0.35)",
 } satisfies CSSProperties;
 
-const questionIndexStyle = {
+const resultMetaStyle = {
   margin: 0,
-  color: "#8c5f2d",
-  fontSize: "0.85rem",
-  textTransform: "uppercase",
+  color: "var(--accent-gold)",
+  fontSize: "0.8rem",
   letterSpacing: "0.08em",
+  textTransform: "uppercase",
 } satisfies CSSProperties;
 
-const answerPreviewStyle = {
+const resultTitleStyle = {
+  fontSize: "1rem",
+  lineHeight: 1.6,
+} satisfies CSSProperties;
+
+const resultBodyStyle = {
   margin: 0,
-  color: "#665d52",
-  lineHeight: 1.5,
+  color: "var(--text-muted)",
+  lineHeight: 1.7,
+  whiteSpace: "pre-wrap",
 } satisfies CSSProperties;
 
-const scriptOutputStyle = {
+const emptyStateStyle = {
+  margin: 0,
+  color: "var(--text-muted)",
+  lineHeight: 1.7,
+} satisfies CSSProperties;
+
+const outputPreStyle = {
   margin: 0,
   padding: "18px",
   borderRadius: "18px",
-  background: "#fff",
-  border: "1px solid rgba(31, 27, 22, 0.12)",
+  border: "1px solid rgba(129, 140, 248, 0.16)",
+  background: "rgba(8, 10, 26, 0.32)",
+  color: "var(--text)",
   whiteSpace: "pre-wrap",
-  lineHeight: 1.7,
-  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-} satisfies CSSProperties;
-
-const emptyStyle = {
-  margin: 0,
-  color: "#665d52",
-} satisfies CSSProperties;
-
-const messageStyle = {
-  margin: 0,
-  padding: "14px 16px",
-  borderRadius: "16px",
-  background: "rgba(23, 92, 49, 0.12)",
-  color: "#175c31",
-} satisfies CSSProperties;
-
-const errorStyle = {
-  margin: 0,
-  padding: "14px 16px",
-  borderRadius: "16px",
-  background: "rgba(180, 35, 24, 0.12)",
-  color: "#b42318",
+  lineHeight: 1.8,
 } satisfies CSSProperties;

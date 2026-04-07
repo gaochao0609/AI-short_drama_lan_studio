@@ -47,10 +47,10 @@ export default function AdminStoragePage() {
 
     if (!response.ok) {
       if (payload && "error" in payload) {
-        throw new Error(payload.error ?? "Failed to load storage stats");
+        throw new Error(payload.error ?? "加载存储统计失败");
       }
 
-      throw new Error("Failed to load storage stats");
+      throw new Error("加载存储统计失败");
     }
 
     return payload as StorageStats;
@@ -78,7 +78,7 @@ export default function AdminStoragePage() {
           return;
         }
 
-        setError(loadError instanceof Error ? loadError.message : "Failed to load storage stats");
+        setError(loadError instanceof Error ? loadError.message : "加载存储统计失败");
       }
     }
 
@@ -105,14 +105,14 @@ export default function AdminStoragePage() {
       const payload = (await response.json().catch(() => null)) as CleanupResult | { error?: string } | null;
 
       if (!response.ok) {
-        throw new Error(payload && "error" in payload ? payload.error ?? "Failed to clean up storage" : "Failed to clean up storage");
+        throw new Error(payload && "error" in payload ? payload.error ?? "清理存储失败" : "清理存储失败");
       }
 
       const cleanupResult = payload as CleanupResult;
-      setMessage(`Deleted ${cleanupResult.deletedFiles} files and reclaimed ${formatBytes(cleanupResult.freedBytes)}.`);
+      setMessage(`已删除 ${cleanupResult.deletedFiles} 个文件，释放 ${formatBytes(cleanupResult.freedBytes)}。`);
       await loadStats();
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "Failed to clean up storage");
+      setError(submitError instanceof Error ? submitError.message : "清理存储失败");
     } finally {
       setIsCleaningUp(false);
     }
@@ -120,24 +120,30 @@ export default function AdminStoragePage() {
 
   return (
     <section style={pageStyle}>
-      <header>
-        <p style={eyebrowStyle}>Operations</p>
-        <h2 style={titleStyle}>Storage Management</h2>
+      <header style={headerStyle}>
+        <p style={eyebrowStyle}>存储管理</p>
+        <h2 style={titleStyle}>存储管理</h2>
         <p style={copyStyle}>
-          Track directory usage, keep an eye on free disk space, and remove 30-day-old cache and
-          intermediate artifacts without touching referenced assets. Image and video totals include
-          persisted project files stored under <code>storage/assets</code>.
+          查看目录占用和剩余空间，可安全清理 30 天前的缓存与中间产物，不影响已归档资产。
         </p>
       </header>
 
-      {message ? <p style={messageStyle}>{message}</p> : null}
-      {error ? <p style={errorStyle}>{error}</p> : null}
+      {message ? (
+        <p style={messageStyle} role="status" aria-live="polite">
+          {message}
+        </p>
+      ) : null}
+      {error ? (
+        <p style={errorStyle} role="alert" aria-live="assertive">
+          {error}
+        </p>
+      ) : null}
 
       <section style={summaryGridStyle}>
         <article style={heroCardStyle}>
-          <p style={summaryLabelStyle}>Free disk space</p>
+          <p style={summaryLabelStyle}>可用磁盘空间</p>
           <strong style={heroValueStyle}>{formatBytes(stats?.freeBytes ?? 0)}</strong>
-          <p style={copyStyle}>Total capacity {formatBytes(stats?.totalBytes ?? 0)}</p>
+          <p style={copyStyle}>总容量 {formatBytes(stats?.totalBytes ?? 0)}</p>
         </article>
         <article style={summaryCardStyle}>
           <p style={summaryLabelStyle}>uploads</p>
@@ -159,14 +165,12 @@ export default function AdminStoragePage() {
 
       <section style={panelStyle}>
         <div style={sectionHeaderStyle}>
-          <div>
-            <h3 style={panelTitleStyle}>Cleanup</h3>
-            <p style={copyStyle}>
-              Remove task cache images and intermediate artifacts older than 30 days.
-            </p>
+          <div style={sectionTitleWrapStyle}>
+            <h3 style={panelTitleStyle}>缓存清理</h3>
+            <p style={copyStyle}>删除 30 天前的任务缓存图与中间产物。</p>
           </div>
-          <button type="button" style={buttonStyle} onClick={() => void cleanupOldCache()} disabled={isCleaningUp}>
-            Clean 30-day cache
+          <button type="button" style={primaryButtonStyle} onClick={() => void cleanupOldCache()} disabled={isCleaningUp}>
+            清理 30 天缓存
           </button>
         </div>
       </section>
@@ -179,105 +183,122 @@ const pageStyle = {
   gap: "20px",
 } satisfies CSSProperties;
 
+const headerStyle = {
+  display: "grid",
+  gap: "8px",
+} satisfies CSSProperties;
+
 const eyebrowStyle = {
   margin: 0,
-  color: "#8c5f2d",
+  color: "var(--accent-gold)",
   textTransform: "uppercase",
   letterSpacing: "0.12em",
-  fontSize: "0.8rem",
+  fontSize: "0.78rem",
 } satisfies CSSProperties;
 
 const titleStyle = {
-  margin: "10px 0 0",
-  fontSize: "2rem",
+  margin: 0,
+  fontSize: "1.85rem",
+  lineHeight: 1.2,
 } satisfies CSSProperties;
 
 const copyStyle = {
-  margin: "10px 0 0",
-  color: "#665d52",
+  margin: 0,
+  color: "var(--text-muted)",
   lineHeight: 1.6,
 } satisfies CSSProperties;
 
 const summaryGridStyle = {
   display: "grid",
-  gap: "12px",
+  gap: "10px",
   gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
 } satisfies CSSProperties;
 
 const heroCardStyle = {
   gridColumn: "span 2",
-  borderRadius: "24px",
-  padding: "22px",
-  background: "linear-gradient(135deg, rgba(140, 95, 45, 0.16), rgba(255, 250, 243, 0.96))",
-  border: "1px solid rgba(31, 27, 22, 0.08)",
+  borderRadius: "14px",
+  padding: "16px",
+  border: "1px solid var(--border)",
+  background: "rgba(15, 15, 35, 0.56)",
 } satisfies CSSProperties;
 
 const summaryCardStyle = {
-  borderRadius: "18px",
-  padding: "18px",
-  background: "rgba(140, 95, 45, 0.08)",
-  border: "1px solid rgba(31, 27, 22, 0.08)",
+  borderRadius: "14px",
+  padding: "14px",
+  border: "1px solid var(--border)",
+  background: "rgba(15, 15, 35, 0.56)",
 } satisfies CSSProperties;
 
 const summaryLabelStyle = {
   margin: 0,
-  color: "#665d52",
+  color: "var(--text-muted)",
 } satisfies CSSProperties;
 
 const heroValueStyle = {
   display: "block",
-  marginTop: "12px",
-  fontSize: "2.4rem",
+  marginTop: "8px",
+  fontSize: "2rem",
 } satisfies CSSProperties;
 
 const summaryValueStyle = {
   display: "block",
-  marginTop: "10px",
-  fontSize: "1.8rem",
+  marginTop: "8px",
+  fontSize: "1.4rem",
 } satisfies CSSProperties;
 
 const panelStyle = {
-  borderRadius: "24px",
-  border: "1px solid rgba(31, 27, 22, 0.12)",
-  background: "rgba(255, 250, 243, 0.94)",
-  padding: "20px",
+  borderRadius: "20px",
+  border: "1px solid var(--border)",
+  background: "rgba(22, 24, 39, 0.82)",
+  padding: "18px",
 } satisfies CSSProperties;
 
 const sectionHeaderStyle = {
   display: "flex",
   justifyContent: "space-between",
-  gap: "12px",
+  gap: "10px",
   alignItems: "center",
+} satisfies CSSProperties;
+
+const sectionTitleWrapStyle = {
+  display: "grid",
+  gap: "6px",
 } satisfies CSSProperties;
 
 const panelTitleStyle = {
   margin: 0,
-  fontSize: "1.2rem",
+  fontSize: "1.06rem",
 } satisfies CSSProperties;
 
-const buttonStyle = {
-  border: 0,
+const baseButtonStyle = {
+  border: "1px solid transparent",
   borderRadius: "999px",
-  background: "#8c5f2d",
-  color: "#fff",
-  padding: "10px 14px",
+  padding: "8px 12px",
   font: "inherit",
   fontWeight: 700,
   cursor: "pointer",
 } satisfies CSSProperties;
 
+const primaryButtonStyle = {
+  ...baseButtonStyle,
+  background: "var(--accent-violet)",
+  color: "var(--text)",
+} satisfies CSSProperties;
+
 const messageStyle = {
   margin: 0,
-  padding: "14px 16px",
-  borderRadius: "16px",
-  background: "rgba(23, 92, 49, 0.12)",
-  color: "#175c31",
+  padding: "12px 14px",
+  borderRadius: "14px",
+  border: "1px solid var(--border)",
+  background: "rgba(109, 94, 252, 0.2)",
+  color: "var(--text)",
 } satisfies CSSProperties;
 
 const errorStyle = {
   margin: 0,
-  padding: "14px 16px",
-  borderRadius: "16px",
-  background: "rgba(180, 35, 24, 0.12)",
-  color: "#b42318",
+  padding: "12px 14px",
+  borderRadius: "14px",
+  border: "1px solid var(--border)",
+  background: "rgba(248, 113, 113, 0.2)",
+  color: "var(--text)",
 } satisfies CSSProperties;

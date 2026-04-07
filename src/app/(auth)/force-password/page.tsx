@@ -54,10 +54,10 @@ export default function ForcePasswordPage() {
 
   return (
     <main style={shellStyle}>
-      <section style={cardStyle}>
+      <section style={panelStyle}>
         <p style={eyebrowStyle}>Lan Studio</p>
-        <h1 style={titleStyle}>首次登录修改密码</h1>
-        <p style={copyStyle}>为保证账号安全，请先设置新密码。修改完成后会保留当前会话并失效其他会话。</p>
+        <h1 style={titleStyle}>首次登录重设密码</h1>
+        <p style={copyStyle}>首次登录需要重设密码，完成后即可进入创作工作区。</p>
         <form onSubmit={handleSubmit} style={formStyle}>
           <label style={fieldStyle}>
             <span>新密码</span>
@@ -81,9 +81,13 @@ export default function ForcePasswordPage() {
               style={inputStyle}
             />
           </label>
-          {error ? <p style={errorStyle}>{error}</p> : null}
+          {error ? (
+            <p role="alert" aria-live="assertive" style={errorStyle}>
+              {error}
+            </p>
+          ) : null}
           <button type="submit" disabled={isSubmitting} style={buttonStyle}>
-            {isSubmitting ? "保存中..." : "保存新密码"}
+            {isSubmitting ? "正在保存..." : "保存并进入工作区"}
           </button>
         </form>
       </section>
@@ -98,32 +102,33 @@ const shellStyle = {
   padding: "24px",
 } satisfies CSSProperties;
 
-const cardStyle = {
+const panelStyle = {
   width: "min(460px, 100%)",
   borderRadius: "24px",
-  border: "1px solid rgba(31, 27, 22, 0.12)",
-  background: "rgba(255, 250, 243, 0.94)",
-  boxShadow: "0 24px 60px rgba(31, 27, 22, 0.12)",
+  border: "1px solid rgba(129, 140, 248, 0.24)",
+  background: "rgba(22, 24, 39, 0.9)",
+  boxShadow: "0 24px 60px rgba(3, 7, 18, 0.48)",
   padding: "32px",
 } satisfies CSSProperties;
 
 const eyebrowStyle = {
   margin: 0,
-  color: "#8c5f2d",
+  color: "#ca8a04",
   textTransform: "uppercase",
-  letterSpacing: "0.14em",
+  letterSpacing: "0.16em",
   fontSize: "0.8rem",
 } satisfies CSSProperties;
 
 const titleStyle = {
   margin: "12px 0 0",
   fontSize: "2rem",
+  lineHeight: 1.1,
 } satisfies CSSProperties;
 
 const copyStyle = {
   margin: "12px 0 0",
-  color: "#665d52",
-  lineHeight: 1.6,
+  color: "#b8c0d4",
+  lineHeight: 1.65,
 } satisfies CSSProperties;
 
 const formStyle = {
@@ -141,25 +146,26 @@ const fieldStyle = {
 const inputStyle = {
   width: "100%",
   borderRadius: "14px",
-  border: "1px solid rgba(31, 27, 22, 0.16)",
+  border: "1px solid rgba(129, 140, 248, 0.24)",
   padding: "12px 14px",
   font: "inherit",
-  background: "#fff",
-  color: "#1f1b16",
+  background: "rgba(15, 15, 35, 0.72)",
+  color: "#f8fafc",
 } satisfies CSSProperties;
 
 const buttonStyle = {
   border: 0,
   borderRadius: "999px",
-  background: "#8c5f2d",
-  color: "#fff",
+  background:
+    "linear-gradient(135deg, rgba(15, 23, 42, 0.28), rgba(15, 23, 42, 0.28)), linear-gradient(135deg, #ca8a04, #6d5efc)",
+  color: "#f8fafc",
   padding: "12px 18px",
   font: "inherit",
   fontWeight: 700,
   cursor: "pointer",
-} satisfies React.CSSProperties;
+} satisfies CSSProperties;
 
 const errorStyle = {
   margin: 0,
-  color: "#b42318",
-} satisfies React.CSSProperties;
+  color: "#f87171",
+} satisfies CSSProperties;

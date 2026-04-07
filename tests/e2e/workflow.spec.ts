@@ -8,7 +8,7 @@ import {
   UserRole,
   UserStatus,
 } from "@prisma/client";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { hash } from "bcryptjs";
 
 const databaseUrl =
@@ -89,6 +89,81 @@ async function insertTaskRow(
   );
 }
 
+async function expectNoHorizontalOverflow(page: Page) {
+  const metrics = await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    clientWidth: document.documentElement.clientWidth,
+  }));
+  expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth + 1);
+}
+
+async function expectVisibleFocusIndicator(page: Page) {
+  const navLink = page
+    .getByRole("navigation", { name: /creative workspace navigation|\u5de5\u4f5c\u533a\u5bfc\u822a/i })
+    .getByRole("link", { name: /workspace overview|\u5de5\u4f5c\u533a\u603b\u89c8|\u5de5\u4f5c\u533a\u6982\u89c8/i });
+  await expect(navLink).toBeVisible();
+  const baselineStyle = await navLink.evaluate((element) => {
+    const link = element as HTMLElement;
+    const style = getComputedStyle(link);
+    return {
+      borderTopColor: style.borderTopColor,
+      backgroundColor: style.backgroundColor,
+      outlineStyle: style.outlineStyle,
+      outlineWidth: style.outlineWidth,
+      boxShadow: style.boxShadow,
+      transform: style.transform,
+    };
+  });
+
+  let focusState: {
+    isFocused: boolean;
+    isFocusVisible: boolean;
+    borderTopColor: string;
+    backgroundColor: string;
+    outlineStyle: string;
+    outlineWidth: string;
+    boxShadow: string;
+    transform: string;
+  } | null = null;
+
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    await page.keyboard.press("Tab");
+    focusState = await navLink.evaluate((element) => {
+      const link = element as HTMLElement;
+      const style = getComputedStyle(link);
+
+      return {
+        isFocused: document.activeElement === link,
+        isFocusVisible: link.matches(":focus-visible"),
+        borderTopColor: style.borderTopColor,
+        backgroundColor: style.backgroundColor,
+        outlineStyle: style.outlineStyle,
+        outlineWidth: style.outlineWidth,
+        boxShadow: style.boxShadow,
+        transform: style.transform,
+      };
+    });
+
+    if (focusState.isFocused) {
+      break;
+    }
+  }
+
+  expect(focusState).not.toBeNull();
+  expect(focusState!.isFocused).toBe(true);
+  expect(focusState!.isFocusVisible).toBe(true);
+  const hasOutline = focusState!.outlineStyle !== "none" && focusState!.outlineWidth !== "0px";
+  const hasShadow = focusState!.boxShadow !== "none";
+  const hasStyleDelta =
+    focusState!.borderTopColor !== baselineStyle.borderTopColor ||
+    focusState!.backgroundColor !== baselineStyle.backgroundColor ||
+    focusState!.outlineStyle !== baselineStyle.outlineStyle ||
+    focusState!.outlineWidth !== baselineStyle.outlineWidth ||
+    focusState!.boxShadow !== baselineStyle.boxShadow ||
+    focusState!.transform !== baselineStyle.transform;
+  expect(hasStyleDelta || hasOutline || hasShadow).toBe(true);
+}
+
 test("workspace create-project form navigates into the project flow", async ({ page }) => {
   const prisma = createPrismaClient();
   const suffix = Math.random().toString(36).slice(2, 10);
@@ -115,12 +190,29 @@ test("workspace create-project form navigates into the project flow", async ({ p
     await page.locator('button[type="submit"]').click();
     await expect(page).toHaveURL(/\/workspace$/);
     await expect(page.getByRole("heading", { name: workspaceHeroTitle })).toBeVisible();
+    await page.setViewportSize({ width: 375, height: 812 });
+    await expectNoHorizontalOverflow(page);
+    await expectVisibleFocusIndicator(page);
 
     await page.getByLabel("项目名称").fill("Workspace Flow Project");
     await page.getByLabel("项目概念").fill("Navigate from the workspace form into the project flow.");
     await page.getByRole("button", { name: createProjectCta }).click();
 
     await expect(page).toHaveURL(/\/projects\/[^/]+$/);
+    const projectId = page.url().split("/").at(-1) ?? "";
+    await expectNoHorizontalOverflow(page);
+    const projectWorkflowRegion = page
+      .getByRole("region", { name: /\u6d41\u7a0b\u63a7\u5236|workflow control/i })
+      .filter({ has: page.locator(`a[href="/projects/${projectId}/script"]`) })
+      .filter({ has: page.getByRole("link", { name: /\u8fdb\u5165\u811a\u672c\u6d41\u7a0b|script/i }) });
+    await expect(projectWorkflowRegion).toHaveCount(1);
+    await expect(projectWorkflowRegion.getByRole("link", { name: /\u8fdb\u5165\u811a\u672c\u6d41\u7a0b|script/i }))
+      .toHaveAttribute("href", `/projects/${projectId}/script`);
+    await expect(projectWorkflowRegion.getByText("Script", { exact: true })).toBeVisible();
+    await expect(projectWorkflowRegion.getByText("Storyboard", { exact: true })).toBeVisible();
+    const firstWorkflowItem = projectWorkflowRegion.getByRole("listitem").first();
+    await expect(firstWorkflowItem).toContainText("Script");
+    await expect(firstWorkflowItem).toContainText(/\u4e0b\u4e00\u6b65|next/i);
   } finally {
     if (userId) {
       await prisma.user.deleteMany({
@@ -482,19 +574,19 @@ test("workflow shows all generated artifacts in project detail", async ({ page }
 
     await page.goto(`${appUrl}/projects/${projectId}/storyboard`);
     await page.getByRole("button", { name: "Generate storyboard" }).click();
-    await expect(page.getByText("Storyboard generated.")).toBeVisible();
-    await expect(page.getByText("2 segments")).toBeVisible();
+    await expect(page.getByText("Control room")).toBeVisible();
+    await expect(page.getByText("Vault interior")).toBeVisible();
 
     await page.goto(`${appUrl}/projects/${projectId}/images`);
     await page.getByLabel("Image prompt input").fill("Generate a cinematic still of the courier.");
     await page.getByRole("button", { name: "Generate image" }).click();
-    await expect(page.getByText("Image generated.")).toBeVisible();
+    await expect(page.getByText(`asset-image-${suffix}`)).toBeVisible();
 
     await page.goto(`${appUrl}/projects/${projectId}/videos`);
     await page.getByLabel("Video prompt input").fill("Animate the still with a slow push-in.");
     await page.getByRole("button", { name: new RegExp(`asset-image-${suffix}`) }).click();
     await page.getByRole("button", { name: "Generate video" }).click();
-    await expect(page.getByText("Video generated.")).toBeVisible();
+    await expect(page.getByText(`asset-video-${suffix}`)).toBeVisible();
 
     await page.goto(`${appUrl}/projects/${projectId}`);
     await expect(page.getByText("制作台")).toBeVisible();

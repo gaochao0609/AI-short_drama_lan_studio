@@ -107,6 +107,28 @@ describe("project script page", () => {
     });
   });
 
+  it("renders the shared workflow header and keeps the script session controls", async () => {
+    await renderPage();
+
+    expect((await screen.findAllByText("项目制作流程")).length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: "脚本" })).toBeInTheDocument();
+    expect(screen.getByText("Project One")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "返回项目制作台" })).toHaveAttribute(
+      "href",
+      "/projects/project-1",
+    );
+    expect(screen.getByText("分镜")).toBeInTheDocument();
+
+    const startButton = screen.getByRole("button", {
+      name: "Start script session",
+    });
+    expect(startButton).toBeEnabled();
+
+    fireEvent.click(startButton);
+
+    expect(await screen.findByText("Who is the hero?")).toBeInTheDocument();
+  });
+
   it("shows polling errors instead of staying stuck in the generating state", async () => {
     useTaskPollingMock.mockImplementation((taskId?: string | null) => ({
       task: undefined,
@@ -369,7 +391,9 @@ describe("project script page", () => {
       ).toBeInTheDocument();
     });
 
-    const originalQuestionCard = screen.getByText("Who is the hero?").closest("article");
+    const originalQuestionCard = screen
+      .getByText("Who is the hero?")
+      .closest("article");
 
     expect(screen.queryByText("What city")).not.toBeInTheDocument();
     expect(originalQuestionCard).not.toHaveTextContent("A courier");
@@ -429,5 +453,49 @@ describe("project script page", () => {
         name: "Finalize script",
       }),
     ).toBeDisabled();
+  });
+
+  it("clears the editable idea input when resetting the session", async () => {
+    await renderPage();
+
+    const ideaInput = await screen.findByLabelText("Script idea input");
+
+    fireEvent.change(ideaInput, {
+      target: { value: "Updated session idea" },
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Reset script session",
+      }),
+    );
+
+    expect(ideaInput).toHaveValue("");
+    expect(screen.getByText("Original idea")).toBeInTheDocument();
+  });
+
+  it("falls back to the stage title when project loading fails", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+
+      if (url === "/api/projects/project-1") {
+        return jsonResponse({ error: "加载项目失败" }, 500);
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    await renderPage();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("加载项目失败");
+    await waitFor(() => {
+      expect(screen.queryByText("加载项目中...")).not.toBeInTheDocument();
+    });
+    expect(screen.getAllByRole("heading", { name: "脚本" }).length).toBeGreaterThan(1);
   });
 });

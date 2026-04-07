@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { useParamsMock, useTaskPollingMock, fetchMock } = vi.hoisted(() => ({
@@ -81,6 +81,37 @@ describe("project images page", () => {
     });
   });
 
+  it("renders the shared workflow header and preserves image generation", async () => {
+    const pageModule = await import("@/app/(workspace)/projects/[projectId]/images/page");
+
+    render(<pageModule.default />);
+
+    expect((await screen.findAllByText("项目制作流程")).length).toBeGreaterThan(0);
+    expect(screen.getByRole("heading", { name: "图片" })).toBeInTheDocument();
+    expect(screen.getByText("Project One")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "返回项目制作台" })).toHaveAttribute(
+      "href",
+      "/projects/project-1",
+    );
+    expect(screen.getByText("脚本")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Image prompt input"), {
+      target: { value: "Generate key art." },
+    });
+
+    fireEvent.click(screen.getByText("生成图片"));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/images",
+        expect.objectContaining({
+          method: "POST",
+          body: expect.any(FormData),
+        }),
+      );
+    });
+  });
+
   it("submits text-to-image tasks", async () => {
     const pageModule = await import("@/app/(workspace)/projects/[projectId]/images/page");
 
@@ -92,7 +123,7 @@ describe("project images page", () => {
       target: { value: "Generate key art." },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Generate image" }));
+    fireEvent.click(screen.getByText("生成图片"));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -132,7 +163,7 @@ describe("project images page", () => {
       target: { value: "Transform this." },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Generate image" }));
+    fireEvent.click(screen.getByText("生成图片"));
 
     await waitFor(() => {
       const call = fetchMock.mock.calls
@@ -207,7 +238,7 @@ describe("project images page", () => {
       target: { value: "Generate key art." },
     });
 
-    fireEvent.click(screen.getByRole("button", { name: "Generate image" }));
+    fireEvent.click(screen.getByText("生成图片"));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -217,10 +248,10 @@ describe("project images page", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText(/failed to refresh/i)).toBeInTheDocument();
+      expect(screen.getByText(/^图片已生成，但刷新结果失败：/)).toBeInTheDocument();
     });
 
-    expect(screen.queryByText("Image generated.")).not.toBeInTheDocument();
+    expect(screen.queryByText("图片已生成。")).not.toBeInTheDocument();
   });
 
   it("ignores stale workspace responses when projectId changes mid-flight", async () => {
@@ -446,7 +477,7 @@ describe("project images page", () => {
     fireEvent.change(screen.getByLabelText("Image prompt input"), {
       target: { value: "Generate." },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Generate image" }));
+    fireEvent.click(screen.getByText("生成图片"));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
@@ -543,10 +574,10 @@ describe("project images page", () => {
     fireEvent.change(screen.getByLabelText("Image prompt input"), {
       target: { value: "Generate." },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Generate image" }));
+    fireEvent.click(screen.getByText("生成图片"));
 
-    expect(await screen.findByText("Image task queued.")).toBeInTheDocument();
-    expect(screen.getByText(/Task: task-a/i)).toBeInTheDocument();
+    expect(await screen.findByText("图片任务已加入队列。")).toBeInTheDocument();
+    expect(screen.getByText("任务：task-a")).toBeInTheDocument();
 
     useParamsMock.mockReturnValue({
       projectId: "project-b",
@@ -554,12 +585,12 @@ describe("project images page", () => {
     rerender(<pageModule.default />);
 
     await waitFor(() => {
-      expect(screen.getByText("Loading project...")).toBeInTheDocument();
+      expect(screen.getByText("加载项目中...")).toBeInTheDocument();
     });
 
     expect(screen.queryByText("asset-a1")).not.toBeInTheDocument();
-    expect(screen.queryByText("Image task queued.")).not.toBeInTheDocument();
-    expect(screen.queryByText(/Task: task-a/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("图片任务已加入队列。")).not.toBeInTheDocument();
+    expect(screen.queryByText("任务：task-a")).not.toBeInTheDocument();
 
     const resolveB = pendingResponses.get("/api/images?projectId=project-b");
     expect(resolveB).toBeDefined();
@@ -638,7 +669,7 @@ describe("project images page", () => {
     fireEvent.change(screen.getByLabelText("Image prompt input"), {
       target: { value: "Generate." },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Generate image" }));
+    fireEvent.click(screen.getByText("生成图片"));
 
     await waitFor(() => {
       expect(pendingPosts.has("/api/images")).toBe(true);
@@ -659,8 +690,8 @@ describe("project images page", () => {
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "Project B" })).toBeInTheDocument();
     });
-    expect(screen.queryByText("Image task queued.")).not.toBeInTheDocument();
-    expect(screen.queryByText(/Task: task-a/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("图片任务已加入队列。")).not.toBeInTheDocument();
+    expect(screen.queryByText("任务：task-a")).not.toBeInTheDocument();
   });
 
   it("does not let a stale enqueue finally clear the new project's submitting state", async () => {
@@ -724,7 +755,7 @@ describe("project images page", () => {
     fireEvent.change(screen.getByLabelText("Image prompt input"), {
       target: { value: "Generate A." },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Generate image" }));
+    fireEvent.click(screen.getByText("生成图片"));
 
     await waitFor(() => {
       expect(pendingPostResolvers.length).toBe(1);
@@ -740,13 +771,13 @@ describe("project images page", () => {
     fireEvent.change(screen.getByLabelText("Image prompt input"), {
       target: { value: "Generate B." },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Generate image" }));
+    fireEvent.click(screen.getByText("生成图片"));
 
     await waitFor(() => {
       expect(pendingPostResolvers.length).toBe(2);
     });
 
-    const submitButton = screen.getByRole("button", { name: "Generate image" });
+    const submitButton = screen.getByText("生成图片");
     expect(submitButton).toBeDisabled();
 
     // Resolve A first (stale). This must not clear B's submitting state.
@@ -757,7 +788,7 @@ describe("project images page", () => {
     await expect(async () => {
       await waitFor(
         () => {
-          expect(screen.getByRole("button", { name: "Generate image" })).toBeEnabled();
+          expect(screen.getByText("生成图片")).toBeEnabled();
         },
         { timeout: 150 },
       );
@@ -766,6 +797,78 @@ describe("project images page", () => {
     // Now resolve B and ensure the task is applied to B.
     pendingPostResolvers[1]!(jsonResponse({ taskId: "task-b" }, 202));
 
-    expect(await screen.findByText(/Task: task-b/i)).toBeInTheDocument();
+    expect(await screen.findByText("任务：task-b")).toBeInTheDocument();
+  });
+  it("keeps upstream workflow stages waiting when the loaded data does not prove they are complete", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+
+      if (url === "/api/images?projectId=project-1") {
+        return jsonResponse({
+          project: {
+            id: "project-1",
+            title: "Project One",
+            idea: "Idea",
+          },
+          maxUploadMb: 25,
+          assets: [],
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    const pageModule = await import("@/app/(workspace)/projects/[projectId]/images/page");
+    const { container } = render(<pageModule.default />);
+
+    await screen.findByRole("heading", { name: "Project One" });
+
+    const workflowRail = container.querySelector(".studio-workflow-rail");
+    expect(workflowRail).not.toBeNull();
+
+    const workflowCards = Array.from(workflowRail!.querySelectorAll("li"));
+    const scriptCard = workflowCards.find((item) => within(item).queryByText("脚本"));
+    const storyboardCard = workflowCards.find((item) => within(item).queryByText("分镜"));
+
+    expect(scriptCard).toBeDefined();
+    expect(storyboardCard).toBeDefined();
+    expect(within(scriptCard!).getByText("待开始")).toHaveClass(
+      "studio-status-badge--neutral",
+    );
+    expect(within(storyboardCard!).getByText("待开始")).toHaveClass(
+      "studio-status-badge--neutral",
+    );
+  });
+
+  it("falls back to the stage title when workspace loading fails", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+
+      if (url === "/api/images?projectId=project-1") {
+        return jsonResponse({ error: "加载图片工作区失败" }, 500);
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    const pageModule = await import("@/app/(workspace)/projects/[projectId]/images/page");
+
+    render(<pageModule.default />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("加载图片工作区失败");
+    await waitFor(() => {
+      expect(screen.queryByText("加载项目中...")).not.toBeInTheDocument();
+    });
+    expect(screen.getAllByRole("heading", { name: "图片" }).length).toBeGreaterThan(1);
   });
 });

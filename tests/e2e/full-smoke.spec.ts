@@ -772,9 +772,15 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
     workerRuntime = await startWorkerProcess();
 
     await page.goto("/register-request");
-    await page.locator("form input").nth(0).fill(requesterUsername);
-    await page.locator("form input").nth(1).fill(`Writer ${suffix}`);
-    await page.locator("form textarea").fill("Need access to create and review short-drama projects");
+    await page
+      .getByRole("textbox", { name: /\u7528\u6237\u540d|username/i })
+      .fill(requesterUsername);
+    await page
+      .getByRole("textbox", { name: /\u663e\u793a\u540d\u79f0|display name/i })
+      .fill(`Writer ${suffix}`);
+    await page
+      .getByRole("textbox", { name: /\u7533\u8bf7\u8bf4\u660e|reason/i })
+      .fill("Need access to create and review short-drama projects");
     const registerResponsePromise = page.waitForResponse((response) => {
       return (
         response.url().includes("/api/auth/register-request") &&
@@ -811,7 +817,7 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
         response.request().method() === "POST"
       );
     });
-    await requestCard.getByRole("button").first().click();
+    await requestCard.getByRole("button", { name: /\u901a\u8fc7\u7533\u8bf7|\u5ba1\u6279|approve/i }).click();
     const approvalResponse = await approvalResponsePromise;
     expect(approvalResponse.ok()).toBe(true);
     const approvalPayload = (await approvalResponse.json()) as {
@@ -828,14 +834,25 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
     await page.locator('button[type="submit"]').click();
     await expect(page).toHaveURL(/\/force-password$/);
 
-    await page.locator('input[autocomplete="new-password"]').nth(0).fill(finalPassword);
-    await page.locator('input[autocomplete="new-password"]').nth(1).fill(finalPassword);
+    await page
+      .getByLabel(/^\u65b0\u5bc6\u7801$|^new password$/i)
+      .fill(finalPassword);
+    await page
+      .getByLabel(/^\u786e\u8ba4\u65b0\u5bc6\u7801$|^confirm new password$/i)
+      .fill(finalPassword);
     await page.locator('button[type="submit"]').click();
     await expect(page).toHaveURL(/\/workspace$/);
 
-    await page.getByLabel("Project title").fill(projectTitle);
-    await page.getByLabel("Project idea").fill(projectIdea);
-    await page.getByRole("button", { name: "Create project" }).click();
+    const createProjectCard = page.locator("article").filter({ has: page.locator("textarea") }).first();
+    await createProjectCard
+      .getByRole("textbox", { name: /\u9879\u76ee\u540d\u79f0|project title/i })
+      .fill(projectTitle);
+    await createProjectCard
+      .getByRole("textbox", { name: /\u9879\u76ee\u6982\u5ff5|project idea/i })
+      .fill(projectIdea);
+    await createProjectCard
+      .getByRole("button", { name: /\u521b\u5efa\u9879\u76ee\u5e76\u8fdb\u5165\u811a\u672c\u6d41\u7a0b|create project/i })
+      .click();
     await expect(page).toHaveURL(/\/projects\/[^/]+$/);
     projectId = new URL(page.url()).pathname.split("/").pop() ?? "";
     providerExpectations.projectId = projectId;
@@ -852,6 +869,12 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
       },
       async () => {
         await page.goto(`/projects/${projectId}/script`);
+        await expect(page.getByRole("heading", { name: /^脚本$/ })).toBeVisible();
+        await expect(page.getByRole("link", { name: "返回项目制作台" })).toHaveAttribute(
+          "href",
+          `/projects/${projectId}`,
+        );
+        await expect(page.getByText("项目制作流程")).toHaveCount(2);
         await page.getByLabel("Script idea input").fill(
           "A courier discovers a vault that can rewrite every memory in the city.",
         );
@@ -907,9 +930,14 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
       },
       async () => {
         await page.goto(`/projects/${projectId}/storyboard`);
+        await expect(page.getByRole("heading", { name: /^分镜$/ })).toBeVisible();
+        await expect(page.getByRole("link", { name: "返回项目制作台" })).toHaveAttribute(
+          "href",
+          `/projects/${projectId}`,
+        );
         const storyboardSubmittedAt = new Date();
-        await page.getByRole("button", { name: "Generate storyboard" }).click();
-        await expect(page.getByText("Storyboard generated.")).toBeVisible({ timeout: 15_000 });
+        await page.getByRole("button", { name: /\u751f\u6210\u5206\u955c|Generate storyboard/i }).click();
+        await expect(page.getByText("Archive room")).toBeVisible({ timeout: 15_000 });
 
         await expect
           .poll(
@@ -939,10 +967,14 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
       },
       async () => {
         await page.goto(`/projects/${projectId}/images`);
+        await expect(page.getByRole("heading", { name: /^图片$/ })).toBeVisible();
+        await expect(page.getByRole("link", { name: "返回项目制作台" })).toHaveAttribute(
+          "href",
+          `/projects/${projectId}`,
+        );
         const imageSubmittedAt = new Date();
         await page.getByLabel("Image prompt input").fill("Generate a cinematic still of the courier.");
-        await page.getByRole("button", { name: "Generate image" }).click();
-        await expect(page.getByText("Image generated.")).toBeVisible({ timeout: 15_000 });
+        await page.getByRole("button", { name: /\u751f\u6210\u56fe\u7247|Generate image/i }).click();
 
         let imageTaskId = "";
         await expect
@@ -1027,11 +1059,15 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
       },
       async () => {
         await page.goto(`/projects/${projectId}/videos`);
+        await expect(page.getByRole("heading", { name: /^视频$/ })).toBeVisible();
+        await expect(page.getByRole("link", { name: "返回项目制作台" })).toHaveAttribute(
+          "href",
+          `/projects/${projectId}`,
+        );
         await page.getByLabel("Video prompt input").fill("Animate the still with a slow push-in.");
         await page.getByRole("button", { name: new RegExp(happyImageAssetId) }).click();
         const happyVideoSubmittedAt = new Date();
-        await page.getByRole("button", { name: "Generate video" }).click();
-        await expect(page.getByText("Video generated.")).toBeVisible({ timeout: 15_000 });
+        await page.getByRole("button", { name: /\u751f\u6210\u89c6\u9891|Generate video/i }).click();
 
         let happyVideoTaskId = "";
         await expect
@@ -1060,21 +1096,21 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
         });
 
         await page.goto(`/projects/${projectId}`);
-        await expect(page.getByRole("heading", { name: "Script Versions" })).toBeVisible();
-        await expect(page.getByRole("heading", { name: "Storyboard Versions" })).toBeVisible();
-        await expect(page.getByRole("heading", { name: "Image Assets" })).toBeVisible();
-        await expect(page.getByRole("heading", { name: "Video Assets" })).toBeVisible();
-        await expect(page.getByRole("heading", { name: "Task History" })).toBeVisible();
-        await expect(page.getByText(happyImageAssetId, { exact: true })).toBeVisible();
-        await expect(page.getByText(happyVideoAsset.id, { exact: true })).toBeVisible();
-        await expect(page.getByText(scriptTaskId)).toBeVisible();
-        await expect(page.getByText(storyboardTaskId)).toBeVisible();
+        await expect(page.getByRole("heading", { name: "脚本记录" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "分镜记录" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "图片资产" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "视频资产" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "任务历史" })).toBeVisible();
+        await expect(page.getByText(happyImageAssetId, { exact: true }).first()).toBeVisible();
+        await expect(page.getByText(happyVideoAsset.id, { exact: true }).first()).toBeVisible();
+        await expect(page.getByText(scriptTaskId).first()).toBeVisible();
+        await expect(page.getByText(storyboardTaskId).first()).toBeVisible();
 
         await page.goto(`/projects/${projectId}/videos`);
         await page.getByLabel("Video prompt input").fill(RETRY_VIDEO_PROMPT);
         await page.getByRole("button", { name: new RegExp(happyImageAssetId) }).click();
         const failedVideoSubmittedAt = new Date();
-        await page.getByRole("button", { name: "Generate video" }).click();
+        await page.getByRole("button", { name: /\u751f\u6210\u89c6\u9891|Generate video/i }).click();
 
         let failedVideoTaskId = "";
         await expect
@@ -1098,8 +1134,10 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
         const referenceButton = page.getByRole("button", { name: new RegExp(happyImageAssetId) });
         await referenceButton.click();
         const cancelVideoSubmittedAt = new Date();
-        await expect(page.getByRole("button", { name: "Generate video" })).toBeEnabled();
-        await page.getByRole("button", { name: "Generate video" }).click();
+        await expect(
+          page.getByRole("button", { name: /\u751f\u6210\u89c6\u9891|Generate video/i }),
+        ).toBeEnabled();
+        await page.getByRole("button", { name: /\u751f\u6210\u89c6\u9891|Generate video/i }).click();
 
         let cancelVideoTaskId = "";
         await expect
@@ -1126,7 +1164,7 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
         await expect(page).toHaveURL(/\/admin\/users$/);
 
         await page.goto("/admin/tasks");
-        await expect(page.getByRole("heading", { name: "Task Monitoring" })).toBeVisible();
+        await expect(page.getByRole("main").getByRole("heading", { level: 2 })).toBeVisible();
 
         const failedTaskCard = page.locator("article").filter({ hasText: failedVideoTaskId }).first();
         const retryResponsePromise = page.waitForResponse((response) => {
@@ -1135,7 +1173,7 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
             response.request().method() === "POST"
           );
         });
-        await failedTaskCard.getByRole("button", { name: "Retry task" }).click();
+        await failedTaskCard.getByRole("button", { name: /\u91cd\u8bd5|Retry/i }).click();
         const retryResponse = await retryResponsePromise;
         expect(retryResponse.status()).toBe(202);
         await waitForTaskStatus(prisma, {
@@ -1151,7 +1189,7 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
             response.request().method() === "POST"
           );
         });
-        await runningTaskCard.getByRole("button", { name: "Cancel task" }).click();
+        await runningTaskCard.getByRole("button", { name: /\u53d6\u6d88|Cancel/i }).click();
         const cancelResponse = await cancelResponsePromise;
         expect(cancelResponse.status()).toBe(202);
         await expect

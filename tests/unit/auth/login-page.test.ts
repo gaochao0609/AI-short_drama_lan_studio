@@ -36,16 +36,15 @@ describe("login page", () => {
     } as Response);
 
     const pageModule = await import("@/app/(auth)/login/login-form");
-    const { container } = render(createElement(pageModule.default));
-    const inputs = container.querySelectorAll("input");
+    render(createElement(pageModule.default));
 
-    fireEvent.change(inputs[0]!, {
+    fireEvent.change(screen.getByLabelText("用户名"), {
       target: { value: "writer" },
     });
-    fireEvent.change(inputs[1]!, {
+    fireEvent.change(screen.getByLabelText("密码"), {
       target: { value: "password123" },
     });
-    fireEvent.submit(screen.getByRole("button").closest("form")!);
+    fireEvent.submit(screen.getByRole("button", { name: "进入创作工作区" }).closest("form")!);
 
     await waitFor(() => {
       expect(routerPushMock).toHaveBeenCalledWith("/workspace");
@@ -63,16 +62,15 @@ describe("login page", () => {
     } as Response);
 
     const pageModule = await import("@/app/(auth)/login/login-form");
-    const { container } = render(createElement(pageModule.default));
-    const inputs = container.querySelectorAll("input");
+    render(createElement(pageModule.default));
 
-    fireEvent.change(inputs[0]!, {
+    fireEvent.change(screen.getByLabelText("用户名"), {
       target: { value: "admin" },
     });
-    fireEvent.change(inputs[1]!, {
+    fireEvent.change(screen.getByLabelText("密码"), {
       target: { value: "password123" },
     });
-    fireEvent.submit(screen.getByRole("button").closest("form")!);
+    fireEvent.submit(screen.getByRole("button", { name: "进入创作工作区" }).closest("form")!);
 
     await waitFor(() => {
       expect(routerPushMock).toHaveBeenCalledWith("/admin/users");
@@ -90,18 +88,15 @@ describe("login page", () => {
     } as Response);
 
     const pageModule = await import("@/app/(auth)/login/login-form");
-    const { container } = render(
-      createElement(pageModule.default, { nextPath: "/admin/providers" }),
-    );
-    const inputs = container.querySelectorAll("input");
+    render(createElement(pageModule.default, { nextPath: "/admin/providers" }));
 
-    fireEvent.change(inputs[0]!, {
+    fireEvent.change(screen.getByLabelText("用户名"), {
       target: { value: "admin" },
     });
-    fireEvent.change(inputs[1]!, {
+    fireEvent.change(screen.getByLabelText("密码"), {
       target: { value: "password123" },
     });
-    fireEvent.submit(screen.getByRole("button").closest("form")!);
+    fireEvent.submit(screen.getByRole("button", { name: "进入创作工作区" }).closest("form")!);
 
     await waitFor(() => {
       expect(routerPushMock).toHaveBeenCalledWith("/admin/providers");
@@ -120,18 +115,36 @@ describe("login page", () => {
     expect(element.props.nextPath).toBeUndefined();
   });
 
-  it("keeps white-background login fields readable under the global theme", async () => {
-    const pageModule = await import("@/app/(auth)/login/login-form");
-    const { container } = render(createElement(pageModule.default));
-    const inputs = container.querySelectorAll("input");
+  it("announces login errors with alert semantics", async () => {
+    vi.mocked(global.fetch).mockResolvedValue({
+      ok: false,
+      json: async () => ({
+        error: "登录失败",
+      }),
+    } as Response);
 
-    expect(inputs[0]).toHaveStyle({
-      background: "#fff",
-      color: "#1f1b16",
+    const pageModule = await import("@/app/(auth)/login/login-form");
+    render(createElement(pageModule.default));
+
+    fireEvent.change(screen.getByLabelText("用户名"), {
+      target: { value: "writer" },
     });
-    expect(inputs[1]).toHaveStyle({
-      background: "#fff",
-      color: "#1f1b16",
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "wrong-password" },
     });
+    fireEvent.click(screen.getByRole("button", { name: "进入创作工作区" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("登录失败");
+  });
+
+  it("renders the Lan Studio shell with updated copy", async () => {
+    const pageModule = await import("@/app/(auth)/login/login-form");
+    render(createElement(pageModule.default));
+
+    expect(screen.getByText("Lan Studio")).toBeVisible();
+    expect(
+      screen.getByText("使用工作账号登录，进入创作工作区继续推进短剧生产。"),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "进入创作工作区" })).toBeVisible();
   });
 });

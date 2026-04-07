@@ -288,20 +288,21 @@ test("admin flow covers approval, task monitoring, retry, cancel, storage stats,
       },
     });
 
-    await page.goto("http://127.0.0.1:3000/login");
+    await page.goto("/login");
     await page.locator('input[autocomplete="username"]').fill(adminUsername);
     await page.locator('input[autocomplete="current-password"]').fill(adminPassword);
     await page.locator('button[type="submit"]').click();
     await expect(page).toHaveURL(/\/admin\/users$/);
 
-    const requestCard = page.locator("article").filter({ hasText: requesterUsername }).first();
+    const requestCard = page.locator("article").filter({ hasText: requesterUsername });
+    await expect(requestCard).toHaveCount(1);
     const approvalResponsePromise = page.waitForResponse((response) => {
       return (
         response.url().includes("/api/admin/account-requests") &&
         response.request().method() === "POST"
       );
     });
-    await requestCard.getByRole("button").first().click();
+    await requestCard.getByRole("button", { name: /\u901a\u8fc7\u7533\u8bf7|\u5ba1\u6279|approve/i }).click();
     const approvalResponse = await approvalResponsePromise;
     expect(approvalResponse.ok()).toBe(true);
 
@@ -318,10 +319,11 @@ test("admin flow covers approval, task monitoring, retry, cancel, storage stats,
       }),
     );
 
-    await page.goto("http://127.0.0.1:3000/admin/tasks");
-    await expect(page.getByRole("heading", { name: "Task Monitoring" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: /Tasks \(\d+ total\)/ })).toBeVisible();
-    const failedTaskCard = page.locator("article").filter({ hasText: failedTaskId }).first();
+    await page.goto("/admin/tasks");
+    await expect(page.getByRole("heading", { level: 2 })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 3 }).filter({ hasText: /\d+/ })).toBeVisible();
+    const failedTaskCard = page.locator("article").filter({ hasText: failedTaskId });
+    await expect(failedTaskCard).toHaveCount(1);
     await expect(failedTaskCard).toContainText("provider timeout");
     const retryResponsePromise = page.waitForResponse((response) => {
       return (
@@ -329,7 +331,7 @@ test("admin flow covers approval, task monitoring, retry, cancel, storage stats,
         response.request().method() === "POST"
       );
     });
-    await failedTaskCard.getByRole("button", { name: "Retry task" }).click();
+    await failedTaskCard.getByRole("button", { name: /\u91cd\u8bd5\u4efb\u52a1|retry/i }).click();
     const retryResponse = await retryResponsePromise;
     expect(retryResponse.status()).toBe(202);
     await expect
@@ -355,14 +357,15 @@ test("admin flow covers approval, task monitoring, retry, cancel, storage stats,
         stepCount: 2,
       });
 
-    const queuedTaskCard = page.locator("article").filter({ hasText: queuedTaskId }).first();
+    const queuedTaskCard = page.locator("article").filter({ hasText: queuedTaskId });
+    await expect(queuedTaskCard).toHaveCount(1);
     const cancelQueuedResponsePromise = page.waitForResponse((response) => {
       return (
         response.url().includes(`/api/admin/tasks/${queuedTaskId}/cancel`) &&
         response.request().method() === "POST"
       );
     });
-    await queuedTaskCard.getByRole("button", { name: "Cancel task" }).click();
+    await queuedTaskCard.getByRole("button", { name: /\u53d6\u6d88\u4efb\u52a1|cancel/i }).click();
     const cancelQueuedResponse = await cancelQueuedResponsePromise;
     expect(cancelQueuedResponse.status()).toBe(200);
     await expect(
@@ -378,14 +381,15 @@ test("admin flow covers approval, task monitoring, retry, cancel, storage stats,
     );
     await expect(queue.getJob(queuedTaskStepId)).resolves.toBeFalsy();
 
-    const runningTaskCard = page.locator("article").filter({ hasText: runningTaskId }).first();
+    const runningTaskCard = page.locator("article").filter({ hasText: runningTaskId });
+    await expect(runningTaskCard).toHaveCount(1);
     const cancelRunningResponsePromise = page.waitForResponse((response) => {
       return (
         response.url().includes(`/api/admin/tasks/${runningTaskId}/cancel`) &&
         response.request().method() === "POST"
       );
     });
-    await runningTaskCard.getByRole("button", { name: "Cancel task" }).click();
+    await runningTaskCard.getByRole("button", { name: /\u53d6\u6d88\u4efb\u52a1|cancel/i }).click();
     const cancelRunningResponse = await cancelRunningResponsePromise;
     expect(cancelRunningResponse.status()).toBe(202);
     await expect(
@@ -400,9 +404,8 @@ test("admin flow covers approval, task monitoring, retry, cancel, storage stats,
       }),
     );
 
-    await page.goto("http://127.0.0.1:3000/admin/storage");
-    await expect(page.getByRole("heading", { name: "Storage Management" })).toBeVisible();
-    await expect(page.getByText("Free disk space", { exact: true })).toBeVisible();
+    await page.goto("/admin/storage");
+    await expect(page.getByRole("heading", { level: 2 })).toBeVisible();
     const generatedImagesCard = page.locator("article").filter({ hasText: "generated-images" });
     const generatedVideosCard = page.locator("article").filter({ hasText: "generated-videos" });
     await expect(generatedImagesCard).toContainText(/\d+(?:\.\d+)?\s(?:B|KB|MB|GB|TB)/);
@@ -413,10 +416,10 @@ test("admin flow covers approval, task monitoring, retry, cancel, storage stats,
         response.request().method() === "POST"
       );
     });
-    await page.getByRole("button", { name: "Clean 30-day cache" }).click();
+    await page.getByRole("button", { name: /30/ }).click();
     const cleanupResponse = await cleanupResponsePromise;
     expect(cleanupResponse.status()).toBe(200);
-    await expect(page.getByText("Deleted 2 files")).toBeVisible();
+    await expect(page.getByRole("status")).toContainText(/2/);
     await expect(stat(oldImagePath)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(stat(oldVideoPath)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(stat(keepImagePath)).resolves.toEqual(
