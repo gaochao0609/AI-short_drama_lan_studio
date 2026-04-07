@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { useParamsMock, useTaskPollingMock, fetchMock } = vi.hoisted(() => ({
@@ -798,5 +798,77 @@ describe("project images page", () => {
     pendingPostResolvers[1]!(jsonResponse({ taskId: "task-b" }, 202));
 
     expect(await screen.findByText("任务：task-b")).toBeInTheDocument();
+  });
+  it("keeps upstream workflow stages waiting when the loaded data does not prove they are complete", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+
+      if (url === "/api/images?projectId=project-1") {
+        return jsonResponse({
+          project: {
+            id: "project-1",
+            title: "Project One",
+            idea: "Idea",
+          },
+          maxUploadMb: 25,
+          assets: [],
+        });
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    const pageModule = await import("@/app/(workspace)/projects/[projectId]/images/page");
+    const { container } = render(<pageModule.default />);
+
+    await screen.findByRole("heading", { name: "Project One" });
+
+    const workflowRail = container.querySelector(".studio-workflow-rail");
+    expect(workflowRail).not.toBeNull();
+
+    const workflowCards = Array.from(workflowRail!.querySelectorAll("li"));
+    const scriptCard = workflowCards.find((item) => within(item).queryByText("脚本"));
+    const storyboardCard = workflowCards.find((item) => within(item).queryByText("分镜"));
+
+    expect(scriptCard).toBeDefined();
+    expect(storyboardCard).toBeDefined();
+    expect(within(scriptCard!).getByText("待开始")).toHaveClass(
+      "studio-status-badge--neutral",
+    );
+    expect(within(storyboardCard!).getByText("待开始")).toHaveClass(
+      "studio-status-badge--neutral",
+    );
+  });
+
+  it("falls back to the stage title when workspace loading fails", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+
+      if (url === "/api/images?projectId=project-1") {
+        return jsonResponse({ error: "加载图片工作区失败" }, 500);
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    const pageModule = await import("@/app/(workspace)/projects/[projectId]/images/page");
+
+    render(<pageModule.default />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("加载图片工作区失败");
+    await waitFor(() => {
+      expect(screen.queryByText("加载项目中...")).not.toBeInTheDocument();
+    });
+    expect(screen.getAllByRole("heading", { name: "图片" }).length).toBeGreaterThan(1);
   });
 });

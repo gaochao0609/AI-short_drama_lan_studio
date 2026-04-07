@@ -833,10 +833,9 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
     await page.locator('button[type="submit"]').click();
     await expect(page).toHaveURL(/\/workspace$/);
 
-    const createProjectCard = page.locator("article").filter({ has: page.locator("textarea") }).first();
-    await createProjectCard.getByRole("textbox").nth(0).fill(projectTitle);
-    await createProjectCard.getByRole("textbox").nth(1).fill(projectIdea);
-    await createProjectCard.getByRole("button").click();
+    await page.getByLabel("项目名称").fill(projectTitle);
+    await page.getByLabel("项目概念").fill(projectIdea);
+    await page.getByRole("button", { name: "创建项目并进入脚本流程" }).click();
     await expect(page).toHaveURL(/\/projects\/[^/]+$/);
     projectId = new URL(page.url()).pathname.split("/").pop() ?? "";
     providerExpectations.projectId = projectId;
@@ -1082,8 +1081,11 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
         });
 
         await page.goto(`/projects/${projectId}`);
-        await expect(page.getByText("Script", { exact: true }).first()).toBeVisible();
-        await expect(page.getByText("Images", { exact: true }).first()).toBeVisible();
+        await expect(page.getByRole("heading", { name: "脚本记录" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "分镜记录" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "图片资产" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "视频资产" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "任务历史" })).toBeVisible();
         await expect(page.getByText(happyImageAssetId, { exact: true }).first()).toBeVisible();
         await expect(page.getByText(happyVideoAsset.id, { exact: true }).first()).toBeVisible();
         await expect(page.getByText(scriptTaskId).first()).toBeVisible();

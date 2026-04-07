@@ -523,6 +523,13 @@ export default function ProjectScriptPage() {
       ? `已完成 ${questions.length} 轮问答，继续完善后可提交定稿。`
       : copy.scriptDetailInitial;
 
+  const heroProjectTitle =
+    isLoadingProject
+      ? copy.loadingProject
+      : projectTitle === copy.loadingProject
+        ? copy.stageTitle
+        : projectTitle;
+
   return (
     <div style={pageStyle}>
       <PageHero
@@ -540,9 +547,7 @@ export default function ProjectScriptPage() {
               <span style={heroMetaLabelStyle}>{copy.projectLabel}</span>
               <StatusBadge label={copy.activeStage} tone="active" />
             </div>
-            <h2 style={heroSupportTitleStyle}>
-              {isLoadingProject ? copy.loadingProject : projectTitle}
-            </h2>
+            <h2 style={heroSupportTitleStyle}>{heroProjectTitle}</h2>
             <p style={heroSupportBodyStyle}>{projectSummary}</p>
           </div>
         }

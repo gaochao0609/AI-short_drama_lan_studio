@@ -145,4 +145,28 @@ describe("project storyboard page", () => {
     expect(screen.getByText("Archive room")).toBeInTheDocument();
     expect(screen.getByText("1 段")).toBeInTheDocument();
   });
+  it("falls back to the stage title when project loading fails", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+
+      if (url === "/api/storyboards?projectId=project-1") {
+        return jsonResponse({ error: "加载项目失败" }, 500);
+      }
+
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    await renderPage();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("加载项目失败");
+    await waitFor(() => {
+      expect(screen.queryByText("加载项目中...")).not.toBeInTheDocument();
+    });
+    expect(screen.getAllByRole("heading", { name: "分镜" }).length).toBeGreaterThan(1);
+  });
 });

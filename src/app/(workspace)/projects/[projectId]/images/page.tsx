@@ -388,6 +388,11 @@ export default function ProjectImagesPage() {
   }
 
   const projectSummary = workspace?.project.idea?.trim() || copy.noIdea;
+  const heroProjectTitle = isLoading
+    ? copy.loadingProject
+    : workspace?.project.title ?? copy.stageTitle;
+  const scriptRailSummary = "当前页未加载脚本定稿结果，请先在脚本阶段确认。";
+  const storyboardRailSummary = "当前页未加载分镜结果，请先在分镜阶段确认。";
 
   return (
     <div style={pageStyle}>
@@ -406,11 +411,7 @@ export default function ProjectImagesPage() {
               <span style={heroMetaLabelStyle}>{copy.projectLabel}</span>
               <StatusBadge label={copy.activeStage} tone="active" />
             </div>
-            <h2 style={heroSupportTitleStyle}>
-              {isLoading
-                ? copy.loadingProject
-                : workspace?.project.title ?? copy.loadingProject}
-            </h2>
+            <h2 style={heroSupportTitleStyle}>{heroProjectTitle}</h2>
             <p style={heroSupportBodyStyle}>{projectSummary}</p>
           </div>
         }
@@ -423,18 +424,18 @@ export default function ProjectImagesPage() {
           {
             label: copy.scriptStage,
             detail: copy.scriptDetail,
-            summary: "保留脚本定稿内容，作为后续分镜输入。",
-            badgeLabel: copy.stageDone,
-            tone: "active",
+            summary: scriptRailSummary,
+            badgeLabel: copy.stageWaiting,
+            tone: "neutral",
             href: `/projects/${projectId}/script`,
             ctaLabel: copy.enterScript,
           },
           {
             label: copy.storyboardStage,
             detail: copy.storyboardDetail,
-            summary: "按 15 秒段落拆出镜头和视频提示词。",
-            badgeLabel: copy.stageDone,
-            tone: "active",
+            summary: storyboardRailSummary,
+            badgeLabel: copy.stageWaiting,
+            tone: "neutral",
             href: `/projects/${projectId}/storyboard`,
             ctaLabel: copy.enterStoryboard,
           },

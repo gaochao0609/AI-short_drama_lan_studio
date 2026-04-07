@@ -343,6 +343,10 @@ export default function ProjectStoryboardPage() {
     ? `已载入 ${project.scriptVersions.length} 个脚本版本。`
     : "等待脚本定稿后再开始分镜。";
 
+  const heroProjectTitle = isLoadingProject
+    ? copy.loadingProject
+    : project?.title ?? copy.stageTitle;
+
   return (
     <div style={pageStyle}>
       <PageHero
@@ -360,11 +364,7 @@ export default function ProjectStoryboardPage() {
               <span style={heroMetaLabelStyle}>{copy.projectLabel}</span>
               <StatusBadge label={copy.activeStage} tone="active" />
             </div>
-            <h2 style={heroSupportTitleStyle}>
-              {isLoadingProject
-                ? copy.loadingProject
-                : project?.title ?? copy.loadingProject}
-            </h2>
+            <h2 style={heroSupportTitleStyle}>{heroProjectTitle}</h2>
             <p style={heroSupportBodyStyle}>{projectSummary}</p>
           </div>
         }
