@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => {
   const taskUpdate = vi.fn();
   const taskFindUnique = vi.fn();
   const taskStepUpdate = vi.fn();
+  const projectWorkflowBindingUpdateMany = vi.fn();
   const assetFindMany = vi.fn();
   const assetCreate = vi.fn();
   const assetUpdate = vi.fn();
@@ -32,6 +33,9 @@ const mocks = vi.hoisted(() => {
     },
     taskStep: {
       update: taskStepUpdate,
+    },
+    projectWorkflowBinding: {
+      updateMany: projectWorkflowBindingUpdateMany,
     },
     asset: {
       findMany: assetFindMany,
@@ -107,6 +111,7 @@ describe("processScriptFinalizeJob", () => {
     mocks.prisma.task.update.mockReset();
     mocks.prisma.task.findUnique.mockReset();
     mocks.prisma.taskStep.update.mockReset();
+    mocks.prisma.projectWorkflowBinding.updateMany.mockReset();
     mocks.prisma.asset.findMany.mockReset();
     mocks.prisma.asset.create.mockReset();
     mocks.prisma.asset.update.mockReset();
@@ -303,6 +308,9 @@ describe("processScriptFinalizeJob", () => {
     mocks.prisma.asset.deleteMany.mockResolvedValue({
       count: 1,
     });
+    mocks.prisma.projectWorkflowBinding.updateMany.mockResolvedValue({
+      count: 1,
+    });
     mocks.prisma.$transaction.mockImplementation(async (operations) =>
       typeof operations === "function" ? operations(mocks.prisma) : operations,
     );
@@ -364,6 +372,17 @@ describe("processScriptFinalizeJob", () => {
         },
       }),
     );
+    expect(mocks.prisma.projectWorkflowBinding.updateMany).toHaveBeenCalledWith({
+      where: {
+        projectId: "project-1",
+        storyboardScriptAssetId: {
+          in: ["asset-2"],
+        },
+      },
+      data: {
+        storyboardScriptAssetId: "asset-1",
+      },
+    });
   });
 
   it("treats replay after a successful finalize as an idempotent success", async () => {

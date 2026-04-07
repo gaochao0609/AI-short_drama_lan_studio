@@ -287,10 +287,24 @@ async function mirrorFinalScriptAsAsset(input: {
     return;
   }
 
+  const duplicateAssetIds = duplicateAssets.map((asset) => asset.id);
+
+  await prisma.projectWorkflowBinding.updateMany({
+    where: {
+      projectId: input.projectId,
+      storyboardScriptAssetId: {
+        in: duplicateAssetIds,
+      },
+    },
+    data: {
+      storyboardScriptAssetId: assetToKeep.id,
+    },
+  });
+
   await prisma.asset.deleteMany({
     where: {
       id: {
-        in: duplicateAssets.map((asset) => asset.id),
+        in: duplicateAssetIds,
       },
     },
   });

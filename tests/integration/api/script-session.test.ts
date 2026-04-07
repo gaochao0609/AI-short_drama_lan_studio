@@ -1219,6 +1219,41 @@ describe("script session api", () => {
         await expect(downloadResponse.text()).resolves.toBe(
           "INT. ROOFTOP - NIGHT\nThe rain starts as the hero arrives.",
         );
+        const duplicateScriptAsset = await prisma.asset.create({
+          data: {
+            projectId: project.id,
+            taskId: task.id,
+            kind: "script",
+            category: AssetCategory.SCRIPT_GENERATED,
+            origin: AssetOrigin.SYSTEM,
+            storagePath: `backfill/scripts/${firstRun.scriptVersionId}-duplicate.txt`,
+            originalName: "final-script-v1-duplicate.txt",
+            mimeType: "text/plain",
+            sizeBytes: 57,
+            metadata: {
+              parseStatus: "ready",
+              scriptSessionId: scriptSession.id,
+              scriptVersionId: firstRun.scriptVersionId,
+              extractedText: "INT. ROOFTOP - NIGHT\nThe rain starts as the hero arrives.",
+              sourceTask: {
+                taskId: task.id,
+                taskType: TaskType.SCRIPT_FINALIZE,
+                traceId: "trace-script-finalize-asset",
+              },
+            },
+          },
+          select: {
+            id: true,
+          },
+        });
+        await prisma.projectWorkflowBinding.create({
+          data: {
+            projectId: project.id,
+            storyboardScriptAssetId: duplicateScriptAsset.id,
+            imageReferenceAssetIds: [],
+            videoReferenceAssetIds: [],
+          },
+        });
 
         const secondRun = await processScriptFinalizeJob({
           attemptsMade: 1,
@@ -1249,6 +1284,18 @@ describe("script session api", () => {
             },
           }),
         ).resolves.toBe(1);
+        await expect(
+          prisma.projectWorkflowBinding.findUniqueOrThrow({
+            where: {
+              projectId: project.id,
+            },
+            select: {
+              storyboardScriptAssetId: true,
+            },
+          }),
+        ).resolves.toEqual({
+          storyboardScriptAssetId: generatedAssetId,
+        });
 
         const backfillResult = await backfillAssetCenter({ prisma });
         expect(
