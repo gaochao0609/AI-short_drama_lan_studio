@@ -4,6 +4,7 @@ import os from "node:os";
 import {
   AssetCategory,
   AssetOrigin,
+  Prisma,
   TaskStatus,
   TaskType,
   UserRole,
@@ -78,7 +79,7 @@ async function createScriptSourceAsset(input: {
   await mkdir(path.dirname(absolutePath), { recursive: true });
   await writeFile(absolutePath, input.fileBytes);
 
-  const metadata: Record<string, unknown> = {
+  const metadata: Record<string, Prisma.InputJsonValue> = {
     originalFileName: input.fileName,
     extension: path.extname(input.fileName).toLowerCase(),
     parseStatus: input.parseStatus ?? "pending",
@@ -105,6 +106,50 @@ async function createScriptSourceAsset(input: {
   return {
     asset,
     absolutePath,
+  };
+}
+
+async function createParseTaskStep(input: {
+  prisma: PrismaClient;
+  projectId: string;
+  userId: string;
+  payload: {
+    projectId: string;
+    userId: string;
+    assetId: string;
+  };
+}) {
+  const task = await input.prisma.task.create({
+    data: {
+      projectId: input.projectId,
+      createdById: input.userId,
+      type: TaskType.ASSET_SCRIPT_PARSE,
+      inputJson: input.payload as Prisma.InputJsonValue,
+    },
+    select: {
+      id: true,
+      type: true,
+    },
+  });
+  const taskStep = await input.prisma.taskStep.create({
+    data: {
+      taskId: task.id,
+      stepKey: task.type,
+      status: TaskStatus.QUEUED,
+      inputJson: {
+        payload: input.payload,
+        traceId: "trace-red-test",
+        type: TaskType.ASSET_SCRIPT_PARSE,
+      } as Prisma.InputJsonValue,
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  return {
+    taskId: task.id,
+    taskStepId: taskStep.id,
   };
 }
 
@@ -558,6 +603,103 @@ describe("asset script parse worker", () => {
             } finally {
               await runtime.close();
             }
+          },
+          { STORAGE_ROOT: storageRoot },
+        );
+      } finally {
+        await rm(storageRoot, { recursive: true, force: true });
+      }
+    });
+  }, 30_000);
+
+  it("keeps parse status pending while automatic retries remain", async () => {
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      const storageRoot = await mkdtemp(path.join(os.tmpdir(), "lan-studio-parse-worker-race-"));
+
+      try {
+        await withQueueTestEnv(
+          databaseUrl,
+          async () => {
+            const { processAssetScriptParseJob } = await import(
+              "@/worker/processors/asset-script-parse"
+            );
+            const user = await createActiveUser(prisma, "parse-worker-race-owner");
+            const project = await prisma.project.create({
+              data: {
+                ownerId: user.id,
+                title: "Parse Worker Race Project",
+              },
+            });
+            const { asset } = await createScriptSourceAsset({
+              prisma,
+              projectId: project.id,
+              storageRoot,
+              fileName: "scene.rtf",
+              mimeType: "application/rtf",
+              fileBytes: Buffer.from("{\\rtf1\\ansi"),
+            });
+            const payload = {
+              projectId: project.id,
+              userId: user.id,
+              assetId: asset.id,
+            };
+            const { taskId, taskStepId } = await createParseTaskStep({
+              prisma,
+              projectId: project.id,
+              userId: user.id,
+              payload,
+            });
+            const job = {
+              data: {
+                taskId,
+                taskStepId,
+                traceId: "trace-race",
+                payload,
+              },
+              attemptsMade: 0,
+              opts: {
+                attempts: 3,
+              },
+            } as unknown as Job;
+
+            await expect(processAssetScriptParseJob(job)).rejects.toThrow(/unsupported/i);
+
+            const midRetryAsset = await prisma.asset.findUniqueOrThrow({
+              where: {
+                id: asset.id,
+              },
+            });
+            const metadata = readMetadata(midRetryAsset.metadata);
+            expect(metadata.parseStatus).toBe("pending");
+            expect(metadata.parseError).toBeUndefined();
+
+            await expect(
+              prisma.task.findUniqueOrThrow({
+                where: {
+                  id: taskId,
+                },
+              }),
+            ).resolves.toEqual(
+              expect.objectContaining({
+                id: taskId,
+                status: TaskStatus.QUEUED,
+                errorText: expect.stringMatching(/unsupported/i),
+              }),
+            );
+            await expect(
+              prisma.taskStep.findUniqueOrThrow({
+                where: {
+                  id: taskStepId,
+                },
+              }),
+            ).resolves.toEqual(
+              expect.objectContaining({
+                id: taskStepId,
+                status: TaskStatus.QUEUED,
+                retryCount: 1,
+                errorText: expect.stringMatching(/unsupported/i),
+              }),
+            );
           },
           { STORAGE_ROOT: storageRoot },
         );

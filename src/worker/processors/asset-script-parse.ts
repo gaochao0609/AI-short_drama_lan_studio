@@ -91,6 +91,21 @@ function toReadyMetadata(input: {
   return metadata as Prisma.InputJsonValue;
 }
 
+function toPendingMetadata(input: {
+  previousMetadata: Prisma.JsonValue | null;
+  extension?: string;
+}) {
+  const metadata = readMetadataObject(input.previousMetadata);
+  if (input.extension) {
+    metadata.extension = input.extension;
+  }
+  metadata.parseStatus = "pending";
+  delete metadata.parseError;
+  delete metadata.parseErrorText;
+
+  return metadata as Prisma.InputJsonValue;
+}
+
 function toFailedMetadata(input: {
   previousMetadata: Prisma.JsonValue | null;
   extension?: string;
@@ -180,6 +195,44 @@ async function markAssetFailed(input: {
         previousMetadata: asset.metadata,
         extension,
         errorText: input.errorText,
+      }),
+    },
+  });
+}
+
+async function markAssetPendingWhileRetrying(input: {
+  projectId: string;
+  assetId: string;
+}) {
+  const asset = await prisma.asset.findFirst({
+    where: {
+      id: input.assetId,
+      projectId: input.projectId,
+    },
+    select: {
+      id: true,
+      originalName: true,
+      storagePath: true,
+      metadata: true,
+    },
+  });
+
+  if (!asset) {
+    return;
+  }
+
+  const extension = resolveScriptExtension({
+    originalName: asset.originalName,
+    storagePath: asset.storagePath,
+  });
+  await prisma.asset.update({
+    where: {
+      id: asset.id,
+    },
+    data: {
+      metadata: toPendingMetadata({
+        previousMetadata: asset.metadata,
+        extension,
       }),
     },
   });
@@ -302,11 +355,18 @@ export async function processAssetScriptParseJob(
     const status = hasRetriesRemaining(job) ? TaskStatus.QUEUED : TaskStatus.FAILED;
 
     try {
-      await markAssetFailed({
-        projectId: payload.projectId,
-        assetId: payload.assetId,
-        errorText,
-      });
+      if (status === TaskStatus.FAILED) {
+        await markAssetFailed({
+          projectId: payload.projectId,
+          assetId: payload.assetId,
+          errorText,
+        });
+      } else {
+        await markAssetPendingWhileRetrying({
+          projectId: payload.projectId,
+          assetId: payload.assetId,
+        });
+      }
 
       await writeTaskState(job.data, {
         status,
