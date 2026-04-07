@@ -196,14 +196,16 @@ describe("workspace shell", () => {
     );
 
     expect(screen.getByText("Lan Studio")).toBeInTheDocument();
-    expect(screen.getByText("Creative workspace")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Workspace overview" })).toHaveAttribute(
+    expect(screen.getByText("创作工作台")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "工作台总览" })).toHaveAttribute(
       "href",
       "/workspace",
     );
-    expect(screen.getByText("Script")).toBeInTheDocument();
-    expect(screen.getByText("Storyboard")).toBeInTheDocument();
-    expect(screen.getByText("Images")).toBeInTheDocument();
-    expect(screen.getByText("Videos")).toBeInTheDocument();
+    expect(screen.getByText("脚本")).toBeInTheDocument();
+    expect(screen.getByText("分镜")).toBeInTheDocument();
+    expect(screen.getByText("图片")).toBeInTheDocument();
+    expect(screen.getByText("视频")).toBeInTheDocument();
+    expect(screen.queryByText("Creative workspace")).not.toBeInTheDocument();
+    expect(screen.queryByText("Workspace overview")).not.toBeInTheDocument();
   });
 });
