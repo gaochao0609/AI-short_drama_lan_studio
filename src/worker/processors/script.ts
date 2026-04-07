@@ -1,10 +1,18 @@
-import { Prisma, ScriptSessionStatus, TaskStatus, TaskType } from "@prisma/client";
+import {
+  AssetCategory,
+  AssetOrigin,
+  Prisma,
+  ScriptSessionStatus,
+  TaskStatus,
+  TaskType,
+} from "@prisma/client";
 import type { Job, Worker } from "bullmq";
 import { Worker as BullmqWorker } from "bullmq";
 import { prisma } from "@/lib/db";
 import { callProxyModel } from "@/lib/models/proxy-client";
 import { getDefaultModelSummary } from "@/lib/models/provider-registry";
 import { bullmqConnection } from "@/lib/redis";
+import { buildGeneratedScriptAssetMetadata } from "@/lib/services/asset-backfill";
 import { cancelTaskIfRequested } from "@/worker/processors/cancellation";
 
 type ScriptFinalizePayload = {
@@ -157,6 +165,7 @@ async function findExistingFinalVersion(input: {
   sessionId: string;
   fallbackFinalVersion?: {
     id: string;
+    versionNumber: number;
     body: string | null;
   } | null;
 }) {
@@ -166,6 +175,7 @@ async function findExistingFinalVersion(input: {
     input.fallbackFinalVersion.body.trim()
       ? {
           id: input.fallbackFinalVersion.id,
+          versionNumber: input.fallbackFinalVersion.versionNumber,
           body: input.fallbackFinalVersion.body.trim(),
         }
       : null;
@@ -183,6 +193,7 @@ async function findExistingFinalVersion(input: {
     },
     select: {
       id: true,
+      versionNumber: true,
       body: true,
     },
   });
@@ -193,8 +204,89 @@ async function findExistingFinalVersion(input: {
 
   return {
     id: linkedVersion.id,
+    versionNumber: linkedVersion.versionNumber,
     body: linkedVersion.body.trim(),
   };
+}
+
+async function mirrorFinalScriptAsAsset(input: {
+  projectId: string;
+  taskId: string;
+  traceId: string;
+  sessionId: string;
+  scriptVersionId: string;
+  scriptVersionNumber: number;
+  body: string;
+}) {
+  const existingAssets = await prisma.asset.findMany({
+    where: {
+      projectId: input.projectId,
+      category: AssetCategory.SCRIPT_GENERATED,
+      metadata: {
+        path: ["scriptVersionId"],
+        equals: input.scriptVersionId,
+      },
+    },
+    orderBy: {
+      createdAt: "asc",
+    },
+    select: {
+      id: true,
+    },
+  });
+
+  const assetData = {
+    projectId: input.projectId,
+    taskId: input.taskId,
+    kind: "script",
+    category: AssetCategory.SCRIPT_GENERATED,
+    origin: AssetOrigin.SYSTEM,
+    storagePath: `backfill/scripts/${input.scriptVersionId}.txt`,
+    originalName: `final-script-v${input.scriptVersionNumber}.txt`,
+    mimeType: "text/plain",
+    sizeBytes: Buffer.byteLength(input.body, "utf8"),
+    metadata: buildGeneratedScriptAssetMetadata({
+      scriptSessionId: input.sessionId,
+      scriptVersionId: input.scriptVersionId,
+      extractedText: input.body,
+      sourceTask: {
+        taskId: input.taskId,
+        taskType: TaskType.SCRIPT_FINALIZE,
+        traceId: input.traceId,
+      },
+    }),
+  } satisfies Prisma.AssetUncheckedCreateInput;
+
+  if (existingAssets.length === 0) {
+    await prisma.asset.create({
+      data: assetData,
+      select: {
+        id: true,
+      },
+    });
+    return;
+  }
+
+  const [assetToKeep, ...duplicateAssets] = existingAssets;
+
+  await prisma.asset.update({
+    where: {
+      id: assetToKeep.id,
+    },
+    data: assetData,
+  });
+
+  if (duplicateAssets.length === 0) {
+    return;
+  }
+
+  await prisma.asset.deleteMany({
+    where: {
+      id: {
+        in: duplicateAssets.map((asset) => asset.id),
+      },
+    },
+  });
 }
 
 async function succeedJob(
@@ -289,6 +381,7 @@ export async function processScriptFinalizeJob(
         finalScriptVersion: {
           select: {
             id: true,
+            versionNumber: true,
             body: true,
           },
         },
@@ -307,6 +400,15 @@ export async function processScriptFinalizeJob(
         completedAt: session.completedAt,
         currentStatus: session.status,
         currentFinalScriptVersionId: session.finalScriptVersionId,
+      });
+      await mirrorFinalScriptAsAsset({
+        projectId: session.projectId,
+        taskId: job.data.taskId,
+        traceId: job.data.traceId,
+        sessionId: session.id,
+        scriptVersionId: existingFinalVersion.id,
+        scriptVersionNumber: existingFinalVersion.versionNumber,
+        body: existingFinalVersion.body,
       });
 
       return succeedJob(job.data, {
@@ -380,6 +482,7 @@ export async function processScriptFinalizeJob(
         },
         select: {
           id: true,
+          versionNumber: true,
         },
       });
 
@@ -401,6 +504,15 @@ export async function processScriptFinalizeJob(
       }
 
       return createdScriptVersion;
+    });
+    await mirrorFinalScriptAsAsset({
+      projectId: session.projectId,
+      taskId: job.data.taskId,
+      traceId: job.data.traceId,
+      sessionId: session.id,
+      scriptVersionId: scriptVersion.id,
+      scriptVersionNumber: scriptVersion.versionNumber,
+      body,
     });
 
     return succeedJob(job.data, {

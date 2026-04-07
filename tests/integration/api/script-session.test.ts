@@ -1,4 +1,13 @@
-import { ScriptSessionStatus, TaskStatus, TaskType, UserRole, UserStatus, type PrismaClient } from "@prisma/client";
+import {
+  AssetCategory,
+  AssetOrigin,
+  ScriptSessionStatus,
+  TaskStatus,
+  TaskType,
+  UserRole,
+  UserStatus,
+  type PrismaClient,
+} from "@prisma/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { withTestDatabase } from "../db/test-database";
 import {
@@ -9,13 +18,14 @@ import {
   withApiTestEnv,
 } from "./test-api";
 
-const { enqueueTaskMock, streamProxyModelMock } = vi.hoisted(() => ({
+const { callProxyModelMock, enqueueTaskMock, streamProxyModelMock } = vi.hoisted(() => ({
+  callProxyModelMock: vi.fn(),
   enqueueTaskMock: vi.fn(),
   streamProxyModelMock: vi.fn(),
 }));
 
 vi.mock("@/lib/models/proxy-client", () => ({
-  callProxyModel: vi.fn(),
+  callProxyModel: callProxyModelMock,
   streamProxyModel: streamProxyModelMock,
 }));
 
@@ -24,6 +34,7 @@ vi.mock("@/lib/queues/enqueue", () => ({
 }));
 
 afterEach(() => {
+  callProxyModelMock.mockReset();
   enqueueTaskMock.mockReset();
   streamProxyModelMock.mockReset();
   vi.doUnmock("next/headers");
@@ -1025,6 +1036,197 @@ describe("script session api", () => {
             status: "FINALIZING",
           }),
         );
+      });
+    });
+  });
+
+  it("mirrors finalized scripts into one generated asset and stays consistent with backfill", async () => {
+    enqueueTaskMock.mockResolvedValueOnce({
+      jobId: "job-script-finalize-asset",
+      queueName: "script-queue",
+    });
+    callProxyModelMock.mockResolvedValueOnce({
+      status: "ok",
+      textOutput: "INT. ROOFTOP - NIGHT\nThe rain starts as the hero arrives.",
+      rawResponse: {
+        usage: {
+          input: 128,
+          output: 256,
+        },
+      },
+    });
+
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      await withApiTestEnv(databaseUrl, async () => {
+        const user = await createActiveUser(prisma, "script-session-finalize-asset");
+        const session = await insertSessionForUser(prisma, user.id);
+        const project = await createProjectWithProvider(prisma, user.id, "finalize-asset");
+        const scriptSession = await prisma.scriptSession.create({
+          data: {
+            projectId: project.id,
+            creatorId: user.id,
+            idea: "Initial idea",
+            completedRounds: 2,
+            currentQuestion: "What does the ending cost the hero?",
+            qaRecordsJson: [
+              {
+                round: 1,
+                question: "Who is the hero?",
+                answer: "A courier.",
+              },
+            ],
+          },
+        });
+        const { POST: finalizePost } = await loadRouteModule<{
+          POST: (
+            request: Request,
+            context: { params: Promise<{ sessionId: string }> | { sessionId: string } },
+          ) => Promise<Response>;
+        }>("src/app/api/script/sessions/[sessionId]/finalize/route.ts", {
+          sessionToken: session.token,
+        });
+        const { processScriptFinalizeJob } = await import("@/worker/processors/script");
+        const { backfillAssetCenter } = await import("@/lib/services/asset-backfill");
+
+        const finalizeResponse = await finalizePost(
+          jsonRequest(
+            `http://localhost/api/script/sessions/${scriptSession.id}/finalize`,
+            undefined,
+            { method: "POST" },
+          ),
+          { params: { sessionId: scriptSession.id } },
+        );
+
+        expect(finalizeResponse.status).toBe(202);
+        const finalizePayload = await finalizeResponse.json() as { taskId: string };
+        expect(finalizePayload).toEqual({
+          taskId: expect.any(String),
+        });
+
+        const task = await prisma.task.findUniqueOrThrow({
+          where: {
+            id: finalizePayload.taskId,
+          },
+          select: {
+            id: true,
+          },
+        });
+        const taskStep = await prisma.taskStep.create({
+          data: {
+            taskId: task.id,
+            stepKey: TaskType.SCRIPT_FINALIZE,
+            status: TaskStatus.QUEUED,
+            inputJson: {
+              sessionId: scriptSession.id,
+            },
+          },
+          select: {
+            id: true,
+          },
+        });
+
+        const firstRun = await processScriptFinalizeJob({
+          attemptsMade: 0,
+          opts: {
+            attempts: 3,
+          },
+          data: {
+            taskId: task.id,
+            taskStepId: taskStep.id,
+            traceId: "trace-script-finalize-asset",
+            payload: {
+              sessionId: scriptSession.id,
+              traceId: "trace-script-finalize-asset",
+            },
+          },
+        } as Parameters<typeof processScriptFinalizeJob>[0]);
+
+        const taskAfterFirstRun = await prisma.task.findUniqueOrThrow({
+          where: {
+            id: task.id,
+          },
+          select: {
+            outputJson: true,
+          },
+        });
+        expect(taskAfterFirstRun.outputJson).toEqual(
+          expect.objectContaining({
+            scriptVersionId: firstRun.scriptVersionId,
+          }),
+        );
+
+        const generatedAssetsAfterFirstRun = await prisma.asset.findMany({
+          where: {
+            projectId: project.id,
+            category: AssetCategory.SCRIPT_GENERATED,
+            metadata: {
+              path: ["scriptVersionId"],
+              equals: firstRun.scriptVersionId,
+            },
+          },
+          orderBy: {
+            createdAt: "asc",
+          },
+        });
+        expect(generatedAssetsAfterFirstRun).toHaveLength(1);
+        expect(generatedAssetsAfterFirstRun[0]).toEqual(
+          expect.objectContaining({
+            category: AssetCategory.SCRIPT_GENERATED,
+            origin: AssetOrigin.SYSTEM,
+          }),
+        );
+        expect(generatedAssetsAfterFirstRun[0]?.metadata).toEqual(
+          expect.objectContaining({
+            parseStatus: "ready",
+            scriptSessionId: scriptSession.id,
+            scriptVersionId: firstRun.scriptVersionId,
+            extractedText: "INT. ROOFTOP - NIGHT\nThe rain starts as the hero arrives.",
+            sourceTask: {
+              taskId: task.id,
+              taskType: TaskType.SCRIPT_FINALIZE,
+              traceId: "trace-script-finalize-asset",
+            },
+          }),
+        );
+
+        const secondRun = await processScriptFinalizeJob({
+          attemptsMade: 1,
+          opts: {
+            attempts: 3,
+          },
+          data: {
+            taskId: task.id,
+            taskStepId: taskStep.id,
+            traceId: "trace-script-finalize-asset",
+            payload: {
+              sessionId: scriptSession.id,
+              traceId: "trace-script-finalize-asset",
+            },
+          },
+        } as Parameters<typeof processScriptFinalizeJob>[0]);
+
+        expect(secondRun.scriptVersionId).toBe(firstRun.scriptVersionId);
+        await expect(
+          prisma.asset.count({
+            where: {
+              projectId: project.id,
+              category: AssetCategory.SCRIPT_GENERATED,
+              metadata: {
+                path: ["scriptVersionId"],
+                equals: firstRun.scriptVersionId,
+              },
+            },
+          }),
+        ).resolves.toBe(1);
+
+        const backfillResult = await backfillAssetCenter({ prisma });
+        expect(
+          backfillResult.createdAssets.filter(
+            (asset) =>
+              asset.projectId === project.id &&
+              asset.category === AssetCategory.SCRIPT_GENERATED,
+          ),
+        ).toHaveLength(0);
       });
     });
   });

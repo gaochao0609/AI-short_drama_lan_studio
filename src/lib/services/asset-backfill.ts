@@ -1,5 +1,11 @@
 import { Buffer } from "node:buffer";
-import { AssetCategory, AssetOrigin, type PrismaClient } from "@prisma/client";
+import {
+  AssetCategory,
+  AssetOrigin,
+  TaskType,
+  type Prisma,
+  type PrismaClient,
+} from "@prisma/client";
 import { prisma } from "@/lib/db";
 
 type BackfilledAsset = {
@@ -14,6 +20,31 @@ type BackfilledBinding = {
   projectId: string;
   storyboardScriptAssetId: string | null;
 };
+
+type GeneratedScriptSourceTaskMetadata = {
+  taskId: string | null;
+  taskType: TaskType;
+  traceId: string | null;
+};
+
+export function buildGeneratedScriptAssetMetadata(input: {
+  scriptSessionId: string;
+  scriptVersionId: string;
+  extractedText: string;
+  sourceTask?: Partial<GeneratedScriptSourceTaskMetadata>;
+}): Prisma.InputJsonValue {
+  return {
+    parseStatus: "ready",
+    scriptSessionId: input.scriptSessionId,
+    scriptVersionId: input.scriptVersionId,
+    extractedText: input.extractedText,
+    sourceTask: {
+      taskId: input.sourceTask?.taskId ?? null,
+      taskType: input.sourceTask?.taskType ?? TaskType.SCRIPT_FINALIZE,
+      traceId: input.sourceTask?.traceId ?? null,
+    },
+  } as Prisma.InputJsonValue;
+}
 
 export type AssetCenterBackfillResult = {
   createdAssets: BackfilledAsset[];
@@ -123,12 +154,11 @@ export async function backfillAssetCenter(
             originalName: `final-script-v${session.finalScriptVersion.versionNumber}.txt`,
             mimeType: "text/plain",
             sizeBytes: Buffer.byteLength(extractedText, "utf8"),
-            metadata: {
-              parseStatus: "ready",
+            metadata: buildGeneratedScriptAssetMetadata({
               scriptSessionId: session.id,
               scriptVersionId: session.finalScriptVersion.id,
               extractedText,
-            },
+            }),
           },
           select: {
             id: true,
