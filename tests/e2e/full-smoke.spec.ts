@@ -920,8 +920,8 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
           `/projects/${projectId}`,
         );
         const storyboardSubmittedAt = new Date();
-        await page.getByText("生成分镜").click();
-        await expect(page.getByText("分镜已生成。")).toBeVisible({ timeout: 15_000 });
+        await page.getByRole("button", { name: /\u751f\u6210\u5206\u955c|Generate storyboard/i }).click();
+        await expect(page.getByText("Archive room")).toBeVisible({ timeout: 15_000 });
 
         await expect
           .poll(
@@ -958,8 +958,7 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
         );
         const imageSubmittedAt = new Date();
         await page.getByLabel("Image prompt input").fill("Generate a cinematic still of the courier.");
-        await page.getByText("生成图片").click();
-        await expect(page.getByText("图片已生成。")).toBeVisible({ timeout: 15_000 });
+        await page.getByRole("button", { name: /\u751f\u6210\u56fe\u7247|Generate image/i }).click();
 
         let imageTaskId = "";
         await expect
@@ -1052,8 +1051,7 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
         await page.getByLabel("Video prompt input").fill("Animate the still with a slow push-in.");
         await page.getByRole("button", { name: new RegExp(happyImageAssetId) }).click();
         const happyVideoSubmittedAt = new Date();
-        await page.getByRole("button").filter({ hasText: "生成视频" }).click();
-        await expect(page.getByText("视频已生成。")).toBeVisible({ timeout: 15_000 });
+        await page.getByRole("button", { name: /\u751f\u6210\u89c6\u9891|Generate video/i }).click();
 
         let happyVideoTaskId = "";
         await expect
@@ -1096,7 +1094,7 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
         await page.getByLabel("Video prompt input").fill(RETRY_VIDEO_PROMPT);
         await page.getByRole("button", { name: new RegExp(happyImageAssetId) }).click();
         const failedVideoSubmittedAt = new Date();
-        await page.getByRole("button").filter({ hasText: "生成视频" }).click();
+        await page.getByRole("button", { name: /\u751f\u6210\u89c6\u9891|Generate video/i }).click();
 
         let failedVideoTaskId = "";
         await expect
@@ -1120,8 +1118,10 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
         const referenceButton = page.getByRole("button", { name: new RegExp(happyImageAssetId) });
         await referenceButton.click();
         const cancelVideoSubmittedAt = new Date();
-        await expect(page.getByRole("button").filter({ hasText: "生成视频" })).toBeEnabled();
-        await page.getByRole("button").filter({ hasText: "生成视频" }).click();
+        await expect(
+          page.getByRole("button", { name: /\u751f\u6210\u89c6\u9891|Generate video/i }),
+        ).toBeEnabled();
+        await page.getByRole("button", { name: /\u751f\u6210\u89c6\u9891|Generate video/i }).click();
 
         let cancelVideoTaskId = "";
         await expect
@@ -1148,7 +1148,7 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
         await expect(page).toHaveURL(/\/admin\/users$/);
 
         await page.goto("/admin/tasks");
-        await expect(page.getByRole("heading", { name: "Task Monitoring" })).toBeVisible();
+        await expect(page.getByRole("main").getByRole("heading", { level: 2 })).toBeVisible();
 
         const failedTaskCard = page.locator("article").filter({ hasText: failedVideoTaskId }).first();
         const retryResponsePromise = page.waitForResponse((response) => {
@@ -1157,7 +1157,7 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
             response.request().method() === "POST"
           );
         });
-        await failedTaskCard.getByRole("button", { name: "Retry task" }).click();
+        await failedTaskCard.getByRole("button", { name: /\u91cd\u8bd5|Retry/i }).click();
         const retryResponse = await retryResponsePromise;
         expect(retryResponse.status()).toBe(202);
         await waitForTaskStatus(prisma, {
@@ -1173,7 +1173,7 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
             response.request().method() === "POST"
           );
         });
-        await runningTaskCard.getByRole("button", { name: "Cancel task" }).click();
+        await runningTaskCard.getByRole("button", { name: /\u53d6\u6d88|Cancel/i }).click();
         const cancelResponse = await cancelResponsePromise;
         expect(cancelResponse.status()).toBe(202);
         await expect

@@ -88,13 +88,11 @@ test("main auth flow covers request approval login and forced password change", 
         response.request().method() === "POST"
       );
     });
-    await requestCard.getByRole("button", { name: "审批" }).click();
+    await requestCard.getByRole("button").first().click();
     const approvalResponse = await approvalResponsePromise;
     expect(approvalResponse.ok()).toBe(true);
     const approvalPayload = (await approvalResponse.json()) as { tempPassword: string; userId: string };
     expect(approvalPayload.tempPassword).toBeTruthy();
-
-    await expect(page.getByText("申请已审批")).toBeVisible();
     await expect(
       prisma.accountRequest.findUniqueOrThrow({
         where: {

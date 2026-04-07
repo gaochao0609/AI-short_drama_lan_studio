@@ -8,7 +8,7 @@ import {
   UserRole,
   UserStatus,
 } from "@prisma/client";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { hash } from "bcryptjs";
 
 const databaseUrl =
@@ -89,6 +89,32 @@ async function insertTaskRow(
   );
 }
 
+async function expectNoHorizontalOverflow(page: Page) {
+  const metrics = await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    clientWidth: document.documentElement.clientWidth,
+  }));
+  expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth + 1);
+}
+
+async function expectVisibleFocusIndicator(page: Page) {
+  await page.keyboard.press("Tab");
+  const focusTarget = await page.evaluate(() => {
+    const active = document.activeElement as HTMLElement | null;
+    if (!active) {
+      return null;
+    }
+    return {
+      tagName: active.tagName,
+      ariaLabel: active.getAttribute("aria-label"),
+      textContent: active.textContent?.trim() ?? "",
+    };
+  });
+
+  expect(focusTarget).not.toBeNull();
+  expect(focusTarget!.tagName).not.toBe("BODY");
+}
+
 test("workspace create-project form navigates into the project flow", async ({ page }) => {
   const prisma = createPrismaClient();
   const suffix = Math.random().toString(36).slice(2, 10);
@@ -115,12 +141,24 @@ test("workspace create-project form navigates into the project flow", async ({ p
     await page.locator('button[type="submit"]').click();
     await expect(page).toHaveURL(/\/workspace$/);
     await expect(page.getByRole("heading", { name: workspaceHeroTitle })).toBeVisible();
+    await page.setViewportSize({ width: 375, height: 812 });
+    await expectNoHorizontalOverflow(page);
+    await expectVisibleFocusIndicator(page);
 
     await page.getByLabel("项目名称").fill("Workspace Flow Project");
     await page.getByLabel("项目概念").fill("Navigate from the workspace form into the project flow.");
     await page.getByRole("button", { name: createProjectCta }).click();
 
     await expect(page).toHaveURL(/\/projects\/[^/]+$/);
+    const projectId = page.url().split("/").at(-1) ?? "";
+    await expectNoHorizontalOverflow(page);
+    const projectWorkflowRegion = page
+      .getByRole("region")
+      .filter({ has: page.locator(`a[href="/projects/${projectId}/script"]`) })
+      .first();
+    await expect(projectWorkflowRegion).toContainText(
+      /\u5df2\u5b8c\u6210|\u8fdb\u884c\u4e2d|\u4e0b\u4e00\u6b65|\u5f85\u5f00\u59cb|completed|in progress|next|pending/i,
+    );
   } finally {
     if (userId) {
       await prisma.user.deleteMany({
@@ -482,19 +520,19 @@ test("workflow shows all generated artifacts in project detail", async ({ page }
 
     await page.goto(`${appUrl}/projects/${projectId}/storyboard`);
     await page.getByRole("button", { name: "Generate storyboard" }).click();
-    await expect(page.getByText("Storyboard generated.")).toBeVisible();
-    await expect(page.getByText("2 segments")).toBeVisible();
+    await expect(page.getByText("Control room")).toBeVisible();
+    await expect(page.getByText("Vault interior")).toBeVisible();
 
     await page.goto(`${appUrl}/projects/${projectId}/images`);
     await page.getByLabel("Image prompt input").fill("Generate a cinematic still of the courier.");
     await page.getByRole("button", { name: "Generate image" }).click();
-    await expect(page.getByText("Image generated.")).toBeVisible();
+    await expect(page.getByText(`asset-image-${suffix}`)).toBeVisible();
 
     await page.goto(`${appUrl}/projects/${projectId}/videos`);
     await page.getByLabel("Video prompt input").fill("Animate the still with a slow push-in.");
     await page.getByRole("button", { name: new RegExp(`asset-image-${suffix}`) }).click();
     await page.getByRole("button", { name: "Generate video" }).click();
-    await expect(page.getByText("Video generated.")).toBeVisible();
+    await expect(page.getByText(`asset-video-${suffix}`)).toBeVisible();
 
     await page.goto(`${appUrl}/projects/${projectId}`);
     await expect(page.getByText("制作台")).toBeVisible();
