@@ -59,25 +59,25 @@ describe("admin layout", () => {
     );
 
     expect(screen.getByText("Lan Studio")).toBeInTheDocument();
-    expect(screen.getByText("Admin control")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "User access" })).toHaveAttribute(
+    expect(screen.getByText("管理控制台")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "用户与权限" })).toHaveAttribute(
       "href",
       "/admin/users",
     );
-    expect(screen.getByRole("link", { name: "Provider stack" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "模型提供方" })).toHaveAttribute(
       "href",
       "/admin/providers",
     );
-    expect(screen.getByRole("link", { name: "Task monitor" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "任务监控" })).toHaveAttribute(
       "href",
       "/admin/tasks",
     );
-    expect(screen.getByRole("link", { name: "Storage vault" })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "存储管理" })).toHaveAttribute(
       "href",
       "/admin/storage",
     );
     expect(
-      screen.getByText("当前为非 HTTPS 部署，密码和 API Key 传输存在风险"),
+      screen.getByText("当前部署使用非 HTTPS，密码和 API Key 传输存在风险。"),
     ).toBeInTheDocument();
   });
 

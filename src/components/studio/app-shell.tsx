@@ -7,6 +7,7 @@ export type AppShellNavItem = {
 };
 
 export type AppShellProps = {
+  eyebrow?: string;
   title: string;
   subtitle: string;
   navItems: AppShellNavItem[];
@@ -16,6 +17,7 @@ export type AppShellProps = {
 };
 
 export default function AppShell({
+  eyebrow = "Studio shell",
   title,
   subtitle,
   navItems,
@@ -27,7 +29,7 @@ export default function AppShell({
     <div className="studio-shell">
       <aside className="studio-shell__sidebar">
         <div className="studio-shell__brand-block">
-          <p className="studio-shell__eyebrow">Spotlight studio</p>
+          <p className="studio-shell__eyebrow">{eyebrow}</p>
           <h1 className="studio-shell__brand">Lan Studio</h1>
           <p className="studio-shell__title">{title}</p>
           <p className="studio-shell__subtitle">{subtitle}</p>

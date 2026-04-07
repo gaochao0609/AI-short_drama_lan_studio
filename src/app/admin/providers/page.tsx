@@ -2,6 +2,7 @@
 
 import type { CSSProperties, FormEvent } from "react";
 import { useEffect, useState } from "react";
+import StatusBadge from "@/components/studio/status-badge";
 import type { ModelTaskType } from "@/lib/models/contracts";
 
 type ProviderItem = {
@@ -50,12 +51,12 @@ type ProviderFormState = {
 };
 
 const taskOptions: Array<{ value: ModelTaskType; label: string }> = [
-  { value: "script_question_generate", label: "Script Question Generate" },
-  { value: "script_finalize", label: "Script Finalize" },
-  { value: "storyboard_split", label: "Storyboard Split" },
-  { value: "image_generate", label: "Image Generate" },
-  { value: "image_edit", label: "Image Edit" },
-  { value: "video_generate", label: "Video Generate" },
+  { value: "script_question_generate", label: "脚本问答" },
+  { value: "script_finalize", label: "脚本定稿" },
+  { value: "storyboard_split", label: "分镜拆解" },
+  { value: "image_generate", label: "图片生成" },
+  { value: "image_edit", label: "图片编辑" },
+  { value: "video_generate", label: "视频生成" },
 ];
 
 function createEmptyFormState(): ProviderFormState {
@@ -94,10 +95,10 @@ function toFormState(provider: ProviderItem): ProviderFormState {
 
 function getStoredSecretSummary(providers: ProviderItem[], selectedKey: string | null) {
   if (!selectedKey) {
-    return "already stored";
+    return "已存储";
   }
 
-  return providers.find((provider) => provider.key === selectedKey)?.apiKeyMaskedTail ?? "already stored";
+  return providers.find((provider) => provider.key === selectedKey)?.apiKeyMaskedTail ?? "已存储";
 }
 
 export default function AdminProvidersPage() {
@@ -118,10 +119,10 @@ export default function AdminProvidersPage() {
 
     if (!response.ok) {
       if (payload && "error" in payload) {
-        throw new Error(payload.error ?? "Failed to load providers");
+        throw new Error(payload.error ?? "加载提供方失败");
       }
 
-      throw new Error("Failed to load providers");
+      throw new Error("加载提供方失败");
     }
 
     return payload as ProviderPayload;
@@ -159,7 +160,7 @@ export default function AdminProvidersPage() {
           return;
         }
 
-        setError(loadError instanceof Error ? loadError.message : "Failed to load providers");
+        setError(loadError instanceof Error ? loadError.message : "加载提供方失败");
       }
     }
 
@@ -236,30 +237,28 @@ export default function AdminProvidersPage() {
     const payload = (await response.json().catch(() => null)) as { error?: string } | null;
 
     if (!response.ok) {
-      setError(payload?.error ?? "Failed to save provider");
+      setError(payload?.error ?? "保存提供方失败");
       return;
     }
 
-    setMessage(mode === "create" ? "Provider created." : "Provider updated.");
+    setMessage(mode === "create" ? "提供方已创建。" : "提供方已更新。");
     await loadData();
   }
 
   return (
     <section style={pageStyle}>
-      <header>
-        <p style={eyebrowStyle}>Providers</p>
-        <h2 style={titleStyle}>Model Provider Registry</h2>
-        <p style={copyStyle}>
-          Manage proxy endpoints, credentials, and default model assignments for each generation pipeline.
-        </p>
+      <header style={headerStyle}>
+        <p style={eyebrowStyle}>模型提供方</p>
+        <h2 style={titleStyle}>模型提供方</h2>
+        <p style={copyStyle}>统一维护代理地址、密钥、超时重试与任务默认路由。</p>
       </header>
 
       {message ? <p style={messageStyle}>{message}</p> : null}
       {error ? <p style={errorStyle}>{error}</p> : null}
 
       <section style={panelStyle}>
-        <h3 style={panelTitleStyle}>Default Models</h3>
-        <p style={copyStyle}>Each business task resolves through the shared provider registry.</p>
+        <h3 style={panelTitleStyle}>默认模型路由</h3>
+        <p style={copyStyle}>每个任务类型都从此处解析默认提供方。</p>
         <div style={summaryGridStyle}>
           {taskOptions.map((task) => {
             const summary = defaultModels?.[task.value] ?? null;
@@ -267,8 +266,8 @@ export default function AdminProvidersPage() {
             return (
               <article key={task.value} style={summaryCardStyle}>
                 <strong>{task.label}</strong>
-                <p style={metaStyle}>{summary ? `${summary.providerKey} / ${summary.model ?? "-"}` : "Not configured"}</p>
-                <p style={metaStyle}>{summary ? summary.providerName : "No enabled provider"}</p>
+                <p style={metaStyle}>{summary ? `${summary.providerKey} / ${summary.model ?? "-"}` : "未配置"}</p>
+                <p style={metaStyle}>{summary ? summary.providerName : "无可用提供方"}</p>
               </article>
             );
           })}
@@ -279,16 +278,16 @@ export default function AdminProvidersPage() {
         <section style={panelStyle}>
           <div style={sectionHeaderStyle}>
             <div>
-              <h3 style={panelTitleStyle}>{mode === "create" ? "Create Provider" : "Edit Provider"}</h3>
+              <h3 style={panelTitleStyle}>{mode === "create" ? "创建提供方" : "编辑提供方"}</h3>
               <p style={copyStyle}>
                 {mode === "create"
-                  ? "Add a new provider profile for one or more pipelines."
-                  : `Editing ${selectedKey ?? "provider"}.`}
+                  ? "新增一个可用于任务路由的提供方配置。"
+                  : `正在编辑 ${selectedKey ?? "提供方"}。`}
               </p>
             </div>
             {mode === "edit" ? (
               <button type="button" style={secondaryButtonStyle} onClick={startCreateMode}>
-                New Provider
+                新建提供方
               </button>
             ) : null}
           </div>
@@ -304,7 +303,7 @@ export default function AdminProvidersPage() {
               />
             </label>
             <label style={fieldStyle}>
-              <span>Label</span>
+              <span>名称</span>
               <input
                 value={form.label}
                 onChange={(event) => updateForm("label", event.target.value)}
@@ -340,15 +339,15 @@ export default function AdminProvidersPage() {
               {mode === "edit" ? (
                 <span style={hintStyle}>
                   {form.hasStoredApiKey
-                    ? `Stored secret ${getStoredSecretSummary(providers, selectedKey)}. Leave blank to keep it, or enter a new key to replace it.`
-                    : "No secret stored. Enter a key to add one."}
+                    ? `当前密钥尾号 ${getStoredSecretSummary(providers, selectedKey)}。留空表示保持不变，填写新值表示替换。`
+                    : "尚未存储密钥，填写后可立即生效。"}
                 </span>
               ) : null}
               <input
                 value={form.apiKey}
                 onChange={(event) => updateForm("apiKey", event.target.value)}
                 style={inputStyle}
-                placeholder={mode === "edit" && form.hasStoredApiKey ? "Enter a new API key to replace the stored secret" : "Enter API key"}
+                placeholder={mode === "edit" && form.hasStoredApiKey ? "输入新 API Key 以替换" : "输入 API Key"}
                 disabled={mode === "edit" && form.clearStoredApiKey}
               />
             </label>
@@ -359,7 +358,7 @@ export default function AdminProvidersPage() {
                   checked={form.clearStoredApiKey}
                   onChange={(event) => updateForm("clearStoredApiKey", event.target.checked)}
                 />
-                <span>Clear stored API key</span>
+                <span>清空已存储密钥</span>
               </label>
             ) : null}
             <div style={compactGridStyle}>
@@ -388,10 +387,10 @@ export default function AdminProvidersPage() {
                 checked={form.enabled}
                 onChange={(event) => updateForm("enabled", event.target.checked)}
               />
-              <span>Enabled</span>
+              <span>启用</span>
             </label>
             <fieldset style={fieldsetStyle}>
-              <legend style={legendStyle}>Default Tasks</legend>
+              <legend style={legendStyle}>默认任务</legend>
               <div style={taskListStyle}>
                 {taskOptions.map((task) => (
                   <label key={task.value} style={taskCheckboxStyle}>
@@ -405,30 +404,33 @@ export default function AdminProvidersPage() {
                 ))}
               </div>
             </fieldset>
-            <button type="submit" style={buttonStyle}>
-              {mode === "create" ? "Create Provider" : "Save Changes"}
+            <button type="submit" style={primaryButtonStyle}>
+              {mode === "create" ? "创建提供方" : "保存变更"}
             </button>
           </form>
         </section>
 
         <section style={panelStyle}>
-          <h3 style={panelTitleStyle}>Registered Providers</h3>
-          <p style={copyStyle}>Select a provider to edit its proxy settings and task defaults.</p>
+          <h3 style={panelTitleStyle}>已注册提供方</h3>
+          <p style={copyStyle}>点击条目进入编辑，变更会复用同一组接口语义。</p>
           <div style={listStyle}>
-            {providers.length === 0 ? <p style={copyStyle}>No providers found.</p> : null}
+            {providers.length === 0 ? <p style={copyStyle}>暂无提供方。</p> : null}
             {providers.map((provider) => (
               <article key={provider.id} style={itemStyle}>
-                <div>
-                  <strong>{provider.label}</strong>
+                <div style={itemContentStyle}>
+                  <div style={itemTitleRowStyle}>
+                    <strong>{provider.label}</strong>
+                    <StatusBadge label={provider.enabled ? "已启用" : "已停用"} tone={provider.enabled ? "success" : "danger"} />
+                  </div>
                   <p style={metaStyle}>
                     {provider.key} / {provider.providerName} / {provider.modelName ?? "-"}
                   </p>
                   <p style={metaStyle}>
-                    {provider.enabled ? "Enabled" : "Disabled"} / {provider.timeoutMs} ms / {provider.maxRetries} retries
+                    {provider.timeoutMs} ms / {provider.maxRetries} 次重试
                   </p>
                 </div>
-                <button type="button" onClick={() => selectProvider(provider)} style={buttonStyle}>
-                  Edit
+                <button type="button" onClick={() => selectProvider(provider)} style={secondaryButtonStyle}>
+                  编辑
                 </button>
               </article>
             ))}
@@ -444,67 +446,74 @@ const pageStyle = {
   gap: "20px",
 } satisfies CSSProperties;
 
+const headerStyle = {
+  display: "grid",
+  gap: "8px",
+} satisfies CSSProperties;
+
 const eyebrowStyle = {
   margin: 0,
-  color: "#8c5f2d",
+  color: "var(--accent-gold)",
   textTransform: "uppercase",
   letterSpacing: "0.12em",
-  fontSize: "0.8rem",
+  fontSize: "0.78rem",
 } satisfies CSSProperties;
 
 const titleStyle = {
-  margin: "10px 0 0",
-  fontSize: "2rem",
+  margin: 0,
+  fontSize: "1.85rem",
+  lineHeight: 1.2,
 } satisfies CSSProperties;
 
 const copyStyle = {
-  margin: "10px 0 0",
-  color: "#665d52",
+  margin: 0,
+  color: "var(--text-muted)",
   lineHeight: 1.6,
 } satisfies CSSProperties;
 
 const gridStyle = {
   display: "grid",
-  gap: "20px",
+  gap: "16px",
   gridTemplateColumns: "minmax(0, 1.2fr) minmax(320px, 0.8fr)",
 } satisfies CSSProperties;
 
 const panelStyle = {
-  borderRadius: "24px",
-  border: "1px solid rgba(31, 27, 22, 0.12)",
-  background: "rgba(255, 250, 243, 0.94)",
-  padding: "20px",
+  borderRadius: "20px",
+  border: "1px solid var(--border)",
+  background: "rgba(22, 24, 39, 0.82)",
+  padding: "18px",
 } satisfies CSSProperties;
 
 const sectionHeaderStyle = {
   display: "flex",
   justifyContent: "space-between",
-  gap: "12px",
+  gap: "10px",
   alignItems: "center",
 } satisfies CSSProperties;
 
 const panelTitleStyle = {
   margin: 0,
-  fontSize: "1.2rem",
+  fontSize: "1.06rem",
 } satisfies CSSProperties;
 
 const summaryGridStyle = {
   display: "grid",
-  gap: "12px",
-  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-  marginTop: "16px",
+  gap: "10px",
+  gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
+  marginTop: "14px",
 } satisfies CSSProperties;
 
 const summaryCardStyle = {
-  borderRadius: "18px",
-  padding: "16px",
-  background: "rgba(140, 95, 45, 0.06)",
+  borderRadius: "14px",
+  padding: "14px",
+  border: "1px solid var(--border)",
+  background: "rgba(15, 15, 35, 0.56)",
 } satisfies CSSProperties;
 
 const formStyle = {
   display: "grid",
   gap: "12px",
-  marginTop: "16px",
+  marginTop: "14px",
 } satisfies CSSProperties;
 
 const compactGridStyle = {
@@ -521,18 +530,18 @@ const fieldStyle = {
 
 const inputStyle = {
   width: "100%",
-  borderRadius: "14px",
-  border: "1px solid rgba(31, 27, 22, 0.16)",
-  padding: "12px 14px",
+  borderRadius: "12px",
+  border: "1px solid var(--border)",
+  padding: "10px 12px",
   font: "inherit",
-  background: "#fff",
-  color: "#1f1b16",
+  background: "rgba(15, 15, 35, 0.72)",
+  color: "var(--text)",
 } satisfies CSSProperties;
 
 const hintStyle = {
-  color: "#665d52",
+  color: "var(--text-muted)",
   fontWeight: 400,
-  fontSize: "0.92rem",
+  fontSize: "0.9rem",
   lineHeight: 1.5,
 } satisfies CSSProperties;
 
@@ -544,9 +553,9 @@ const checkboxLabelStyle = {
 } satisfies CSSProperties;
 
 const fieldsetStyle = {
-  borderRadius: "18px",
-  border: "1px solid rgba(31, 27, 22, 0.12)",
-  padding: "12px 14px",
+  borderRadius: "14px",
+  border: "1px solid var(--border)",
+  padding: "12px",
 } satisfies CSSProperties;
 
 const legendStyle = {
@@ -567,54 +576,75 @@ const taskCheckboxStyle = {
 
 const listStyle = {
   display: "grid",
-  gap: "12px",
-  marginTop: "16px",
+  gap: "10px",
+  marginTop: "14px",
 } satisfies CSSProperties;
 
 const itemStyle = {
-  display: "flex",
-  justifyContent: "space-between",
-  gap: "12px",
+  display: "grid",
+  gridTemplateColumns: "minmax(0, 1fr) auto",
+  gap: "10px",
   alignItems: "center",
-  padding: "14px",
-  borderRadius: "18px",
-  background: "rgba(140, 95, 45, 0.06)",
+  padding: "12px",
+  borderRadius: "14px",
+  border: "1px solid var(--border)",
+  background: "rgba(15, 15, 35, 0.56)",
+} satisfies CSSProperties;
+
+const itemContentStyle = {
+  display: "grid",
+  gap: "6px",
+} satisfies CSSProperties;
+
+const itemTitleRowStyle = {
+  display: "flex",
+  gap: "8px",
+  alignItems: "center",
+  flexWrap: "wrap",
 } satisfies CSSProperties;
 
 const metaStyle = {
-  margin: "6px 0 0",
-  color: "#665d52",
+  margin: 0,
+  color: "var(--text-muted)",
+  fontSize: "0.92rem",
 } satisfies CSSProperties;
 
-const buttonStyle = {
-  border: 0,
+const baseButtonStyle = {
+  border: "1px solid transparent",
   borderRadius: "999px",
-  background: "#8c5f2d",
-  color: "#fff",
-  padding: "10px 14px",
+  padding: "8px 12px",
   font: "inherit",
   fontWeight: 700,
   cursor: "pointer",
 } satisfies CSSProperties;
 
+const primaryButtonStyle = {
+  ...baseButtonStyle,
+  background: "var(--accent-violet)",
+  color: "var(--text)",
+} satisfies CSSProperties;
+
 const secondaryButtonStyle = {
-  ...buttonStyle,
-  background: "#f0e3d1",
-  color: "#4b3a27",
+  ...baseButtonStyle,
+  background: "rgba(248, 250, 252, 0.08)",
+  borderColor: "var(--border)",
+  color: "var(--text)",
 } satisfies CSSProperties;
 
 const messageStyle = {
   margin: 0,
-  padding: "14px 16px",
-  borderRadius: "16px",
-  background: "rgba(23, 92, 49, 0.12)",
-  color: "#175c31",
+  padding: "12px 14px",
+  borderRadius: "14px",
+  border: "1px solid var(--border)",
+  background: "rgba(109, 94, 252, 0.2)",
+  color: "var(--text)",
 } satisfies CSSProperties;
 
 const errorStyle = {
   margin: 0,
-  padding: "14px 16px",
-  borderRadius: "16px",
-  background: "rgba(180, 35, 24, 0.12)",
-  color: "#b42318",
+  padding: "12px 14px",
+  borderRadius: "14px",
+  border: "1px solid var(--border)",
+  background: "rgba(248, 113, 113, 0.2)",
+  color: "var(--text)",
 } satisfies CSSProperties;

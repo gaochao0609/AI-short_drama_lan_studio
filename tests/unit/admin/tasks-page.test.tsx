@@ -84,13 +84,13 @@ describe("admin tasks page", () => {
 
     render(<pageModule.default />);
 
-    await screen.findByRole("heading", { name: "Task Monitoring" });
+    await screen.findByRole("heading", { name: "任务监控" });
 
-    fireEvent.click(await screen.findByRole("button", { name: "Cancel task" }));
+    fireEvent.click(await screen.findByRole("button", { name: "取消任务" }));
 
     await waitFor(() => {
-      expect(screen.getByText("Task task-1 already finished as Succeeded.")).toBeInTheDocument();
+      expect(screen.getByText("任务 task-1 已结束，当前状态为成功。")).toBeInTheDocument();
     });
-    expect(screen.queryByText("Cancel request submitted for task-1.")).not.toBeInTheDocument();
+    expect(screen.queryByText("已提交取消请求：task-1。")).not.toBeInTheDocument();
   });
 });

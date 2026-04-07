@@ -1,10 +1,11 @@
-type StatusBadgeTone = "neutral" | "active" | "warning" | "danger";
+type StatusBadgeTone = "neutral" | "active" | "warning" | "danger" | "success";
 
 const toneClassNames: Record<StatusBadgeTone, string> = {
   neutral: "studio-status-badge--neutral",
   active: "studio-status-badge--active",
   warning: "studio-status-badge--warning",
   danger: "studio-status-badge--danger",
+  success: "studio-status-badge--active",
 };
 
 export type StatusBadgeProps = {

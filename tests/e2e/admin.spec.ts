@@ -319,8 +319,8 @@ test("admin flow covers approval, task monitoring, retry, cancel, storage stats,
     );
 
     await page.goto("http://127.0.0.1:3000/admin/tasks");
-    await expect(page.getByRole("heading", { name: "Task Monitoring" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: /Tasks \(\d+ total\)/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "任务监控" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /任务列表（共 \d+ 条）/ })).toBeVisible();
     const failedTaskCard = page.locator("article").filter({ hasText: failedTaskId }).first();
     await expect(failedTaskCard).toContainText("provider timeout");
     const retryResponsePromise = page.waitForResponse((response) => {
@@ -329,7 +329,7 @@ test("admin flow covers approval, task monitoring, retry, cancel, storage stats,
         response.request().method() === "POST"
       );
     });
-    await failedTaskCard.getByRole("button", { name: "Retry task" }).click();
+    await failedTaskCard.getByRole("button", { name: "重试任务" }).click();
     const retryResponse = await retryResponsePromise;
     expect(retryResponse.status()).toBe(202);
     await expect
@@ -362,7 +362,7 @@ test("admin flow covers approval, task monitoring, retry, cancel, storage stats,
         response.request().method() === "POST"
       );
     });
-    await queuedTaskCard.getByRole("button", { name: "Cancel task" }).click();
+    await queuedTaskCard.getByRole("button", { name: "取消任务" }).click();
     const cancelQueuedResponse = await cancelQueuedResponsePromise;
     expect(cancelQueuedResponse.status()).toBe(200);
     await expect(
@@ -385,7 +385,7 @@ test("admin flow covers approval, task monitoring, retry, cancel, storage stats,
         response.request().method() === "POST"
       );
     });
-    await runningTaskCard.getByRole("button", { name: "Cancel task" }).click();
+    await runningTaskCard.getByRole("button", { name: "取消任务" }).click();
     const cancelRunningResponse = await cancelRunningResponsePromise;
     expect(cancelRunningResponse.status()).toBe(202);
     await expect(
@@ -401,8 +401,8 @@ test("admin flow covers approval, task monitoring, retry, cancel, storage stats,
     );
 
     await page.goto("http://127.0.0.1:3000/admin/storage");
-    await expect(page.getByRole("heading", { name: "Storage Management" })).toBeVisible();
-    await expect(page.getByText("Free disk space", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "存储管理" })).toBeVisible();
+    await expect(page.getByText("可用磁盘空间", { exact: true })).toBeVisible();
     const generatedImagesCard = page.locator("article").filter({ hasText: "generated-images" });
     const generatedVideosCard = page.locator("article").filter({ hasText: "generated-videos" });
     await expect(generatedImagesCard).toContainText(/\d+(?:\.\d+)?\s(?:B|KB|MB|GB|TB)/);
@@ -413,10 +413,10 @@ test("admin flow covers approval, task monitoring, retry, cancel, storage stats,
         response.request().method() === "POST"
       );
     });
-    await page.getByRole("button", { name: "Clean 30-day cache" }).click();
+    await page.getByRole("button", { name: "清理 30 天缓存" }).click();
     const cleanupResponse = await cleanupResponsePromise;
     expect(cleanupResponse.status()).toBe(200);
-    await expect(page.getByText("Deleted 2 files")).toBeVisible();
+    await expect(page.getByText("已删除 2 个文件")).toBeVisible();
     await expect(stat(oldImagePath)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(stat(oldVideoPath)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(stat(keepImagePath)).resolves.toEqual(
