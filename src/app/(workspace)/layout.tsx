@@ -4,13 +4,13 @@ import AppShell from "@/components/studio/app-shell";
 import WorkflowRail from "@/components/studio/workflow-rail";
 import { AuthGuardError, requireUser } from "@/lib/auth/guards";
 
-const navItems = [{ href: "/workspace", label: "Workspace overview" }];
+const navItems = [{ href: "/workspace", label: "工作台总览" }];
 
 const workflowItems = [
-  { label: "Script", detail: "Shape the story and scene beats." },
-  { label: "Storyboard", detail: "Translate the script into visual boards." },
-  { label: "Images", detail: "Generate keyframes and art direction." },
-  { label: "Videos", detail: "Assemble final motion outputs." },
+  { label: "脚本", detail: "梳理故事方向与场景节奏。" },
+  { label: "分镜", detail: "把剧本拆解成可执行的画面方案。" },
+  { label: "图片", detail: "生成关键帧与整体美术方向。" },
+  { label: "视频", detail: "整合镜头素材并推进最终成片。" },
 ];
 
 export default async function WorkspaceLayout({
@@ -38,10 +38,11 @@ export default async function WorkspaceLayout({
 
   return (
     <AppShell
-      title="Creative workspace"
-      subtitle="Build scripts, frames, imagery, and final cuts from one shared studio shell."
+      eyebrow="创作中枢"
+      title="创作工作台"
+      subtitle="在同一个工作台内推进剧本、分镜、出图和成片流程。"
       navItems={navItems}
-      sidebarAddon={<WorkflowRail title="Studio pipeline" items={workflowItems} />}
+      sidebarAddon={<WorkflowRail title="创作流程" items={workflowItems} />}
     >
       {children}
     </AppShell>
