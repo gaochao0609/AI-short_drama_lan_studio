@@ -772,9 +772,15 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
     workerRuntime = await startWorkerProcess();
 
     await page.goto("/register-request");
-    await page.locator("form input").nth(0).fill(requesterUsername);
-    await page.locator("form input").nth(1).fill(`Writer ${suffix}`);
-    await page.locator("form textarea").fill("Need access to create and review short-drama projects");
+    await page
+      .getByRole("textbox", { name: /\u7528\u6237\u540d|username/i })
+      .fill(requesterUsername);
+    await page
+      .getByRole("textbox", { name: /\u663e\u793a\u540d\u79f0|display name/i })
+      .fill(`Writer ${suffix}`);
+    await page
+      .getByRole("textbox", { name: /\u7533\u8bf7\u8bf4\u660e|reason/i })
+      .fill("Need access to create and review short-drama projects");
     const registerResponsePromise = page.waitForResponse((response) => {
       return (
         response.url().includes("/api/auth/register-request") &&
@@ -811,7 +817,7 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
         response.request().method() === "POST"
       );
     });
-    await requestCard.getByRole("button").first().click();
+    await requestCard.getByRole("button", { name: /\u901a\u8fc7\u7533\u8bf7|\u5ba1\u6279|approve/i }).click();
     const approvalResponse = await approvalResponsePromise;
     expect(approvalResponse.ok()).toBe(true);
     const approvalPayload = (await approvalResponse.json()) as {
@@ -828,15 +834,25 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
     await page.locator('button[type="submit"]').click();
     await expect(page).toHaveURL(/\/force-password$/);
 
-    await page.locator('input[autocomplete="new-password"]').nth(0).fill(finalPassword);
-    await page.locator('input[autocomplete="new-password"]').nth(1).fill(finalPassword);
+    await page
+      .getByLabel(/^\u65b0\u5bc6\u7801$|^new password$/i)
+      .fill(finalPassword);
+    await page
+      .getByLabel(/^\u786e\u8ba4\u65b0\u5bc6\u7801$|^confirm new password$/i)
+      .fill(finalPassword);
     await page.locator('button[type="submit"]').click();
     await expect(page).toHaveURL(/\/workspace$/);
 
     const createProjectCard = page.locator("article").filter({ has: page.locator("textarea") }).first();
-    await createProjectCard.getByRole("textbox").nth(0).fill(projectTitle);
-    await createProjectCard.getByRole("textbox").nth(1).fill(projectIdea);
-    await createProjectCard.getByRole("button").click();
+    await createProjectCard
+      .getByRole("textbox", { name: /\u9879\u76ee\u540d\u79f0|project title/i })
+      .fill(projectTitle);
+    await createProjectCard
+      .getByRole("textbox", { name: /\u9879\u76ee\u6982\u5ff5|project idea/i })
+      .fill(projectIdea);
+    await createProjectCard
+      .getByRole("button", { name: /\u521b\u5efa\u9879\u76ee\u5e76\u8fdb\u5165\u811a\u672c\u6d41\u7a0b|create project/i })
+      .click();
     await expect(page).toHaveURL(/\/projects\/[^/]+$/);
     projectId = new URL(page.url()).pathname.split("/").pop() ?? "";
     providerExpectations.projectId = projectId;

@@ -302,7 +302,7 @@ test("admin flow covers approval, task monitoring, retry, cancel, storage stats,
         response.request().method() === "POST"
       );
     });
-    await requestCard.getByRole("button").click();
+    await requestCard.getByRole("button", { name: /\u901a\u8fc7\u7533\u8bf7|\u5ba1\u6279|approve/i }).click();
     const approvalResponse = await approvalResponsePromise;
     expect(approvalResponse.ok()).toBe(true);
 
@@ -331,7 +331,7 @@ test("admin flow covers approval, task monitoring, retry, cancel, storage stats,
         response.request().method() === "POST"
       );
     });
-    await failedTaskCard.getByRole("button").click();
+    await failedTaskCard.getByRole("button", { name: /\u91cd\u8bd5\u4efb\u52a1|retry/i }).click();
     const retryResponse = await retryResponsePromise;
     expect(retryResponse.status()).toBe(202);
     await expect
@@ -365,7 +365,7 @@ test("admin flow covers approval, task monitoring, retry, cancel, storage stats,
         response.request().method() === "POST"
       );
     });
-    await queuedTaskCard.getByRole("button").click();
+    await queuedTaskCard.getByRole("button", { name: /\u53d6\u6d88\u4efb\u52a1|cancel/i }).click();
     const cancelQueuedResponse = await cancelQueuedResponsePromise;
     expect(cancelQueuedResponse.status()).toBe(200);
     await expect(
@@ -389,7 +389,7 @@ test("admin flow covers approval, task monitoring, retry, cancel, storage stats,
         response.request().method() === "POST"
       );
     });
-    await runningTaskCard.getByRole("button").click();
+    await runningTaskCard.getByRole("button", { name: /\u53d6\u6d88\u4efb\u52a1|cancel/i }).click();
     const cancelRunningResponse = await cancelRunningResponsePromise;
     expect(cancelRunningResponse.status()).toBe(202);
     await expect(

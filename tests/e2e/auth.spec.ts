@@ -88,7 +88,7 @@ test("main auth flow covers request approval login and forced password change", 
         response.request().method() === "POST"
       );
     });
-    await requestCard.getByRole("button").first().click();
+    await requestCard.getByRole("button", { name: /\u901a\u8fc7\u7533\u8bf7|\u5ba1\u6279|approve/i }).click();
     const approvalResponse = await approvalResponsePromise;
     expect(approvalResponse.ok()).toBe(true);
     const approvalPayload = (await approvalResponse.json()) as { tempPassword: string; userId: string };
