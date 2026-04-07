@@ -833,9 +833,10 @@ test("full smoke uses real UI, app routes, queues, workers, and fake providers",
     await page.locator('button[type="submit"]').click();
     await expect(page).toHaveURL(/\/workspace$/);
 
-    await page.getByLabel("项目名称").fill(projectTitle);
-    await page.getByLabel("项目概念").fill(projectIdea);
-    await page.getByRole("button", { name: "创建项目并进入脚本流程" }).click();
+    const createProjectCard = page.locator("article").filter({ has: page.locator("textarea") }).first();
+    await createProjectCard.getByRole("textbox").nth(0).fill(projectTitle);
+    await createProjectCard.getByRole("textbox").nth(1).fill(projectIdea);
+    await createProjectCard.getByRole("button").click();
     await expect(page).toHaveURL(/\/projects\/[^/]+$/);
     projectId = new URL(page.url()).pathname.split("/").pop() ?? "";
     providerExpectations.projectId = projectId;
