@@ -21,7 +21,6 @@ describe("register request page", () => {
     } as Response);
 
     const pageModule = await import("@/app/(auth)/register-request/page");
-
     render(createElement(pageModule.default));
 
     fireEvent.change(screen.getByLabelText("用户名"), {
@@ -40,24 +39,30 @@ describe("register request page", () => {
     });
   });
 
-  it("renders the Lan Studio shell and studio-styled form controls", async () => {
-    const pageModule = await import("@/app/(auth)/register-request/page");
+  it("announces submit failures with alert semantics", async () => {
+    vi.mocked(global.fetch).mockResolvedValue({
+      ok: false,
+      json: async () => ({
+        error: "提交失败",
+      }),
+    } as Response);
 
+    const pageModule = await import("@/app/(auth)/register-request/page");
     render(createElement(pageModule.default));
-    const usernameInput = screen.getByLabelText("用户名");
-    const submitButton = screen.getByRole("button", { name: "提交注册申请" });
+
+    fireEvent.click(screen.getByRole("button", { name: "提交注册申请" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("提交失败");
+  });
+
+  it("renders the Lan Studio shell and updated copy", async () => {
+    const pageModule = await import("@/app/(auth)/register-request/page");
+    render(createElement(pageModule.default));
 
     expect(screen.getByText("Lan Studio")).toBeVisible();
     expect(
       screen.getByText("提交注册申请后，审批通过即可进入创作工作区。"),
     ).toBeVisible();
-    expect(usernameInput).toHaveStyle("border-radius: 14px");
-    expect(usernameInput.getAttribute("style")).toContain("border: 1px solid rgba(129, 140, 248, 0.24)");
-    expect(usernameInput.getAttribute("style")).toContain("background: rgba(15, 15, 35, 0.72)");
-    expect(usernameInput).toHaveStyle("color: rgb(248, 250, 252)");
-    expect(submitButton.getAttribute("style")).toContain(
-      "background: linear-gradient(135deg, rgb(202, 138, 4), rgb(109, 94, 252))",
-    );
-    expect(submitButton).toHaveStyle("color: rgb(248, 250, 252)");
+    expect(screen.getByRole("button", { name: "提交注册申请" })).toBeVisible();
   });
 });

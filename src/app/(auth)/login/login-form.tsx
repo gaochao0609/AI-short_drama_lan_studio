@@ -99,7 +99,11 @@ export default function LoginForm({ nextPath }: Readonly<LoginFormProps>) {
               style={inputStyle}
             />
           </label>
-          {error ? <p style={errorStyle}>{error}</p> : null}
+          {error ? (
+            <p role="alert" aria-live="assertive" style={errorStyle}>
+              {error}
+            </p>
+          ) : null}
           <button type="submit" disabled={isSubmitting} style={buttonStyle}>
             {isSubmitting ? "正在进入..." : "进入创作工作区"}
           </button>
@@ -173,7 +177,7 @@ const inputStyle = {
 const buttonStyle = {
   border: 0,
   borderRadius: "999px",
-  background: "linear-gradient(135deg, #ca8a04, #6d5efc)",
+  background: "linear-gradient(135deg, #7a3b00, #4338ca)",
   color: "#f8fafc",
   padding: "12px 18px",
   font: "inherit",

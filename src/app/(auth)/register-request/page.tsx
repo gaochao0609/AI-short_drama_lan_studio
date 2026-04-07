@@ -51,7 +51,9 @@ export default function RegisterRequestPage() {
         <p style={copyStyle}>提交注册申请后，审批通过即可进入创作工作区。</p>
         {submitted ? (
           <div style={successPanelStyle}>
-            <p style={successTitleStyle}>申请已提交，请等待管理员审批。</p>
+            <p role="status" aria-live="polite" style={successTitleStyle}>
+              申请已提交，请等待管理员审批。
+            </p>
             <p style={copyStyle}>审批完成后，请返回登录页使用管理员下发的初始密码登录。</p>
             <a href="/login">返回登录</a>
           </div>
@@ -85,7 +87,11 @@ export default function RegisterRequestPage() {
                 style={{ ...inputStyle, resize: "vertical" }}
               />
             </label>
-            {error ? <p style={errorStyle}>{error}</p> : null}
+            {error ? (
+              <p role="alert" aria-live="assertive" style={errorStyle}>
+                {error}
+              </p>
+            ) : null}
             <button type="submit" disabled={isSubmitting} style={buttonStyle}>
               {isSubmitting ? "正在提交..." : "提交注册申请"}
             </button>
@@ -157,7 +163,7 @@ const inputStyle = {
 const buttonStyle = {
   border: 0,
   borderRadius: "999px",
-  background: "linear-gradient(135deg, #ca8a04, #6d5efc)",
+  background: "linear-gradient(135deg, #7a3b00, #4338ca)",
   color: "#f8fafc",
   padding: "12px 18px",
   font: "inherit",
