@@ -15,6 +15,7 @@ export async function closeQueues() {
 
 const queueByTaskType = {
   [TaskType.SCRIPT_FINALIZE]: queues.script,
+  [TaskType.ASSET_SCRIPT_PARSE]: queues.script,
   [TaskType.STORYBOARD]: queues.storyboard,
   [TaskType.IMAGE]: queues.image,
   [TaskType.VIDEO]: queues.video,

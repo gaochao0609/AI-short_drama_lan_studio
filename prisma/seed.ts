@@ -9,7 +9,7 @@ if (!connectionString) {
 }
 
 const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString }) });
-const defaultModelKeys = ["script", "storyboard", "image", "video"] as const;
+const defaultModelKeys = ["script", "asset_script_parse", "storyboard", "image", "video"] as const;
 
 async function main() {
   const adminUsername = process.env.DEFAULT_ADMIN_USERNAME ?? "admin";

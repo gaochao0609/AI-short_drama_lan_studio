@@ -106,6 +106,14 @@ function buildQueuePayload(input: {
     };
   }
 
+  if (input.taskType === ("ASSET_SCRIPT_PARSE" as TaskType)) {
+    return {
+      assetId: `asset-${input.projectId}`,
+      projectId: input.projectId,
+      userId: input.userId,
+    };
+  }
+
   return {
     projectId: input.projectId,
     prompt: "Generate key art",
@@ -135,6 +143,11 @@ describe("queue bootstrap", () => {
       taskType: TaskType.VIDEO,
       expectedQueueName: "video-queue",
       expectedAttempts: 2,
+    },
+    {
+      taskType: "ASSET_SCRIPT_PARSE" as TaskType,
+      expectedQueueName: "script-queue",
+      expectedAttempts: 3,
     },
   ])(
     "configures BullMQ attempts for $taskType jobs",
@@ -190,13 +203,14 @@ describe("queue bootstrap", () => {
   it("exposes the four task queues", async () => {
     await withTestDatabase(async ({ databaseUrl }) => {
       await withQueueTestEnv(databaseUrl, async () => {
-        const { queues } = await import("@/lib/queues");
+        const { getQueueForTaskType, queues } = await import("@/lib/queues");
 
         expect(Object.keys(queues).sort()).toEqual(["image", "script", "storyboard", "video"]);
         expect(queues.script.name).toBe("script-queue");
         expect(queues.storyboard.name).toBe("storyboard-queue");
         expect(queues.image.name).toBe("image-queue");
         expect(queues.video.name).toBe("video-queue");
+        expect(getQueueForTaskType("ASSET_SCRIPT_PARSE" as TaskType).name).toBe("script-queue");
       });
     });
   });
