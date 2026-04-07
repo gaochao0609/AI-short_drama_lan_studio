@@ -130,29 +130,65 @@ export async function getImagesWorkspaceData(projectId: string, userId: string) 
   ]);
   const inlinePreviewCapBytes = Math.min(INLINE_PREVIEW_MAX_BYTES, getMaxUploadBytes());
   const storageRoot = getStorageRoot();
+  const boundReferenceAssetIds = dedupeOrderedAssetIds(binding.imageReferenceAssetIds);
 
-  const imageAssets = await prisma.asset.findMany({
-    where: {
-      projectId: project.id,
-      mimeType: {
-        startsWith: "image/",
+  const [candidateAssets, boundAssets] = await Promise.all([
+    prisma.asset.findMany({
+      where: {
+        projectId: project.id,
+        mimeType: {
+          startsWith: "image/",
+        },
       },
-    },
-    orderBy: {
-      createdAt: "desc",
-    },
-    take: 50,
-    select: {
-      id: true,
-      originalName: true,
-      kind: true,
-      mimeType: true,
-      sizeBytes: true,
-      storagePath: true,
-      createdAt: true,
-      taskId: true,
-    },
-  });
+      orderBy: {
+        createdAt: "desc",
+      },
+      take: 50,
+      select: {
+        id: true,
+        originalName: true,
+        kind: true,
+        mimeType: true,
+        sizeBytes: true,
+        storagePath: true,
+        createdAt: true,
+        taskId: true,
+      },
+    }),
+    boundReferenceAssetIds.length > 0
+      ? prisma.asset.findMany({
+          where: {
+            projectId: project.id,
+            id: {
+              in: boundReferenceAssetIds,
+            },
+          },
+          select: {
+            id: true,
+            originalName: true,
+            kind: true,
+            mimeType: true,
+            sizeBytes: true,
+            storagePath: true,
+            createdAt: true,
+            taskId: true,
+          },
+        })
+      : Promise.resolve([]),
+  ]);
+  const boundAssetsById = new Map(boundAssets.map((asset) => [asset.id, asset]));
+  const candidateAssetIds = new Set(candidateAssets.map((asset) => asset.id));
+  const imageAssets = [...candidateAssets];
+
+  for (const assetId of boundReferenceAssetIds) {
+    const asset = boundAssetsById.get(assetId);
+
+    if (!asset || candidateAssetIds.has(asset.id)) {
+      continue;
+    }
+
+    imageAssets.push(asset);
+  }
 
   const referenceAssets = await Promise.all(
     imageAssets.map((asset) =>
@@ -172,9 +208,9 @@ export async function getImagesWorkspaceData(projectId: string, userId: string) 
     },
     maxUploadMb: getMaxUploadMb(),
     binding: {
-      imageReferenceAssetIds: binding.imageReferenceAssetIds,
+      imageReferenceAssetIds: boundReferenceAssetIds,
     },
-    defaultReferenceAssets: binding.imageReferenceAssetIds
+    defaultReferenceAssets: boundReferenceAssetIds
       .map((assetId) => referenceAssetsById.get(assetId))
       .filter((asset): asset is ImageAssetSummary => Boolean(asset)),
     referenceAssets,

@@ -148,6 +148,91 @@ describe("images workspace api", () => {
     });
   });
 
+  it("force-includes bound default reference assets outside the candidate query window", async () => {
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      const storageRoot = await mkdtemp(path.join(os.tmpdir(), "lan-studio-images-api-bound-window-"));
+
+      try {
+        await withApiTestEnv(
+          databaseUrl,
+          async () => {
+            const user = await createActiveUser(prisma, "images-bound-window-owner");
+            const project = await prisma.project.create({
+              data: {
+                ownerId: user.id,
+                title: "Images Bound Window",
+              },
+            });
+
+            const boundAsset = await createImageAsset(prisma, {
+              projectId: project.id,
+              storageRoot,
+              fileName: "bound-old.png",
+              createdAt: "2026-01-01T00:00:00.000Z",
+            });
+
+            for (let index = 0; index < 50; index += 1) {
+              await createImageAsset(prisma, {
+                projectId: project.id,
+                storageRoot,
+                fileName: `candidate-${index}.png`,
+                createdAt: `2026-04-${String((index % 28) + 1).padStart(2, "0")}T12:00:00.000Z`,
+              });
+            }
+
+            await prisma.projectWorkflowBinding.create({
+              data: {
+                projectId: project.id,
+                imageReferenceAssetIds: [boundAsset.id],
+              },
+            });
+
+            const session = await insertSessionForUser(prisma, user.id);
+            const route = await loadRouteModule<{
+              GET: (request: Request) => Promise<Response>;
+            }>("src/app/api/images/route.ts", {
+              sessionToken: session.token,
+            });
+
+            const response = await route.GET(
+              new Request(`http://localhost/api/images?projectId=${project.id}`, {
+                method: "GET",
+              }),
+            );
+
+            expect(response.status).toBe(200);
+            const payload = (await response.json()) as {
+              binding: { imageReferenceAssetIds: string[] };
+              defaultReferenceAssets: Array<{ id: string; originalName: string | null }>;
+              referenceAssets: Array<{ id: string; originalName: string | null }>;
+            };
+
+            expect(payload.binding.imageReferenceAssetIds).toEqual([boundAsset.id]);
+            expect(payload.defaultReferenceAssets).toEqual([
+              expect.objectContaining({
+                id: boundAsset.id,
+                originalName: "bound-old.png",
+              }),
+            ]);
+            expect(payload.referenceAssets).toEqual(
+              expect.arrayContaining([
+                expect.objectContaining({
+                  id: boundAsset.id,
+                  originalName: "bound-old.png",
+                }),
+              ]),
+            );
+          },
+          {
+            STORAGE_ROOT: storageRoot,
+          },
+        );
+      } finally {
+        await rm(storageRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
   it("accepts ordered one-off reference asset overrides for image generation", async () => {
     await withTestDatabase(async ({ databaseUrl, prisma }) => {
       const storageRoot = await mkdtemp(path.join(os.tmpdir(), "lan-studio-images-api-post-"));

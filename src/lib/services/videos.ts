@@ -127,8 +127,9 @@ export async function getVideosWorkspaceData(projectId: string, userId: string) 
     getProject(projectId, userId),
     getProjectWorkflowBinding(projectId, userId),
   ]);
+  const boundReferenceAssetIds = dedupeOrderedAssetIds(binding.videoReferenceAssetIds);
 
-  const [referenceAssets, videoAssets, tasks] = await Promise.all([
+  const [candidateReferenceAssets, boundReferenceAssets, videoAssets, tasks] = await Promise.all([
     prisma.asset.findMany({
       where: {
         projectId: project.id,
@@ -151,6 +152,26 @@ export async function getVideosWorkspaceData(projectId: string, userId: string) 
         taskId: true,
       },
     }),
+    boundReferenceAssetIds.length > 0
+      ? prisma.asset.findMany({
+          where: {
+            projectId: project.id,
+            id: {
+              in: boundReferenceAssetIds,
+            },
+          },
+          select: {
+            id: true,
+            originalName: true,
+            kind: true,
+            mimeType: true,
+            sizeBytes: true,
+            storagePath: true,
+            createdAt: true,
+            taskId: true,
+          },
+        })
+      : Promise.resolve([]),
     prisma.asset.findMany({
       where: {
         projectId: project.id,
@@ -191,6 +212,19 @@ export async function getVideosWorkspaceData(projectId: string, userId: string) 
       },
     }),
   ]);
+  const boundReferenceAssetsById = new Map(boundReferenceAssets.map((asset) => [asset.id, asset]));
+  const candidateReferenceAssetIds = new Set(candidateReferenceAssets.map((asset) => asset.id));
+  const referenceAssets = [...candidateReferenceAssets];
+
+  for (const assetId of boundReferenceAssetIds) {
+    const asset = boundReferenceAssetsById.get(assetId);
+
+    if (!asset || candidateReferenceAssetIds.has(asset.id)) {
+      continue;
+    }
+
+    referenceAssets.push(asset);
+  }
 
   const referenceSummaries = await Promise.all(
     referenceAssets.map((asset) =>
@@ -209,9 +243,9 @@ export async function getVideosWorkspaceData(projectId: string, userId: string) 
       idea: project.idea,
     },
     binding: {
-      videoReferenceAssetIds: binding.videoReferenceAssetIds,
+      videoReferenceAssetIds: boundReferenceAssetIds,
     },
-    defaultReferenceAssets: binding.videoReferenceAssetIds
+    defaultReferenceAssets: boundReferenceAssetIds
       .map((assetId) => referenceAssetsById.get(assetId))
       .filter((asset): asset is AssetSummary => Boolean(asset)),
     referenceAssets: referenceSummaries,

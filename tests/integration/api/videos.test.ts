@@ -202,6 +202,91 @@ describe("videos workspace api", () => {
     });
   });
 
+  it("force-includes bound default video reference assets outside the candidate query window", async () => {
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      const storageRoot = await mkdtemp(path.join(os.tmpdir(), "lan-studio-videos-api-bound-window-"));
+
+      try {
+        await withApiTestEnv(
+          databaseUrl,
+          async () => {
+            const user = await createActiveUser(prisma, "videos-bound-window-owner");
+            const project = await prisma.project.create({
+              data: {
+                ownerId: user.id,
+                title: "Videos Bound Window",
+              },
+            });
+
+            const boundAsset = await createImageAsset(prisma, {
+              projectId: project.id,
+              storageRoot,
+              fileName: "bound-old.png",
+              createdAt: "2026-01-01T00:00:00.000Z",
+            });
+
+            for (let index = 0; index < 50; index += 1) {
+              await createImageAsset(prisma, {
+                projectId: project.id,
+                storageRoot,
+                fileName: `candidate-${index}.png`,
+                createdAt: `2026-04-${String((index % 28) + 1).padStart(2, "0")}T12:00:00.000Z`,
+              });
+            }
+
+            await prisma.projectWorkflowBinding.create({
+              data: {
+                projectId: project.id,
+                videoReferenceAssetIds: [boundAsset.id],
+              },
+            });
+
+            const session = await insertSessionForUser(prisma, user.id);
+            const route = await loadRouteModule<{
+              GET: (request: Request) => Promise<Response>;
+            }>("src/app/api/videos/route.ts", {
+              sessionToken: session.token,
+            });
+
+            const response = await route.GET(
+              new Request(`http://localhost/api/videos?projectId=${project.id}`, {
+                method: "GET",
+              }),
+            );
+
+            expect(response.status).toBe(200);
+            const payload = (await response.json()) as {
+              binding: { videoReferenceAssetIds: string[] };
+              defaultReferenceAssets: Array<{ id: string; originalName: string | null }>;
+              referenceAssets: Array<{ id: string; originalName: string | null }>;
+            };
+
+            expect(payload.binding.videoReferenceAssetIds).toEqual([boundAsset.id]);
+            expect(payload.defaultReferenceAssets).toEqual([
+              expect.objectContaining({
+                id: boundAsset.id,
+                originalName: "bound-old.png",
+              }),
+            ]);
+            expect(payload.referenceAssets).toEqual(
+              expect.arrayContaining([
+                expect.objectContaining({
+                  id: boundAsset.id,
+                  originalName: "bound-old.png",
+                }),
+              ]),
+            );
+          },
+          {
+            STORAGE_ROOT: storageRoot,
+          },
+        );
+      } finally {
+        await rm(storageRoot, { recursive: true, force: true });
+      }
+    });
+  });
+
   it("keeps preview streaming range support for generated video assets", async () => {
     await withTestDatabase(async ({ databaseUrl, prisma }) => {
       const storageRoot = await mkdtemp(path.join(os.tmpdir(), "lan-studio-videos-api-preview-"));
