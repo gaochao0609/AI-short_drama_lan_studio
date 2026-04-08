@@ -2,15 +2,76 @@
 
 English | [简体中文](./README.zh-CN.md)
 
-LAN Studio is a small-team LAN deployment for AI short-drama creation. The stack is `Next.js + Prisma + Postgres + Redis + BullMQ + local filesystem storage`, designed to run on one Windows host with Docker Desktop and be reachable by other machines on the same network.
+LAN Studio is a small-team LAN deployment for AI short-drama creation. It runs on a single Windows host with Docker Desktop and is designed to be reachable from other machines on the same local network.
+
+The stack is:
+
+- `Next.js`
+- `Prisma`
+- `Postgres`
+- `Redis`
+- `BullMQ`
+- local filesystem storage
+
+## What the product currently does
+
+LAN Studio currently covers four linked workflow stages inside one project workspace:
+
+1. `Script`: create and finalize scripts.
+2. `Storyboard`: generate storyboard segments from a selected script asset.
+3. `Images`: generate images from text or from selected reference images.
+4. `Videos`: generate videos from selected reference images.
+
+It also includes a unified project-level asset center:
+
+- uploaded script files
+- uploaded image reference files
+- system-generated final scripts
+- generated images
+- generated videos
+
+The asset center is the default source of truth for workflow inputs. Users can upload assets once, bind them as project defaults, and reuse them across storyboard, image, and video generation.
+
+## User and admin flow
+
+The app uses an approval-based account flow:
+
+1. A user submits a registration request from `/register-request`.
+2. An admin approves the request in `/admin/users`.
+3. The approved user receives a temporary password.
+4. On first login, the user is redirected to `/force-password`.
+5. After the password is changed, the user enters the workspace.
+
+Admin pages currently cover:
+
+- `Users & permissions`
+- `Model providers`
+- `Task monitoring`
+- `Storage management`
+
+## Workspace structure
+
+The main workspace now has three important layers:
+
+- `Workspace home`: overview, recent projects, recent tasks, and quick project creation.
+- `Project detail`: workflow summary, asset overview, task history, and entry points into each stage.
+- `Project asset center`: upload, preview, download, retry script parsing, delete eligible assets, and manage default bindings.
+
+Default bindings currently support:
+
+- one storyboard script asset
+- multiple default image reference assets
+- multiple default video reference assets
+
+Workflow pages still allow one-off overrides, but project defaults are managed in the asset center.
 
 ## Stack and service responsibilities
 
-- `web`: Next.js UI and API server. Handles auth, admin tools, project CRUD, task polling, and asset download.
-- `worker`: BullMQ consumer. Runs async generation processors and writes task/task-step status back to Postgres.
-- `postgres`: Primary database for users, sessions, account requests, projects, tasks, versions, and assets.
-- `redis`: BullMQ backing store and Redis persistence for queued jobs.
-- `storage/`: Host-mounted media and cache directory shared by `web` and `worker`.
+- `web`: Next.js UI and API server. Handles auth, admin tools, project CRUD, workflow APIs, asset APIs, and downloads.
+- `worker`: BullMQ consumer. Runs async processors for script finalization, uploaded script parsing, storyboard generation, image generation, and video generation.
+- `postgres`: primary database for users, sessions, account requests, projects, workflow versions, tasks, bindings, and assets.
+- `redis`: BullMQ backing store for queued jobs.
+- `storage/`: host-mounted media and cache directory shared by `web` and `worker`.
 
 ## Environment variables
 
@@ -27,47 +88,43 @@ DEFAULT_ADMIN_USERNAME=admin
 DEFAULT_ADMIN_PASSWORD=replace-with-a-strong-password
 ```
 
-- `DATABASE_URL`: Prisma/Postgres connection string. In Docker Compose, use the `postgres` hostname. For host-run app processes, switch the hostname to `localhost`.
+- `DATABASE_URL`: Prisma/Postgres connection string. In Docker Compose, use `postgres`. For host-run app processes, switch the hostname to `localhost`.
 - `REDIS_URL`: Redis connection string. In Docker Compose, use `redis`. For host-run app processes, use `redis://127.0.0.1:6379`.
-- `APP_URL`: Public origin used by the app. Set this to the final LAN or HTTPS URL, not just the bind address.
-- `SESSION_SECRET`: At least 32 characters. Rotate it deliberately because changing it invalidates existing sessions.
-- `STORAGE_ROOT`: Filesystem root for uploads, generated assets, exports, and caches.
-- `MAX_UPLOAD_MB`: Maximum accepted upload size for reference images.
-- `DEFAULT_ADMIN_USERNAME`: Seeded bootstrap admin account name.
-- `DEFAULT_ADMIN_PASSWORD`: Seeded bootstrap admin password. Replace immediately in non-test environments.
+- `APP_URL`: public origin used by redirects and cookies. Set this to the actual LAN or HTTPS URL users will open.
+- `SESSION_SECRET`: at least 32 characters. Rotating it invalidates existing sessions.
+- `STORAGE_ROOT`: filesystem root for uploads, generated assets, exports, and caches.
+- `MAX_UPLOAD_MB`: upload size limit for reference images and other asset-center uploads.
+- `DEFAULT_ADMIN_USERNAME`: bootstrap admin username used by seed data.
+- `DEFAULT_ADMIN_PASSWORD`: bootstrap admin password used by seed data.
 
 ## Windows and WSL2 guidance
 
-On Windows 10 with Docker Desktop, prefer running the repository and `storage/` from the WSL2 Linux filesystem, not from an NTFS path such as `D:\...`.
+On Windows with Docker Desktop, prefer keeping the repository and `storage/` inside the WSL2 Linux filesystem instead of an NTFS path such as `D:\...`.
 
 Why:
 
-- WSL2 ext4 storage has much better metadata and large-file performance for bind-mounted app folders.
-- File watching and asset I/O are more reliable from WSL2 than from NTFS bind mounts.
-- NTFS bind mounts can introduce slower image/video workflows and occasional permission edge cases.
+- bind-mounted file access is faster and more reliable from WSL2 ext4
+- file watching behaves better
+- large media I/O is less fragile
 
 Recommended:
 
 1. Open a WSL2 shell.
 2. Clone the repo into the Linux filesystem, for example `~/src/lan-studio-v1`.
-3. Run Docker Desktop with WSL integration enabled.
+3. Enable WSL integration in Docker Desktop.
 4. Keep `storage/` inside the same WSL2 repo path.
-
-If you keep the repo on NTFS anyway, expect slower large-file throughput and more filesystem friction.
 
 ## Local startup
 
-### Recommended on Windows: one-click PowerShell scripts
+### Recommended on Windows: PowerShell scripts
 
-These scripts are intended for Windows PowerShell / `pwsh` only.
+These scripts are intended for Windows PowerShell or `pwsh`.
 
 Before the first run:
 
 1. Create `.env` manually from `.env.example`.
 2. Keep the Compose-style hostnames from `.env.example`, especially `postgres` in `DATABASE_URL` and `redis` in `REDIS_URL`.
 3. Re-run the script after saving `.env`.
-
-Do not use these scripts with the host-run `.env` values from Option A such as `localhost` or `127.0.0.1`. The scripts are for the Docker Compose deployment path only.
 
 First deployment:
 
@@ -89,14 +146,12 @@ pwsh -File scripts/start.ps1 -Rebuild
 
 What the scripts do:
 
-- `scripts/install.ps1`: checks Docker, requires a manually completed Compose-style `.env`, waits for `postgres` and `redis` to become healthy, runs `db:migrate`, runs `db:seed`, then starts `web` and `worker`.
-- `scripts/start.ps1`: checks Docker, requires a Compose-style `.env`, then runs `docker compose up -d` by default or `docker compose up -d --build` when `-Rebuild` is passed.
-
-If you prefer to run each command yourself, keep using the manual options below.
+- `scripts/install.ps1`: checks Docker, waits for `postgres` and `redis`, runs migrations, runs seed data, then starts `web` and `worker`.
+- `scripts/start.ps1`: checks Docker, then runs `docker compose up -d` or `docker compose up -d --build`.
 
 ### Option A: host-run app, Docker-run Postgres and Redis
 
-Use this during development when you want `pnpm dev` hot reload.
+Use this when you want `pnpm dev` hot reload.
 
 ```bash
 cp .env.example .env
@@ -124,51 +179,33 @@ In a second shell:
 pnpm worker
 ```
 
-Order matters:
-
-1. Start `postgres` and `redis`.
-2. Run migrations.
-3. Run seed data.
-4. Start `web`.
-5. Start `worker`.
-
-### Option B: Docker Compose startup
+### Option B: full Docker Compose startup
 
 Use this when you want `web + worker + postgres + redis` running together.
 
 ```bash
 cp .env.example .env
-```
-
-For Compose, keep service hostnames in `.env`:
-
-- `DATABASE_URL=postgresql://postgres:postgres@postgres:5432/ai_short_drama`
-- `REDIS_URL=redis://redis:6379`
-
-Bring up the data services first:
-
-```bash
 docker compose up -d postgres redis
-```
-
-Run migration and seed in order:
-
-```bash
 docker compose run --rm web pnpm db:migrate
 docker compose run --rm web pnpm db:seed
-```
-
-Then start the app services:
-
-```bash
 docker compose up -d web worker
 ```
 
-Or rebuild and start everything after schema/data are ready:
+If you need a rebuild:
 
 ```bash
 docker compose up -d --build
 ```
+
+## Upgrade note for existing projects
+
+If you are upgrading an existing instance to the asset-center version, run migrations first and then run the backfill script:
+
+```bash
+pnpm tsx scripts/backfill-asset-center.ts
+```
+
+Run it twice if you want to confirm idempotence. The second run should report no newly created assets or bindings.
 
 ## Docker layout
 
@@ -176,7 +213,7 @@ docker compose up -d --build
 
 - services: `web`, `worker`, `postgres`, `redis`
 - named volumes: `pg-data`, `redis-data`
-- host-mounted media storage: `./storage:/app/storage`
+- host-mounted storage: `./storage:/app/storage`
 
 `Dockerfile`:
 
@@ -184,9 +221,9 @@ docker compose up -d --build
 - builds the app with `pnpm build`
 - starts the production server with `pnpm start`
 
-## Worker startup
+## Worker behavior
 
-The worker is a separate process. It is required for async tasks such as storyboard, image, video, and script-finalize queue jobs.
+The worker is required for all async workflows. If `web` is up but `worker` is not, users can submit jobs but queued work will not progress.
 
 Host run:
 
@@ -200,24 +237,30 @@ Compose run:
 docker compose up -d worker
 ```
 
-If the web app is up but the worker is not, users can enqueue tasks but queued jobs will not progress.
+Current async worker responsibilities include:
+
+- script finalization
+- uploaded script parsing
+- storyboard generation
+- image generation
+- video generation
 
 ## LAN access setup
 
 To expose the app to other machines on the same network:
 
-1. Find the host machine LAN IP, for example `192.168.1.50`.
-2. Set `APP_URL` to the URL users should actually open, for example:
+1. Find the host LAN IP, for example `192.168.1.50`.
+2. Set `APP_URL` to the real URL users should open:
 
 ```env
 APP_URL=http://192.168.1.50:3000
 ```
 
 3. Start the app on the host.
-4. Allow inbound TCP `3000` in Windows Firewall if required.
-5. Make sure the other clients can reach `http://192.168.1.50:3000`.
+4. Allow inbound TCP `3000` in Windows Firewall if needed.
+5. Open the app from another device with that URL.
 
-If you place a reverse proxy in front, users should open the proxy URL instead, and `APP_URL` must match that proxy URL.
+If you use a reverse proxy, `APP_URL` must match the proxy URL instead of the local bind address.
 
 ## HTTPS and reverse proxy guidance
 
@@ -229,9 +272,7 @@ Example:
 APP_URL=https://studio.lan
 ```
 
-### Caddy with self-signed/internal CA certificates
-
-`Caddyfile` example:
+### Caddy
 
 ```caddy
 studio.lan {
@@ -240,13 +281,7 @@ studio.lan {
 }
 ```
 
-Notes:
-
-- `tls internal` issues a local self-signed/internal certificate from Caddy's internal CA.
-- Import Caddy's root CA certificate into each LAN client that should trust the site.
-- Keep `APP_URL=https://studio.lan` so cookies and redirects use the correct origin.
-
-### Nginx with a self-signed certificate
+### Nginx
 
 Generate a certificate:
 
@@ -259,7 +294,7 @@ openssl req -x509 -nodes -newkey rsa:2048 \
   -subj "/CN=studio.lan"
 ```
 
-Minimal `nginx.conf` server block:
+Minimal server block:
 
 ```nginx
 server {
@@ -278,25 +313,21 @@ server {
 }
 ```
 
-Clients must trust the certificate or the issuing CA. If they do not, browsers will warn and secure cookies/redirect behavior may be unreliable.
-
 ## Backup and restore
 
 Back up three things:
 
 - Postgres data in `pg-data`
 - Redis persistence in `redis-data`
-- generated/uploaded files in `storage/`
+- uploaded and generated files in `storage/`
 
-Create a backup directory first:
+Create a backup directory:
 
 ```bash
 mkdir -p backups
 ```
 
-### Postgres backup and restore
-
-Preferred backup is a logical dump:
+### Postgres backup
 
 ```bash
 docker compose exec -T postgres pg_dump -U postgres ai_short_drama > backups/postgres.sql
@@ -308,23 +339,11 @@ Restore:
 cat backups/postgres.sql | docker compose exec -T postgres psql -U postgres -d ai_short_drama
 ```
 
-### Redis backup and restore
-
-Force Redis to flush a snapshot before copying raw files:
+### Redis backup
 
 ```bash
 docker compose exec redis redis-cli SAVE
-```
-
-Find the actual Docker volume name:
-
-```bash
 docker volume ls | grep redis-data
-```
-
-Back up the volume contents:
-
-```bash
 docker run --rm \
   -v <actual_redis_volume_name>:/data \
   -v "$(pwd)/backups":/backup \
@@ -342,9 +361,7 @@ docker run --rm \
 docker compose start redis
 ```
 
-### Raw `pg-data` volume backup and restore
-
-If you need a volume-level backup instead of a logical SQL dump, stop the database first and archive the data volume:
+### Raw `pg-data` volume backup
 
 ```bash
 docker compose stop postgres
@@ -367,9 +384,7 @@ docker run --rm \
 docker compose start postgres
 ```
 
-### `storage/` backup and restore
-
-Back up:
+### `storage/` backup
 
 ```bash
 tar czf backups/storage.tar.gz storage
@@ -383,7 +398,7 @@ mkdir -p storage
 tar xzf backups/storage.tar.gz -C .
 ```
 
-Before restoring any backup set, stop `web` and `worker` so they do not write while files or volumes are being replaced.
+Stop `web` and `worker` before restoring any backup set.
 
 ## Verification commands
 
@@ -399,11 +414,10 @@ docker compose ps
 docker compose restart web worker
 ```
 
-For Task 15 specifically, the focused verification includes:
+Asset-center rollout checks:
 
 ```bash
-pnpm vitest run tests/unit/admin/tasks-page.test.tsx
-pnpm vitest run tests/unit/workers/minimal-task.test.ts
-pnpm vitest run tests/integration/workers/queue-concurrency.test.ts
-pnpm playwright test tests/e2e/full-smoke.spec.ts
+pnpm tsx scripts/backfill-asset-center.ts
+pnpm tsx scripts/backfill-asset-center.ts
+pnpm playwright test tests/e2e/workflow.spec.ts tests/e2e/full-smoke.spec.ts
 ```
