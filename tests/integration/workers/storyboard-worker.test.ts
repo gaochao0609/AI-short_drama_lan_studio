@@ -1,4 +1,7 @@
 import {
+  AssetCategory,
+  AssetOrigin,
+  Prisma,
   TaskStatus,
   TaskType,
   UserRole,
@@ -67,8 +70,201 @@ async function createActiveUser(prisma: PrismaClient, username: string) {
   });
 }
 
+async function createScriptAsset(input: {
+  prisma: PrismaClient;
+  projectId: string;
+  originalName: string;
+  category: AssetCategory;
+  metadata: Prisma.InputJsonObject;
+}) {
+  return input.prisma.asset.create({
+    data: {
+      projectId: input.projectId,
+      kind:
+        input.category === AssetCategory.SCRIPT_SOURCE
+          ? "script_source"
+          : "script",
+      category: input.category,
+      origin:
+        input.category === AssetCategory.SCRIPT_SOURCE
+          ? AssetOrigin.UPLOAD
+          : AssetOrigin.SYSTEM,
+      storagePath: `assets/${input.projectId}/${input.originalName}`,
+      originalName: input.originalName,
+      mimeType: "text/plain",
+      sizeBytes: 256,
+      metadata: input.metadata,
+    },
+  });
+}
+
 describe("storyboard worker", () => {
-  it("writes storyboard versions and task summaries for a queued storyboard job", async () => {
+  it("persists storyboard versions for uploaded script assets by backfilling a script version", async () => {
+    const storyboardSegments = [
+      {
+        index: 1,
+        durationSeconds: 15,
+        scene: "Rooftop before sunrise",
+        shot: "Wide establishing shot",
+        action: "A courier pauses at the roof edge and checks the final address.",
+        dialogue: "Courier: One last stop before dawn.",
+        videoPrompt:
+          "Sunrise rooftop wide shot, solitary courier, wind moving the coat hem, cinematic suspense",
+      },
+    ];
+
+    callProxyModelMock.mockResolvedValueOnce({
+      status: "ok",
+      textOutput: JSON.stringify(storyboardSegments),
+      rawResponse: {
+        usage: {
+          input: 88,
+          output: 133,
+        },
+      },
+    });
+    getDefaultModelSummaryMock.mockResolvedValue({
+      providerKey: "storyboard",
+      model: "gpt-4.1-mini",
+    });
+
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      await withQueueTestEnv(databaseUrl, async () => {
+        const [{ enqueueTask }, { queues }] = await Promise.all([
+          import("@/lib/queues/enqueue"),
+          import("@/lib/queues"),
+        ]);
+        const { startWorkerRuntime } = await import("@/worker/index");
+        const { bullmqConnection } = await import("@/lib/redis");
+
+        const user = await createActiveUser(prisma, "storyboard-worker-uploaded-asset");
+        const project = await prisma.project.create({
+          data: {
+            ownerId: user.id,
+            title: "Storyboard Uploaded Script Asset",
+            idea: "A courier outruns sunrise to complete a handoff.",
+          },
+        });
+        const uploadedBody = [
+          "EXT. ROOFTOP - PRE-DAWN",
+          "The courier scans the skyline for the last signal.",
+          "She grips the parcel and takes a breath.",
+        ].join("\n");
+        const scriptAsset = await createScriptAsset({
+          prisma,
+          projectId: project.id,
+          originalName: "uploaded-script.txt",
+          category: AssetCategory.SCRIPT_SOURCE,
+          metadata: {
+            parseStatus: "ready",
+            extractedText: uploadedBody,
+          },
+        });
+        const storyboardTask = await prisma.task.create({
+          data: {
+            projectId: project.id,
+            createdById: user.id,
+            type: TaskType.STORYBOARD,
+            inputJson: {
+              projectId: project.id,
+              scriptAssetId: scriptAsset.id,
+              userId: user.id,
+            },
+          },
+        });
+
+        const enqueueResult = await enqueueTask(
+          storyboardTask.id,
+          TaskType.STORYBOARD,
+          {
+            projectId: project.id,
+            scriptAssetId: scriptAsset.id,
+            userId: user.id,
+          },
+        );
+
+        const job = await queues.storyboard.getJob(enqueueResult.jobId);
+        expect(job).not.toBeNull();
+
+        const queueEvents = new QueueEvents(enqueueResult.queueName, {
+          connection: bullmqConnection,
+        });
+        await queueEvents.waitUntilReady();
+        const completionPromise = job!.waitUntilFinished(queueEvents);
+        const runtime = await startWorkerRuntime();
+
+        try {
+          const result = await completionPromise;
+
+          expect(result).toEqual(
+            expect.objectContaining({
+              ok: true,
+              traceId: expect.any(String),
+              storyboardVersionId: expect.any(String),
+              segments: storyboardSegments,
+            }),
+          );
+          expect(callProxyModelMock).toHaveBeenCalledWith(
+            expect.objectContaining({
+              inputText: expect.stringContaining(uploadedBody),
+              options: expect.objectContaining({
+                projectId: project.id,
+                scriptAssetId: scriptAsset.id,
+                userId: user.id,
+              }),
+            }),
+          );
+
+          const storyboardVersion = await prisma.storyboardVersion.findFirstOrThrow({
+            where: {
+              taskId: storyboardTask.id,
+            },
+          });
+          const linkedScriptVersion = await prisma.scriptVersion.findUniqueOrThrow({
+            where: {
+              id: storyboardVersion.scriptVersionId,
+            },
+          });
+          const refreshedAsset = await prisma.asset.findUniqueOrThrow({
+            where: {
+              id: scriptAsset.id,
+            },
+          });
+
+          expect(storyboardVersion).toEqual(
+            expect.objectContaining({
+              id: result.storyboardVersionId,
+              projectId: project.id,
+              taskId: storyboardTask.id,
+              framesJson: storyboardSegments,
+            }),
+          );
+          expect(linkedScriptVersion).toEqual(
+            expect.objectContaining({
+              projectId: project.id,
+              creatorId: user.id,
+              body: uploadedBody,
+              scriptJson: expect.objectContaining({
+                body: uploadedBody,
+              }),
+            }),
+          );
+          expect(refreshedAsset.metadata).toEqual(
+            expect.objectContaining({
+              parseStatus: "ready",
+              extractedText: uploadedBody,
+              scriptVersionId: linkedScriptVersion.id,
+            }),
+          );
+        } finally {
+          await runtime.close();
+          await queueEvents.close();
+        }
+      });
+    });
+  });
+
+  it("reads generated script assets from asset metadata and writes storyboard versions", async () => {
     const storyboardSegments = [
       {
         index: 1,
@@ -123,21 +319,31 @@ describe("storyboard worker", () => {
             title: "Storyboard Project",
           },
         });
-        const scriptBody = [
-          "INT. WAREHOUSE - NIGHT",
-          "Mina enters the loading bay.",
-          "She notices the lights flicker.",
-          "The empty pedestal reveals the relic is gone.",
-        ].join("\n");
         const scriptVersion = await prisma.scriptVersion.create({
           data: {
             projectId: project.id,
             creatorId: user.id,
             versionNumber: 1,
-            body: scriptBody,
+            body: "LEGACY SCRIPT VERSION BODY",
             scriptJson: {
-              body: scriptBody,
+              body: "LEGACY SCRIPT VERSION BODY",
             },
+          },
+        });
+        const assetBody = [
+          "INT. WAREHOUSE - NIGHT",
+          "Mina enters the loading bay.",
+          "The lights flicker over the empty pedestal.",
+        ].join("\n");
+        const scriptAsset = await createScriptAsset({
+          prisma,
+          projectId: project.id,
+          originalName: "generated-script.txt",
+          category: AssetCategory.SCRIPT_GENERATED,
+          metadata: {
+            parseStatus: "ready",
+            scriptVersionId: scriptVersion.id,
+            extractedText: assetBody,
           },
         });
         const storyboardTask = await prisma.task.create({
@@ -147,6 +353,7 @@ describe("storyboard worker", () => {
             type: TaskType.STORYBOARD,
             inputJson: {
               projectId: project.id,
+              scriptAssetId: scriptAsset.id,
               scriptVersionId: scriptVersion.id,
               userId: user.id,
             },
@@ -158,6 +365,7 @@ describe("storyboard worker", () => {
           TaskType.STORYBOARD,
           {
             projectId: project.id,
+            scriptAssetId: scriptAsset.id,
             scriptVersionId: scriptVersion.id,
             userId: user.id,
           },
@@ -189,14 +397,19 @@ describe("storyboard worker", () => {
               taskType: "storyboard_split",
               providerKey: "storyboard",
               model: "gpt-4.1-mini",
-              inputText: expect.stringContaining(scriptBody),
+              inputText: expect.stringContaining(assetBody),
               options: expect.objectContaining({
                 projectId: project.id,
+                scriptAssetId: scriptAsset.id,
                 scriptVersionId: scriptVersion.id,
                 userId: user.id,
               }),
             }),
           );
+          const firstCall = callProxyModelMock.mock.calls[0]?.[0] as {
+            inputText?: string;
+          };
+          expect(firstCall.inputText).not.toContain("LEGACY SCRIPT VERSION BODY");
 
           const storyboardVersion = await prisma.storyboardVersion.findFirstOrThrow({
             where: {
@@ -260,7 +473,7 @@ describe("storyboard worker", () => {
     });
   });
 
-  it("retries a storyboard job after a transient model failure", async () => {
+  it("retries a storyboard job after a transient model failure with asset-backed input", async () => {
     const storyboardSegments = [
       {
         index: 1,
@@ -307,19 +520,30 @@ describe("storyboard worker", () => {
             title: "Storyboard Retry Project",
           },
         });
-        const scriptBody = [
-          "INT. APARTMENT - MORNING",
-          "The courier opens the envelope and freezes.",
-        ].join("\n");
         const scriptVersion = await prisma.scriptVersion.create({
           data: {
             projectId: project.id,
             creatorId: user.id,
             versionNumber: 1,
-            body: scriptBody,
+            body: "LEGACY SCRIPT VERSION BODY",
             scriptJson: {
-              body: scriptBody,
+              body: "LEGACY SCRIPT VERSION BODY",
             },
+          },
+        });
+        const assetBody = [
+          "INT. APARTMENT - MORNING",
+          "The courier opens the envelope and freezes.",
+        ].join("\n");
+        const scriptAsset = await createScriptAsset({
+          prisma,
+          projectId: project.id,
+          originalName: "generated-script.txt",
+          category: AssetCategory.SCRIPT_GENERATED,
+          metadata: {
+            parseStatus: "ready",
+            scriptVersionId: scriptVersion.id,
+            extractedText: assetBody,
           },
         });
         const storyboardTask = await prisma.task.create({
@@ -329,6 +553,7 @@ describe("storyboard worker", () => {
             type: TaskType.STORYBOARD,
             inputJson: {
               projectId: project.id,
+              scriptAssetId: scriptAsset.id,
               scriptVersionId: scriptVersion.id,
               userId: user.id,
             },
@@ -340,6 +565,7 @@ describe("storyboard worker", () => {
           TaskType.STORYBOARD,
           {
             projectId: project.id,
+            scriptAssetId: scriptAsset.id,
             scriptVersionId: scriptVersion.id,
             userId: user.id,
           },
@@ -365,6 +591,15 @@ describe("storyboard worker", () => {
           );
 
           expect(callProxyModelMock).toHaveBeenCalledTimes(2);
+          expect(callProxyModelMock).toHaveBeenLastCalledWith(
+            expect.objectContaining({
+              inputText: expect.stringContaining(assetBody),
+              options: expect.objectContaining({
+                scriptAssetId: scriptAsset.id,
+                scriptVersionId: scriptVersion.id,
+              }),
+            }),
+          );
           await expect(
             prisma.task.findUniqueOrThrow({
               where: {

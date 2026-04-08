@@ -2,6 +2,7 @@ import { readFile, stat } from "node:fs/promises";
 import { Prisma, TaskType } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { enqueueTask } from "@/lib/queues/enqueue";
+import { getProjectWorkflowBinding } from "@/lib/services/asset-bindings";
 import { ServiceError } from "@/lib/services/errors";
 import { getProject } from "@/lib/services/projects";
 import { getStorageRoot, resolveStoredPath } from "@/lib/storage/paths";
@@ -10,11 +11,31 @@ function normalizePrompt(prompt: string) {
   return prompt.trim();
 }
 
+function dedupeOrderedAssetIds(assetIds: string[]) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const assetId of assetIds) {
+    const normalized = assetId.trim();
+
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+
+    seen.add(normalized);
+    result.push(normalized);
+  }
+
+  return result;
+}
+
+const MAX_REFERENCE_ASSET_IDS = 8;
 const INLINE_IMAGE_PREVIEW_MAX_BYTES = 64 * 1024;
 const PREVIEWABLE_IMAGE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 type AssetSummary = {
   id: string;
+  originalName: string | null;
   kind: string;
   mimeType: string;
   sizeBytes: number;
@@ -27,6 +48,7 @@ type AssetSummary = {
 async function toAssetSummary(
   asset: {
     id: string;
+    originalName: string | null;
     kind: string;
     mimeType: string;
     sizeBytes: number;
@@ -43,6 +65,7 @@ async function toAssetSummary(
 ): Promise<AssetSummary> {
   const base = {
     id: asset.id,
+    originalName: asset.originalName,
     kind: asset.kind,
     mimeType: asset.mimeType,
     sizeBytes: asset.sizeBytes,
@@ -101,9 +124,13 @@ async function toAssetSummary(
 }
 
 export async function getVideosWorkspaceData(projectId: string, userId: string) {
-  const project = await getProject(projectId, userId);
+  const [project, binding] = await Promise.all([
+    getProject(projectId, userId),
+    getProjectWorkflowBinding(projectId, userId),
+  ]);
+  const boundReferenceAssetIds = dedupeOrderedAssetIds(binding.videoReferenceAssetIds);
 
-  const [referenceAssets, videoAssets, tasks] = await Promise.all([
+  const [candidateReferenceAssets, boundReferenceAssets, videoAssets, tasks] = await Promise.all([
     prisma.asset.findMany({
       where: {
         projectId: project.id,
@@ -117,6 +144,7 @@ export async function getVideosWorkspaceData(projectId: string, userId: string) 
       take: 50,
       select: {
         id: true,
+        originalName: true,
         kind: true,
         mimeType: true,
         sizeBytes: true,
@@ -125,6 +153,26 @@ export async function getVideosWorkspaceData(projectId: string, userId: string) 
         taskId: true,
       },
     }),
+    boundReferenceAssetIds.length > 0
+      ? prisma.asset.findMany({
+          where: {
+            projectId: project.id,
+            id: {
+              in: boundReferenceAssetIds,
+            },
+          },
+          select: {
+            id: true,
+            originalName: true,
+            kind: true,
+            mimeType: true,
+            sizeBytes: true,
+            storagePath: true,
+            createdAt: true,
+            taskId: true,
+          },
+        })
+      : Promise.resolve([]),
     prisma.asset.findMany({
       where: {
         projectId: project.id,
@@ -138,6 +186,7 @@ export async function getVideosWorkspaceData(projectId: string, userId: string) 
       take: 20,
       select: {
         id: true,
+        originalName: true,
         kind: true,
         mimeType: true,
         sizeBytes: true,
@@ -164,6 +213,29 @@ export async function getVideosWorkspaceData(projectId: string, userId: string) 
       },
     }),
   ]);
+  const boundReferenceAssetsById = new Map(boundReferenceAssets.map((asset) => [asset.id, asset]));
+  const candidateReferenceAssetIds = new Set(candidateReferenceAssets.map((asset) => asset.id));
+  const referenceAssets = [...candidateReferenceAssets];
+
+  for (const assetId of boundReferenceAssetIds) {
+    const asset = boundReferenceAssetsById.get(assetId);
+
+    if (!asset || candidateReferenceAssetIds.has(asset.id)) {
+      continue;
+    }
+
+    referenceAssets.push(asset);
+  }
+
+  const referenceSummaries = await Promise.all(
+    referenceAssets.map((asset) =>
+      toAssetSummary(asset, {
+        allowedMimeTypes: PREVIEWABLE_IMAGE_MIME_TYPES,
+        inlinePreviewCapBytes: INLINE_IMAGE_PREVIEW_MAX_BYTES,
+      }),
+    ),
+  );
+  const referenceAssetsById = new Map(referenceSummaries.map((asset) => [asset.id, asset]));
 
   return {
     project: {
@@ -171,14 +243,13 @@ export async function getVideosWorkspaceData(projectId: string, userId: string) 
       title: project.title,
       idea: project.idea,
     },
-    referenceAssets: await Promise.all(
-      referenceAssets.map((asset) =>
-        toAssetSummary(asset, {
-          allowedMimeTypes: PREVIEWABLE_IMAGE_MIME_TYPES,
-          inlinePreviewCapBytes: INLINE_IMAGE_PREVIEW_MAX_BYTES,
-        }),
-      ),
-    ),
+    binding: {
+      videoReferenceAssetIds: boundReferenceAssetIds,
+    },
+    defaultReferenceAssets: boundReferenceAssetIds
+      .map((assetId) => referenceAssetsById.get(assetId))
+      .filter((asset): asset is AssetSummary => Boolean(asset)),
+    referenceAssets: referenceSummaries,
     videoAssets: await Promise.all(
       videoAssets.map((asset) =>
         toAssetSummary(asset, {
@@ -259,11 +330,14 @@ export async function enqueueVideoGeneration(input: {
     throw new ServiceError(400, "prompt is required");
   }
 
-  const referenceAssetIds = [...new Set((input.referenceAssetIds ?? []).map((value) => value.trim()))]
-    .filter(Boolean);
+  const referenceAssetIds = dedupeOrderedAssetIds(input.referenceAssetIds ?? []);
 
   if (referenceAssetIds.length === 0) {
     throw new ServiceError(400, "referenceAssetIds is required");
+  }
+
+  if (referenceAssetIds.length > MAX_REFERENCE_ASSET_IDS) {
+    throw new ServiceError(400, `No more than ${MAX_REFERENCE_ASSET_IDS} reference assets are allowed`);
   }
 
   await getProject(input.projectId, input.userId);

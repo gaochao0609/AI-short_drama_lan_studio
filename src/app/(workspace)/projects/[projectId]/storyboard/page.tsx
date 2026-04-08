@@ -31,11 +31,14 @@ type TaskPollResponse = {
   errorText?: string | null;
 };
 
-type ScriptVersionSummary = {
+type StoryboardScriptAsset = {
   id: string;
-  versionNumber: number;
-  body?: string | null;
+  originalName: string;
+  category: "script_source" | "script_generated";
+  origin: "upload" | "system";
   createdAt: string;
+  extractedText: string;
+  scriptVersionId: string | null;
 };
 
 type StoryboardWorkspaceResponse = {
@@ -44,44 +47,62 @@ type StoryboardWorkspaceResponse = {
     title: string;
     idea?: string | null;
   };
-  scriptVersions: ScriptVersionSummary[];
+  binding: {
+    storyboardScriptAssetId: string | null;
+  };
+  defaultScriptAsset: StoryboardScriptAsset | null;
+  scriptAssets: StoryboardScriptAsset[];
 };
 
 type StoryboardPageData = {
   id: string;
   title: string;
   idea?: string | null;
-  scriptVersions: ScriptVersionSummary[];
+  binding: {
+    storyboardScriptAssetId: string | null;
+  };
+  defaultScriptAsset: StoryboardScriptAsset | null;
+  scriptAssets: StoryboardScriptAsset[];
 };
 
 const copy = {
   workflowTitle: "项目制作流程",
   stageTitle: "分镜",
   stageDescription:
-    "选择一个已定稿脚本，把内容拆成 15 秒镜头段落，并保留可直接复制的视频提示词。",
+    "从资产中心读取当前剧本资产，将正文拆分成 15 秒镜头段落，并保留后续可直接复用的视频提示词。",
   projectLabel: "当前项目",
   backToProject: "返回项目制作台",
   activeStage: "当前阶段",
-  noIdea: "项目还没有补充创意说明，先确认脚本版本内容再继续分镜。",
+  noIdea: "项目还没有补充创意说明，确认剧本资产后即可继续分镜。",
   scriptStage: "脚本",
   storyboardStage: "分镜",
   imagesStage: "图片",
   videosStage: "视频",
-  stageDone: "已完成",
+  stageDone: "已准备",
   stageActive: "进行中",
   stageNext: "下一步",
   stageWaiting: "待开始",
-  scriptVersionsHeading: "脚本版本",
-  scriptVersionsDescription:
-    "这里只显示当前项目的脚本版本，选中后即可发起分镜拆解任务。",
-  selectScriptVersion: "选择脚本版本",
-  scriptVersionsEmpty: "当前项目还没有脚本版本，先完成脚本定稿。",
-  noScriptBody: "当前版本没有保存剧本正文。",
+  defaultBindingHeading: "当前默认剧本资产",
+  defaultBindingDescription:
+    "分镜页优先读取项目级默认剧本资产；如需临时改选，可在本页覆盖，不会自动改写默认绑定。",
+  defaultBindingEmpty: "当前未设置默认剧本资产",
+  openAssetCenter: "去资产中心设置",
+  inputHeading: "本次分镜输入",
+  inputDescription:
+    "可从当前项目中已就绪的剧本资产里切换本次输入。上传剧本与系统定稿都能直接用于分镜。",
+  selectScriptAsset: "选择本次分镜剧本",
+  scriptAssetsEmpty:
+    "当前项目还没有可用于分镜的剧本资产，请先在资产中心上传剧本或完成脚本定稿。",
+  temporaryOverride: "仅本次使用",
+  defaultBindingBadge: "当前默认输入",
+  promoteDefault: "设为该流程默认输入",
+  promoteSuccess: "已更新分镜默认剧本资产。",
+  promoteFailed: "更新分镜默认剧本资产失败",
   generateStoryboard: "生成分镜",
   statusHeading: "任务状态",
   statusDescription:
-    "发起分镜任务后，这里会显示当前轮询到的任务状态与结果摘要。",
-  noTask: "当前没有正在运行的分镜任务。",
+    "发起分镜任务后，这里会持续显示当前状态与结果摘要，便于确认是否已可进入下一阶段。",
+  noTask: "当前没有正在执行的分镜任务。",
   generatedSegments: "生成段数",
   segmentsHeading: "分镜结果",
   segmentsDescription:
@@ -95,7 +116,7 @@ const copy = {
   queued: "分镜任务已加入队列。",
   generated: "分镜已生成。",
   failed: "分镜生成失败",
-  selectVersionValidation: "请选择一个脚本版本后再生成分镜。",
+  selectAssetValidation: "请先选择一个可用的剧本资产。",
   requestFailed: "分镜任务提交失败",
   copyFailed: "复制视频提示词失败",
   copied: "已复制",
@@ -106,15 +127,14 @@ const copy = {
   dialogueLabel: "对白",
   promptLabel: "视频提示词",
   noDialogue: "无对白",
-  scriptDetail: "脚本完成后，可在这里拆分镜头节奏。",
-  storyboardDetail: "根据定稿脚本生成 15 秒分镜。",
-  imagesDetail: "把分镜转成关键画面与参考图。",
-  videosDetail: "用关键画面推进视频镜头生成。",
+  scriptDetail: "资产中心中的就绪剧本会直接出现在这里。",
+  storyboardDetail: "按剧本资产拆分 15 秒分镜。",
+  imagesDetail: "把分镜继续转成关键画面与参考图。",
+  videosDetail: "基于关键画面推进视频镜头生成。",
   enterScript: "前往脚本",
   enterStoryboard: "继续分镜",
   enterImages: "前往图片",
   enterVideos: "前往视频",
-  versionPrefix: "版本",
   segmentPrefix: "第",
   segmentSuffix: "段",
   secondsSuffix: "秒",
@@ -138,13 +158,22 @@ function formatTaskStatus(status?: string) {
   }
 }
 
+function formatAssetOptionLabel(asset: StoryboardScriptAsset) {
+  const originLabel = asset.origin === "system" ? "系统定稿" : "上传剧本";
+  return `${asset.originalName} · ${originLabel} · ${new Date(asset.createdAt).toLocaleString("zh-CN")}`;
+}
+
+function formatAssetOrigin(asset: StoryboardScriptAsset) {
+  return asset.origin === "system" ? "系统剧本" : "上传剧本";
+}
+
 export default function ProjectStoryboardPage() {
   const params = useParams<{ projectId: string }>();
   const [projectId, setProjectId] = useState("");
   const [project, setProject] = useState<StoryboardPageData | null>(null);
-  const [selectedScriptVersionId, setSelectedScriptVersionId] = useState<
-    string | null
-  >(null);
+  const [selectedScriptAssetId, setSelectedScriptAssetId] = useState<string | null>(
+    null,
+  );
   const [storyboardResult, setStoryboardResult] =
     useState<StoryboardTaskOutput | null>(null);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
@@ -152,6 +181,7 @@ export default function ProjectStoryboardPage() {
   const [error, setError] = useState<string | null>(null);
   const [isLoadingProject, setIsLoadingProject] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isPromotingDefault, setIsPromotingDefault] = useState(false);
   const [copiedSegmentIndex, setCopiedSegmentIndex] = useState<number | null>(
     null,
   );
@@ -188,21 +218,31 @@ export default function ProjectStoryboardPage() {
           );
         }
 
-        if (!cancelled && payload && "project" in payload) {
+        if (
+          !cancelled &&
+          payload &&
+          "project" in payload &&
+          "scriptAssets" in payload &&
+          "binding" in payload
+        ) {
           setProject({
             id: payload.project.id,
             title: payload.project.title,
             idea: payload.project.idea ?? null,
-            scriptVersions: payload.scriptVersions,
+            binding: payload.binding,
+            defaultScriptAsset: payload.defaultScriptAsset,
+            scriptAssets: payload.scriptAssets,
           });
-          setSelectedScriptVersionId((current) => {
-            const currentVersionStillExists =
+          setSelectedScriptAssetId((current) => {
+            const currentAssetStillExists =
               current &&
-              payload.scriptVersions.some((version) => version.id === current);
+              payload.scriptAssets.some((asset) => asset.id === current);
 
-            return currentVersionStillExists
+            return currentAssetStillExists
               ? current
-              : payload.scriptVersions[0]?.id ?? null;
+              : payload.binding.storyboardScriptAssetId ??
+                  payload.scriptAssets[0]?.id ??
+                  null;
           });
         }
       } catch (loadError) {
@@ -266,25 +306,36 @@ export default function ProjectStoryboardPage() {
     }
   }, [activeTaskId, task]);
 
-  const selectedScriptVersion = useMemo(() => {
-    if (!project || !selectedScriptVersionId) {
+  const selectedScriptAsset = useMemo(() => {
+    if (!project || !selectedScriptAssetId) {
       return null;
     }
 
     return (
-      project.scriptVersions.find(
-        (version) => version.id === selectedScriptVersionId,
-      ) ?? null
+      project.scriptAssets.find((asset) => asset.id === selectedScriptAssetId) ?? null
     );
-  }, [project, selectedScriptVersionId]);
+  }, [project, selectedScriptAssetId]);
 
   const storyboardSegments = storyboardResult?.segments ?? [];
-  const isBusy = isLoadingProject || isSubmitting || Boolean(activeTaskId);
-  const canGenerate = Boolean(projectId && selectedScriptVersionId && !isBusy);
+  const isBusy =
+    isLoadingProject ||
+    isSubmitting ||
+    isPromotingDefault ||
+    Boolean(activeTaskId);
+  const defaultScriptAssetId = project?.binding.storyboardScriptAssetId ?? null;
+  const isUsingTemporarySelection = Boolean(
+    selectedScriptAssetId && selectedScriptAssetId !== defaultScriptAssetId,
+  );
+  const canPromoteDefault = Boolean(
+    selectedScriptAssetId &&
+      selectedScriptAssetId !== defaultScriptAssetId &&
+      !isBusy,
+  );
+  const canGenerate = Boolean(projectId && selectedScriptAssetId && !isBusy);
 
   async function handleGenerateStoryboard() {
-    if (!projectId || !selectedScriptVersionId) {
-      setError(copy.selectVersionValidation);
+    if (!projectId || !selectedScriptAssetId) {
+      setError(copy.selectAssetValidation);
       return;
     }
 
@@ -301,7 +352,7 @@ export default function ProjectStoryboardPage() {
         },
         body: JSON.stringify({
           projectId,
-          scriptVersionId: selectedScriptVersionId,
+          scriptAssetId: selectedScriptAssetId,
         }),
       });
       const payload = (await response.json().catch(() => null)) as
@@ -324,6 +375,64 @@ export default function ProjectStoryboardPage() {
     }
   }
 
+  async function handlePromoteDefault() {
+    if (!projectId || !selectedScriptAsset) {
+      return;
+    }
+
+    setError(null);
+    setStatusMessage(null);
+    setIsPromotingDefault(true);
+
+    try {
+      const response = await fetch(`/api/projects/${projectId}/workflow-binding`, {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          storyboardScriptAssetId: selectedScriptAsset.id,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | {
+            storyboardScriptAssetId?: string | null;
+            error?: string;
+          }
+        | null;
+
+      if (!response.ok || !payload || !("storyboardScriptAssetId" in payload)) {
+        throw new Error(payload?.error ?? copy.promoteFailed);
+      }
+
+      setProject((current) => {
+        if (!current) {
+          return current;
+        }
+
+        const nextDefaultAsset =
+          current.scriptAssets.find(
+            (asset) => asset.id === payload.storyboardScriptAssetId,
+          ) ?? null;
+
+        return {
+          ...current,
+          binding: {
+            storyboardScriptAssetId: payload.storyboardScriptAssetId ?? null,
+          },
+          defaultScriptAsset: nextDefaultAsset,
+        };
+      });
+      setStatusMessage(copy.promoteSuccess);
+    } catch (promoteError) {
+      setError(
+        promoteError instanceof Error ? promoteError.message : copy.promoteFailed,
+      );
+    } finally {
+      setIsPromotingDefault(false);
+    }
+  }
+
   async function handleCopyVideoPrompt(segment: StoryboardSegment) {
     try {
       await navigator.clipboard.writeText(segment.videoPrompt);
@@ -339,10 +448,9 @@ export default function ProjectStoryboardPage() {
   }
 
   const projectSummary = project?.idea?.trim() || copy.noIdea;
-  const scriptVersionSummary = project?.scriptVersions.length
-    ? `已载入 ${project.scriptVersions.length} 个脚本版本。`
-    : "等待脚本定稿后再开始分镜。";
-
+  const scriptAssetSummary = project?.scriptAssets.length
+    ? `已就绪 ${project.scriptAssets.length} 个剧本资产。`
+    : "等待可用剧本资产。";
   const heroProjectTitle = isLoadingProject
     ? copy.loadingProject
     : project?.title ?? copy.stageTitle;
@@ -376,12 +484,12 @@ export default function ProjectStoryboardPage() {
         items={[
           {
             label: copy.scriptStage,
-            detail: scriptVersionSummary,
+            detail: scriptAssetSummary,
             summary: copy.scriptDetail,
-            badgeLabel: project?.scriptVersions.length
+            badgeLabel: project?.scriptAssets.length
               ? copy.stageDone
               : copy.stageWaiting,
-            tone: project?.scriptVersions.length ? "active" : "neutral",
+            tone: project?.scriptAssets.length ? "active" : "neutral",
             href: `/projects/${projectId}/script`,
             ctaLabel: copy.enterScript,
           },
@@ -390,9 +498,9 @@ export default function ProjectStoryboardPage() {
             detail: storyboardSegments.length
               ? `已生成 ${storyboardSegments.length} 段分镜。`
               : copy.storyboardDetail,
-            summary: selectedScriptVersion
-              ? `当前使用脚本版本 ${selectedScriptVersion.versionNumber}。`
-              : "先选择一个脚本版本。",
+            summary: selectedScriptAsset
+              ? `当前输入：${selectedScriptAsset.originalName}`
+              : "先选择一个剧本资产。",
             badgeLabel: copy.stageActive,
             tone: "active",
             href: `/projects/${projectId}/storyboard`,
@@ -437,86 +545,150 @@ export default function ProjectStoryboardPage() {
       <div style={twoColumnGridStyle}>
         <section style={panelStyle}>
           <div style={sectionHeaderStyle}>
-            <h2 style={sectionTitleStyle}>{copy.scriptVersionsHeading}</h2>
-            <p style={sectionDescriptionStyle}>{copy.scriptVersionsDescription}</p>
+            <h2 style={sectionTitleStyle}>{copy.defaultBindingHeading}</h2>
+            <p style={sectionDescriptionStyle}>{copy.defaultBindingDescription}</p>
           </div>
 
-          {project?.scriptVersions?.length ? (
-            <label style={fieldStyle}>
-              <span style={fieldLabelStyle}>{copy.selectScriptVersion}</span>
-              <select
-                aria-label="Select script version"
-                value={selectedScriptVersionId ?? ""}
-                onChange={(event) => {
-                  setSelectedScriptVersionId(event.target.value || null);
-                  setStoryboardResult(null);
-                }}
-                style={selectStyle}
-                disabled={isBusy}
-              >
-                {project.scriptVersions.map((version) => (
-                  <option key={version.id} value={version.id}>
-                    {copy.versionPrefix} {version.versionNumber} ·{" "}
-                    {new Date(version.createdAt).toLocaleString("zh-CN")}
-                  </option>
-                ))}
-              </select>
-            </label>
-          ) : (
-            <p style={emptyStateStyle}>{copy.scriptVersionsEmpty}</p>
-          )}
-
-          {selectedScriptVersion ? (
+          {project?.defaultScriptAsset ? (
             <article style={resultCardStyle}>
-              <p style={resultMetaStyle}>
-                {copy.versionPrefix} {selectedScriptVersion.versionNumber}
+              <div style={cardHeaderStyle}>
+                <div style={cardHeaderCopyStyle}>
+                  <p style={resultMetaStyle}>{copy.defaultBindingHeading}</p>
+                  <strong style={resultTitleStyle}>
+                    {project.defaultScriptAsset.originalName}
+                  </strong>
+                </div>
+                <StatusBadge label={copy.defaultBindingBadge} tone="active" />
+              </div>
+              <p style={resultBodyStyle}>
+                {formatAssetOrigin(project.defaultScriptAsset)} ·{" "}
+                {new Date(project.defaultScriptAsset.createdAt).toLocaleString("zh-CN")}
               </p>
               <pre style={outputPreStyle}>
-                {selectedScriptVersion.body?.trim() || copy.noScriptBody}
+                {project.defaultScriptAsset.extractedText}
               </pre>
             </article>
-          ) : null}
-
-          <button
-            type="button"
-            aria-label="Generate storyboard"
-            onClick={handleGenerateStoryboard}
-            style={primaryButtonStyle}
-            disabled={!canGenerate}
-          >
-            {copy.generateStoryboard}
-          </button>
+          ) : (
+            <div style={emptyStateStackStyle}>
+              <p style={emptyStateStyle}>{copy.defaultBindingEmpty}</p>
+              <Link href={`/projects/${projectId}/assets`} style={secondaryButtonStyle}>
+                {copy.openAssetCenter}
+              </Link>
+            </div>
+          )}
         </section>
 
         <section style={panelStyle}>
           <div style={sectionHeaderStyle}>
-            <h2 style={sectionTitleStyle}>{copy.statusHeading}</h2>
-            <p style={sectionDescriptionStyle}>{copy.statusDescription}</p>
+            <h2 style={sectionTitleStyle}>{copy.inputHeading}</h2>
+            <p style={sectionDescriptionStyle}>{copy.inputDescription}</p>
           </div>
 
-          {activeTaskId ? (
-            <article style={resultCardStyle}>
-              <p style={resultMetaStyle}>{copy.taskIdLabel}</p>
-              <strong style={resultTitleStyle}>{activeTaskId}</strong>
-              <p style={resultBodyStyle}>
-                {copy.statusPrefix}
-                {formatTaskStatus(task?.status ?? "QUEUED")}
-              </p>
-            </article>
-          ) : (
-            <p style={emptyStateStyle}>{copy.noTask}</p>
-          )}
+          {project?.scriptAssets.length ? (
+            <>
+              <label style={fieldStyle}>
+                <span style={fieldLabelStyle}>{copy.selectScriptAsset}</span>
+                <select
+                  aria-label={copy.selectScriptAsset}
+                  value={selectedScriptAssetId ?? ""}
+                  onChange={(event) => {
+                    setSelectedScriptAssetId(event.target.value || null);
+                    setStoryboardResult(null);
+                    setStatusMessage(null);
+                  }}
+                  style={selectStyle}
+                  disabled={isBusy}
+                >
+                  {project.scriptAssets.map((asset) => (
+                    <option key={asset.id} value={asset.id}>
+                      {formatAssetOptionLabel(asset)}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-          {storyboardSegments.length > 0 ? (
-            <article style={resultCardStyle}>
-              <p style={resultMetaStyle}>{copy.generatedSegments}</p>
-              <strong style={resultTitleStyle}>
-                {storyboardSegments.length} 段
-              </strong>
-            </article>
-          ) : null}
+              {selectedScriptAsset ? (
+                <article style={resultCardStyle}>
+                  <div style={cardHeaderStyle}>
+                    <div style={cardHeaderCopyStyle}>
+                      <p style={resultMetaStyle}>{copy.inputHeading}</p>
+                      <strong style={resultTitleStyle}>
+                        {selectedScriptAsset.originalName}
+                      </strong>
+                    </div>
+                    <StatusBadge
+                      label={
+                        isUsingTemporarySelection
+                          ? copy.temporaryOverride
+                          : copy.defaultBindingBadge
+                      }
+                      tone={isUsingTemporarySelection ? "warning" : "active"}
+                    />
+                  </div>
+                  <p style={resultBodyStyle}>
+                    {formatAssetOrigin(selectedScriptAsset)} ·{" "}
+                    {new Date(selectedScriptAsset.createdAt).toLocaleString("zh-CN")}
+                  </p>
+                  <pre style={outputPreStyle}>{selectedScriptAsset.extractedText}</pre>
+                </article>
+              ) : null}
+
+              <div style={actionRowStyle}>
+                {canPromoteDefault ? (
+                  <button
+                    type="button"
+                    onClick={() => void handlePromoteDefault()}
+                    style={secondaryButtonStyle}
+                    disabled={!canPromoteDefault}
+                  >
+                    {copy.promoteDefault}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  aria-label={copy.generateStoryboard}
+                  onClick={() => void handleGenerateStoryboard()}
+                  style={primaryButtonStyle}
+                  disabled={!canGenerate}
+                >
+                  {copy.generateStoryboard}
+                </button>
+              </div>
+            </>
+          ) : (
+            <p style={emptyStateStyle}>{copy.scriptAssetsEmpty}</p>
+          )}
         </section>
       </div>
+
+      <section style={panelStyle}>
+        <div style={sectionHeaderStyle}>
+          <h2 style={sectionTitleStyle}>{copy.statusHeading}</h2>
+          <p style={sectionDescriptionStyle}>{copy.statusDescription}</p>
+        </div>
+
+        {activeTaskId ? (
+          <article style={resultCardStyle}>
+            <p style={resultMetaStyle}>{copy.taskIdLabel}</p>
+            <strong style={resultTitleStyle}>{activeTaskId}</strong>
+            <p style={resultBodyStyle}>
+              {copy.statusPrefix}
+              {formatTaskStatus(task?.status ?? "QUEUED")}
+            </p>
+          </article>
+        ) : (
+          <p style={emptyStateStyle}>{copy.noTask}</p>
+        )}
+
+        {storyboardSegments.length > 0 ? (
+          <article style={resultCardStyle}>
+            <p style={resultMetaStyle}>{copy.generatedSegments}</p>
+            <strong style={resultTitleStyle}>
+              {storyboardSegments.length} {copy.segmentSuffix}
+            </strong>
+          </article>
+        ) : null}
+      </section>
 
       <section style={panelStyle}>
         <div style={sectionHeaderStyle}>
@@ -709,6 +881,12 @@ const selectStyle = {
   background: "rgba(8, 10, 26, 0.4)",
 } satisfies CSSProperties;
 
+const actionRowStyle = {
+  display: "flex",
+  gap: "12px",
+  flexWrap: "wrap",
+} satisfies CSSProperties;
+
 const primaryButtonStyle = {
   display: "inline-flex",
   alignItems: "center",
@@ -729,12 +907,19 @@ const secondaryButtonStyle = {
   background: "rgba(248, 250, 252, 0.08)",
   border: "1px solid rgba(248, 250, 252, 0.12)",
   color: "var(--text)",
+  textDecoration: "none",
 } satisfies CSSProperties;
 
 const emptyStateStyle = {
   margin: 0,
   color: "var(--text-muted)",
   lineHeight: 1.7,
+} satisfies CSSProperties;
+
+const emptyStateStackStyle = {
+  display: "grid",
+  gap: "12px",
+  justifyItems: "start",
 } satisfies CSSProperties;
 
 const resultCardStyle = {
@@ -744,6 +929,19 @@ const resultCardStyle = {
   borderRadius: "18px",
   border: "1px solid rgba(129, 140, 248, 0.16)",
   background: "rgba(8, 10, 26, 0.26)",
+} satisfies CSSProperties;
+
+const cardHeaderStyle = {
+  display: "flex",
+  alignItems: "start",
+  justifyContent: "space-between",
+  gap: "12px",
+  flexWrap: "wrap",
+} satisfies CSSProperties;
+
+const cardHeaderCopyStyle = {
+  display: "grid",
+  gap: "6px",
 } satisfies CSSProperties;
 
 const resultMetaStyle = {

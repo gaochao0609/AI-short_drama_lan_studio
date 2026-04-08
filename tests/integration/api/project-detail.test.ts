@@ -172,6 +172,17 @@ describe("project detail api", () => {
             await prisma.asset.createMany({
               data: [
                 {
+                  id: "script-asset-detail",
+                  projectId: project.id,
+                  taskId: scriptTask.id,
+                  kind: "script",
+                  category: "SCRIPT_SOURCE",
+                  storagePath: "uploads/scripts/scene.txt",
+                  originalName: "scene.txt",
+                  mimeType: "text/plain",
+                  sizeBytes: 32,
+                },
+                {
                   id: "image-asset-detail",
                   projectId: project.id,
                   taskId: imageTask.id,
@@ -192,6 +203,14 @@ describe("project detail api", () => {
                   sizeBytes: SAMPLE_MP4_BYTES.length,
                 },
               ],
+            });
+            await prisma.projectWorkflowBinding.create({
+              data: {
+                projectId: project.id,
+                storyboardScriptAssetId: "script-asset-detail",
+                imageReferenceAssetIds: ["image-asset-detail"],
+                videoReferenceAssetIds: ["image-asset-detail"],
+              },
             });
 
             const route = await loadRouteModule<{
@@ -248,6 +267,22 @@ describe("project detail api", () => {
                     previewUrl: "/api/assets/video-asset-detail/download",
                   }),
                 ],
+                assetCounts: {
+                  total: 3,
+                  script: 1,
+                  image: 1,
+                  video: 1,
+                },
+                bindingSummary: {
+                  storyboardScriptAssetId: "script-asset-detail",
+                  storyboardScriptLabel: "scene.txt",
+                  imageReferenceAssetIds: ["image-asset-detail"],
+                  imageReferenceLabels: ["poster.png"],
+                  imageReferenceCount: 1,
+                  videoReferenceAssetIds: ["image-asset-detail"],
+                  videoReferenceLabels: ["poster.png"],
+                  videoReferenceCount: 1,
+                },
                 taskHistory: [
                   expect.objectContaining({
                     id: videoTask.id,

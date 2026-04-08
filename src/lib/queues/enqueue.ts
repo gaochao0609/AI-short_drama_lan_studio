@@ -14,6 +14,7 @@ type QueuePayload = {
 
 const AUTO_RETRY_ATTEMPTS: Record<TaskType, number> = {
   [TaskType.SCRIPT_FINALIZE]: 3,
+  [TaskType.ASSET_SCRIPT_PARSE]: 3,
   [TaskType.STORYBOARD]: 3,
   [TaskType.IMAGE]: 2,
   [TaskType.VIDEO]: 2,

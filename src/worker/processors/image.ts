@@ -16,7 +16,7 @@ import { cancelTaskIfRequested } from "@/worker/processors/cancellation";
 type ImagePayload = {
   projectId: string;
   prompt: string;
-  sourceAssetId?: string;
+  referenceAssetIds: string[];
   userId: string;
 };
 
@@ -33,6 +33,7 @@ type ImageWorkerResult = {
   outputAssetId: string;
   modelProviderKey: string;
   modelName: string;
+  referenceAssetIds?: string[];
   sourceAssetId?: string;
 };
 
@@ -55,6 +56,24 @@ function hasRetriesRemaining(job: Job<ImageWorkerJobData, ImageWorkerResult, str
   return retryCount < attempts;
 }
 
+function dedupeOrderedAssetIds(assetIds: string[]) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const assetId of assetIds) {
+    const normalized = assetId.trim();
+
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+
+    seen.add(normalized);
+    result.push(normalized);
+  }
+
+  return result;
+}
+
 function parseImagePayload(value: unknown): ImagePayload {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("Missing image payload");
@@ -64,8 +83,11 @@ function parseImagePayload(value: unknown): ImagePayload {
   const projectId = typeof candidate.projectId === "string" ? candidate.projectId : "";
   const prompt = typeof candidate.prompt === "string" ? candidate.prompt : "";
   const userId = typeof candidate.userId === "string" ? candidate.userId : "";
-  const sourceAssetId =
-    typeof candidate.sourceAssetId === "string" ? candidate.sourceAssetId : undefined;
+  const legacySourceAssetId =
+    typeof candidate.sourceAssetId === "string" ? candidate.sourceAssetId : "";
+  const referenceAssetIds = Array.isArray(candidate.referenceAssetIds)
+    ? candidate.referenceAssetIds.filter((entry): entry is string => typeof entry === "string")
+    : [];
 
   if (!projectId.trim() || !prompt.trim() || !userId.trim()) {
     throw new Error("Image payload is incomplete");
@@ -75,7 +97,10 @@ function parseImagePayload(value: unknown): ImagePayload {
     projectId: projectId.trim(),
     prompt: prompt.trim(),
     userId: userId.trim(),
-    ...(sourceAssetId?.trim() ? { sourceAssetId: sourceAssetId.trim() } : {}),
+    referenceAssetIds: dedupeOrderedAssetIds([
+      ...referenceAssetIds,
+      ...(legacySourceAssetId.trim() ? [legacySourceAssetId.trim()] : []),
+    ]),
   };
 }
 
@@ -164,14 +189,16 @@ function getExtensionForMimeType(mimeType: string) {
   return "png";
 }
 
-async function loadSourceAssetFile(payload: ImagePayload) {
-  if (!payload.sourceAssetId) {
-    return null;
+async function loadReferenceAssetFiles(payload: ImagePayload) {
+  if (payload.referenceAssetIds.length === 0) {
+    return [];
   }
 
-  const asset = await prisma.asset.findFirst({
+  const assets = await prisma.asset.findMany({
     where: {
-      id: payload.sourceAssetId,
+      id: {
+        in: payload.referenceAssetIds,
+      },
       projectId: payload.projectId,
     },
     select: {
@@ -182,32 +209,44 @@ async function loadSourceAssetFile(payload: ImagePayload) {
     },
   });
 
-  if (!asset) {
-    throw new ServiceError(404, "Source asset not found");
-  }
-
-  if (!ALLOWED_IMAGE_MIME_TYPES.has(asset.mimeType)) {
-    throw new ServiceError(409, "Unsupported source image type");
+  if (assets.length !== payload.referenceAssetIds.length) {
+    throw new ServiceError(404, "One or more reference assets were not found");
   }
 
   const maxBytes = getMaxUploadBytes();
-  if (asset.sizeBytes > maxBytes) {
-    throw new ServiceError(409, "Source image exceeds maximum upload size");
-  }
-
   const storageRoot = getStorageRoot();
-  const filePath = resolveStoredPath(storageRoot, asset.storagePath);
-  const bytes = await readFile(filePath);
+  const assetsById = new Map(assets.map((asset) => [asset.id, asset]));
 
-  if (bytes.length > maxBytes) {
-    throw new ServiceError(409, "Source image exceeds maximum upload size");
-  }
+  return Promise.all(
+    payload.referenceAssetIds.map(async (assetId) => {
+      const asset = assetsById.get(assetId);
 
-  return {
-    assetId: asset.id,
-    mimeType: asset.mimeType,
-    bytes,
-  };
+      if (!asset) {
+        throw new ServiceError(404, "One or more reference assets were not found");
+      }
+
+      if (!ALLOWED_IMAGE_MIME_TYPES.has(asset.mimeType)) {
+        throw new ServiceError(409, "Reference assets must be images");
+      }
+
+      if (asset.sizeBytes > maxBytes) {
+        throw new ServiceError(409, "Reference image exceeds maximum upload size");
+      }
+
+      const filePath = resolveStoredPath(storageRoot, asset.storagePath);
+      const bytes = await readFile(filePath);
+
+      if (bytes.length > maxBytes) {
+        throw new ServiceError(409, "Reference image exceeds maximum upload size");
+      }
+
+      return {
+        assetId: asset.id,
+        mimeType: asset.mimeType,
+        bytes,
+      };
+    }),
+  );
 }
 
 async function succeedJob(
@@ -217,7 +256,7 @@ async function succeedJob(
     outputAssetId: string;
     modelProviderKey: string;
     modelName: string;
-    sourceAssetId?: string;
+    referenceAssetIds: string[];
     retryCount: number;
   },
 ) {
@@ -227,7 +266,14 @@ async function succeedJob(
     outputAssetId: input.outputAssetId,
     modelProviderKey: input.modelProviderKey,
     modelName: input.modelName,
-    ...(input.sourceAssetId ? { sourceAssetId: input.sourceAssetId } : {}),
+    ...(input.referenceAssetIds.length > 0
+      ? {
+          referenceAssetIds: input.referenceAssetIds,
+          ...(input.referenceAssetIds.length === 1
+            ? { sourceAssetId: input.referenceAssetIds[0] }
+            : {}),
+        }
+      : {}),
   };
 
   await writeTaskState(jobData, {
@@ -241,13 +287,21 @@ async function succeedJob(
   return result;
 }
 
-function createCanceledResult(traceId: string): ImageWorkerResult {
+function createCanceledResult(traceId: string, referenceAssetIds: string[]): ImageWorkerResult {
   return {
     ok: true,
     traceId,
     outputAssetId: "",
     modelProviderKey: "",
     modelName: "",
+    ...(referenceAssetIds.length > 0
+      ? {
+          referenceAssetIds,
+          ...(referenceAssetIds.length === 1
+            ? { sourceAssetId: referenceAssetIds[0] }
+            : {}),
+        }
+      : {}),
   };
 }
 
@@ -255,7 +309,7 @@ export async function processImageJob(
   job: Job<ImageWorkerJobData, ImageWorkerResult, string>,
 ): Promise<ImageWorkerResult> {
   const payload = parseImagePayload(job.data.payload);
-  const modelTaskType = payload.sourceAssetId ? "image_edit" : "image_generate";
+  const modelTaskType = payload.referenceAssetIds.length > 0 ? "image_edit" : "image_generate";
 
   try {
     await writeTaskState(job.data, {
@@ -265,7 +319,7 @@ export async function processImageJob(
     });
 
     if (await cancelTaskIfRequested(job.data)) {
-      return createCanceledResult(job.data.traceId);
+      return createCanceledResult(job.data.traceId, payload.referenceAssetIds);
     }
 
     const modelSummary = await getDefaultModelSummary(modelTaskType);
@@ -273,24 +327,30 @@ export async function processImageJob(
       throw new ServiceError(409, `Default model for ${modelTaskType} is not configured`);
     }
 
-    const source = await loadSourceAssetFile(payload);
-
+    const referenceAssets = await loadReferenceAssetFiles(payload);
     const modelResult = await callProxyModel({
       taskType: modelTaskType,
       providerKey: modelSummary.providerKey,
       model: modelSummary.model,
       traceId: job.data.traceId,
-      inputFiles: source ? [toDataUrl(source.mimeType, source.bytes)] : [],
+      inputFiles: referenceAssets.map((asset) => toDataUrl(asset.mimeType, asset.bytes)),
       inputText: payload.prompt,
       options: {
         projectId: payload.projectId,
         userId: payload.userId,
-        ...(payload.sourceAssetId ? { sourceAssetId: payload.sourceAssetId } : {}),
+        ...(payload.referenceAssetIds.length > 0
+          ? {
+              referenceAssetIds: payload.referenceAssetIds,
+              ...(payload.referenceAssetIds.length === 1
+                ? { sourceAssetId: payload.referenceAssetIds[0] }
+                : {}),
+            }
+          : {}),
       },
     });
 
     if (await cancelTaskIfRequested(job.data)) {
-      return createCanceledResult(job.data.traceId);
+      return createCanceledResult(job.data.traceId, payload.referenceAssetIds);
     }
 
     if (modelResult.status !== "ok") {
@@ -320,28 +380,44 @@ export async function processImageJob(
     const tempPath = await writeTempFile(parsedOutput.bytes);
     await promoteTempFile(tempPath, destinationPath);
 
-    const asset = await prisma.asset.create({
-      data: {
-        projectId: payload.projectId,
-        taskId: job.data.taskId,
-        kind: "image_generated",
-        storagePath: toStoredPath(storageRoot, destinationPath),
-        originalName: null,
-        mimeType: parsedOutput.mimeType,
-        sizeBytes: parsedOutput.bytes.length,
-        metadata: {
-          mode: modelTaskType,
-          prompt: payload.prompt,
-          sourceAssetId: payload.sourceAssetId ?? null,
-          traceId: job.data.traceId,
-          modelProviderKey: modelSummary.providerKey,
-          modelName: modelSummary.model,
-          rawResponse: modelResult.rawResponse ?? null,
-        } as Prisma.InputJsonValue,
-      },
-      select: {
-        id: true,
-      },
+    const asset = await prisma.$transaction(async (tx) => {
+      const createdAsset = await tx.asset.create({
+        data: {
+          projectId: payload.projectId,
+          taskId: job.data.taskId,
+          kind: "image_generated",
+          storagePath: toStoredPath(storageRoot, destinationPath),
+          originalName: null,
+          mimeType: parsedOutput.mimeType,
+          sizeBytes: parsedOutput.bytes.length,
+          metadata: {
+            mode: modelTaskType,
+            prompt: payload.prompt,
+            referenceAssetIds: payload.referenceAssetIds,
+            sourceAssetId: payload.referenceAssetIds[0] ?? null,
+            traceId: job.data.traceId,
+            modelProviderKey: modelSummary.providerKey,
+            modelName: modelSummary.model,
+            rawResponse: modelResult.rawResponse ?? null,
+          } as Prisma.InputJsonValue,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      if (payload.referenceAssetIds.length > 0) {
+        await tx.assetSourceLink.createMany({
+          data: payload.referenceAssetIds.map((assetId, index) => ({
+            assetId: createdAsset.id,
+            sourceAssetId: assetId,
+            role: "image_reference",
+            orderIndex: index,
+          })),
+        });
+      }
+
+      return createdAsset;
     });
 
     return succeedJob(job.data, {
@@ -349,7 +425,7 @@ export async function processImageJob(
       outputAssetId: asset.id,
       modelProviderKey: modelSummary.providerKey,
       modelName: modelSummary.model,
-      ...(payload.sourceAssetId ? { sourceAssetId: payload.sourceAssetId } : {}),
+      referenceAssetIds: payload.referenceAssetIds,
       retryCount: job.attemptsMade,
     });
   } catch (error) {

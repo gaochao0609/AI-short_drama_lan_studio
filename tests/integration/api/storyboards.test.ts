@@ -1,4 +1,12 @@
-import { TaskType, UserRole, UserStatus, type PrismaClient } from "@prisma/client";
+import {
+  AssetCategory,
+  AssetOrigin,
+  Prisma,
+  TaskType,
+  UserRole,
+  UserStatus,
+  type PrismaClient,
+} from "@prisma/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { withTestDatabase } from "../db/test-database";
 import {
@@ -37,8 +45,36 @@ async function createActiveUser(prisma: PrismaClient, username: string) {
   });
 }
 
+async function createScriptAsset(input: {
+  prisma: PrismaClient;
+  projectId: string;
+  originalName: string;
+  category: AssetCategory;
+  metadata: Prisma.InputJsonObject;
+}) {
+  return input.prisma.asset.create({
+    data: {
+      projectId: input.projectId,
+      kind:
+        input.category === AssetCategory.SCRIPT_SOURCE
+          ? "script_source"
+          : "script",
+      category: input.category,
+      origin:
+        input.category === AssetCategory.SCRIPT_SOURCE
+          ? AssetOrigin.UPLOAD
+          : AssetOrigin.SYSTEM,
+      storagePath: `assets/${input.projectId}/${input.originalName}`,
+      originalName: input.originalName,
+      mimeType: "text/plain",
+      sizeBytes: 128,
+      metadata: input.metadata,
+    },
+  });
+}
+
 describe("storyboards api", () => {
-  it("returns storyboard page data from a storyboard-specific read path", async () => {
+  it("returns the current default script asset and selectable storyboard script assets", async () => {
     await withTestDatabase(async ({ databaseUrl, prisma }) => {
       await withApiTestEnv(databaseUrl, async () => {
         const user = await createActiveUser(prisma, "storyboard-reader");
@@ -50,27 +86,62 @@ describe("storyboards api", () => {
             idea: "A courier races the sunrise.",
           },
         });
-        await prisma.scriptVersion.createMany({
-          data: [
-            {
-              projectId: project.id,
-              creatorId: user.id,
-              versionNumber: 1,
-              body: "First script body",
-              scriptJson: {
-                body: "First script body",
-              },
+        const finalScriptVersion = await prisma.scriptVersion.create({
+          data: {
+            projectId: project.id,
+            creatorId: user.id,
+            versionNumber: 2,
+            body: "LEGACY GENERATED SCRIPT BODY",
+            scriptJson: {
+              body: "LEGACY GENERATED SCRIPT BODY",
             },
-            {
-              projectId: project.id,
-              creatorId: user.id,
-              versionNumber: 2,
-              body: "Second script body",
-              scriptJson: {
-                body: "Second script body",
-              },
-            },
-          ],
+          },
+        });
+        const uploadedAsset = await createScriptAsset({
+          prisma,
+          projectId: project.id,
+          originalName: "uploaded-script.txt",
+          category: AssetCategory.SCRIPT_SOURCE,
+          metadata: {
+            parseStatus: "ready",
+            extractedText: "UPLOADED SCRIPT BODY",
+          },
+        });
+        const generatedAsset = await createScriptAsset({
+          prisma,
+          projectId: project.id,
+          originalName: "generated-script.txt",
+          category: AssetCategory.SCRIPT_GENERATED,
+          metadata: {
+            parseStatus: "ready",
+            scriptVersionId: finalScriptVersion.id,
+            extractedText: "GENERATED ASSET SCRIPT BODY",
+          },
+        });
+        await createScriptAsset({
+          prisma,
+          projectId: project.id,
+          originalName: "pending-script.txt",
+          category: AssetCategory.SCRIPT_SOURCE,
+          metadata: {
+            parseStatus: "pending",
+          },
+        });
+        await createScriptAsset({
+          prisma,
+          projectId: project.id,
+          originalName: "failed-script.txt",
+          category: AssetCategory.SCRIPT_SOURCE,
+          metadata: {
+            parseStatus: "failed",
+            parseError: "decode failed",
+          },
+        });
+        await prisma.projectWorkflowBinding.create({
+          data: {
+            projectId: project.id,
+            storyboardScriptAssetId: uploadedAsset.id,
+          },
         });
 
         const storyboardRoute = await loadRouteModule<{
@@ -93,27 +164,61 @@ describe("storyboards api", () => {
         const storyboardResponse = await storyboardRoute.GET(
           new Request(`http://localhost/api/storyboards?projectId=${project.id}`),
         );
+        const storyboardPayload = (await storyboardResponse.json()) as {
+          project: {
+            id: string;
+            title: string;
+            idea?: string | null;
+          };
+          binding: {
+            storyboardScriptAssetId: string | null;
+          };
+          defaultScriptAsset: {
+            id: string;
+            originalName: string;
+            extractedText: string;
+          } | null;
+          scriptAssets: Array<{
+            id: string;
+            originalName: string;
+            extractedText: string;
+            scriptVersionId: string | null;
+          }>;
+        };
 
         expect(storyboardResponse.status).toBe(200);
-        await expect(storyboardResponse.json()).resolves.toEqual(
+        expect(storyboardPayload.project).toEqual(
           expect.objectContaining({
-            project: expect.objectContaining({
-              id: project.id,
-              title: "Storyboard Project",
-              idea: "A courier races the sunrise.",
-            }),
-            scriptVersions: [
-              expect.objectContaining({
-                versionNumber: 2,
-                body: "Second script body",
-              }),
-              expect.objectContaining({
-                versionNumber: 1,
-                body: "First script body",
-              }),
-            ],
+            id: project.id,
+            title: "Storyboard Project",
+            idea: "A courier races the sunrise.",
           }),
         );
+        expect(storyboardPayload.binding.storyboardScriptAssetId).toBe(uploadedAsset.id);
+        expect(storyboardPayload.defaultScriptAsset).toEqual(
+          expect.objectContaining({
+            id: uploadedAsset.id,
+            originalName: "uploaded-script.txt",
+            extractedText: "UPLOADED SCRIPT BODY",
+          }),
+        );
+        expect(storyboardPayload.scriptAssets).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              id: uploadedAsset.id,
+              originalName: "uploaded-script.txt",
+              extractedText: "UPLOADED SCRIPT BODY",
+              scriptVersionId: null,
+            }),
+            expect.objectContaining({
+              id: generatedAsset.id,
+              originalName: "generated-script.txt",
+              extractedText: "GENERATED ASSET SCRIPT BODY",
+              scriptVersionId: finalScriptVersion.id,
+            }),
+          ]),
+        );
+        expect(storyboardPayload.scriptAssets).toHaveLength(2);
 
         const projectResponse = await projectRoute.GET(
           new Request(`http://localhost/api/projects/${project.id}`),
@@ -122,13 +227,13 @@ describe("storyboards api", () => {
 
         expect(projectResponse.status).toBe(200);
         await expect(projectResponse.json()).resolves.not.toHaveProperty(
-          "scriptVersions",
+          "scriptAssets",
         );
       });
     });
   });
 
-  it("reuses the same storyboard task for duplicate POST requests", async () => {
+  it("accepts scriptAssetId and reuses the same storyboard task for duplicate requests", async () => {
     enqueueTaskMock.mockResolvedValue({
       jobId: "job-storyboard-1",
       queueName: "storyboard-queue",
@@ -149,10 +254,21 @@ describe("storyboards api", () => {
             projectId: project.id,
             creatorId: user.id,
             versionNumber: 1,
-            body: "INT. ROOFTOP - DAWN",
+            body: "LEGACY SCRIPT VERSION BODY",
             scriptJson: {
-              body: "INT. ROOFTOP - DAWN",
+              body: "LEGACY SCRIPT VERSION BODY",
             },
+          },
+        });
+        const scriptAsset = await createScriptAsset({
+          prisma,
+          projectId: project.id,
+          originalName: "generated-script.txt",
+          category: AssetCategory.SCRIPT_GENERATED,
+          metadata: {
+            parseStatus: "ready",
+            scriptVersionId: scriptVersion.id,
+            extractedText: "GENERATED ASSET SCRIPT BODY",
           },
         });
         const { POST } = await loadRouteModule<{
@@ -166,7 +282,7 @@ describe("storyboards api", () => {
             "http://localhost/api/storyboards",
             {
               projectId: project.id,
-              scriptVersionId: scriptVersion.id,
+              scriptAssetId: scriptAsset.id,
             },
             { method: "POST" },
           ),
@@ -177,7 +293,7 @@ describe("storyboards api", () => {
             "http://localhost/api/storyboards",
             {
               projectId: project.id,
-              scriptVersionId: scriptVersion.id,
+              scriptAssetId: scriptAsset.id,
             },
             { method: "POST" },
           ),
@@ -188,6 +304,17 @@ describe("storyboards api", () => {
         expect(secondResponse.status).toBe(202);
         expect(firstPayload.taskId).toBe(secondPayload.taskId);
         expect(enqueueTaskMock).toHaveBeenCalledTimes(1);
+        expect(enqueueTaskMock).toHaveBeenCalledWith(
+          firstPayload.taskId,
+          TaskType.STORYBOARD,
+          expect.objectContaining({
+            projectId: project.id,
+            scriptAssetId: scriptAsset.id,
+            scriptVersionId: scriptVersion.id,
+            userId: user.id,
+          }),
+        );
+
         await expect(
           prisma.task.findMany({
             where: {
@@ -196,26 +323,216 @@ describe("storyboards api", () => {
               type: TaskType.STORYBOARD,
             },
           }),
-        ).resolves.toHaveLength(1);
+        ).resolves.toEqual([
+          expect.objectContaining({
+            inputJson: expect.objectContaining({
+              projectId: project.id,
+              scriptAssetId: scriptAsset.id,
+              scriptVersionId: scriptVersion.id,
+              userId: user.id,
+            }),
+          }),
+        ]);
       });
     });
   });
 
-  it("keeps a failed storyboard task durable when enqueueing fails", async () => {
+  it("keeps deduplicating uploaded script asset requests after scriptVersionId backfill", async () => {
+    enqueueTaskMock.mockResolvedValue({
+      jobId: "job-storyboard-uploaded-dedupe",
+      queueName: "storyboard-queue",
+    });
+
     await withTestDatabase(async ({ databaseUrl, prisma }) => {
       await withApiTestEnv(databaseUrl, async () => {
-        enqueueTaskMock.mockRejectedValueOnce(new Error("queue unavailable"));
-        enqueueTaskMock.mockResolvedValueOnce({
-          jobId: "job-storyboard-retry",
-          queueName: "storyboard-queue",
-        });
-
-        const user = await createActiveUser(prisma, "storyboard-request-failure");
+        const user = await createActiveUser(prisma, "storyboard-uploaded-dedupe");
         const session = await insertSessionForUser(prisma, user.id);
         const project = await prisma.project.create({
           data: {
             ownerId: user.id,
-            title: "Storyboard Failure Project",
+            title: "Storyboard Uploaded Dedupe",
+          },
+        });
+        const scriptAsset = await createScriptAsset({
+          prisma,
+          projectId: project.id,
+          originalName: "uploaded-script.txt",
+          category: AssetCategory.SCRIPT_SOURCE,
+          metadata: {
+            parseStatus: "ready",
+            extractedText: "UPLOADED SCRIPT BODY",
+          },
+        });
+        const { POST } = await loadRouteModule<{
+          POST: (request: Request) => Promise<Response>;
+        }>("src/app/api/storyboards/route.ts", {
+          sessionToken: session.token,
+        });
+
+        const firstResponse = await POST(
+          jsonRequest(
+            "http://localhost/api/storyboards",
+            {
+              projectId: project.id,
+              scriptAssetId: scriptAsset.id,
+            },
+            { method: "POST" },
+          ),
+        );
+        const firstPayload = (await firstResponse.json()) as { taskId: string };
+
+        const backfilledScriptVersion = await prisma.scriptVersion.create({
+          data: {
+            projectId: project.id,
+            creatorId: user.id,
+            versionNumber: 1,
+            body: "UPLOADED SCRIPT BODY",
+            scriptJson: {
+              body: "UPLOADED SCRIPT BODY",
+            },
+          },
+        });
+        await prisma.asset.update({
+          where: {
+            id: scriptAsset.id,
+          },
+          data: {
+            metadata: {
+              parseStatus: "ready",
+              extractedText: "UPLOADED SCRIPT BODY",
+              scriptVersionId: backfilledScriptVersion.id,
+            },
+          },
+        });
+
+        const secondResponse = await POST(
+          jsonRequest(
+            "http://localhost/api/storyboards",
+            {
+              projectId: project.id,
+              scriptAssetId: scriptAsset.id,
+            },
+            { method: "POST" },
+          ),
+        );
+        const secondPayload = (await secondResponse.json()) as { taskId: string };
+
+        expect(firstResponse.status).toBe(202);
+        expect(secondResponse.status).toBe(202);
+        expect(secondPayload.taskId).toBe(firstPayload.taskId);
+        expect(enqueueTaskMock).toHaveBeenCalledTimes(1);
+        expect(enqueueTaskMock).toHaveBeenCalledWith(
+          firstPayload.taskId,
+          TaskType.STORYBOARD,
+          expect.objectContaining({
+            projectId: project.id,
+            scriptAssetId: scriptAsset.id,
+            userId: user.id,
+          }),
+        );
+        await expect(
+          prisma.task.findMany({
+            where: {
+              projectId: project.id,
+              createdById: user.id,
+              type: TaskType.STORYBOARD,
+            },
+            orderBy: {
+              createdAt: "asc",
+            },
+          }),
+        ).resolves.toEqual([
+          expect.objectContaining({
+            id: firstPayload.taskId,
+            inputJson: expect.objectContaining({
+              projectId: project.id,
+              scriptAssetId: scriptAsset.id,
+              userId: user.id,
+            }),
+          }),
+        ]);
+      });
+    });
+  });
+
+  it.each(["pending", "failed"] as const)(
+    "rejects %s script assets as storyboard input with 409",
+    async (parseStatus) => {
+      await withTestDatabase(async ({ databaseUrl, prisma }) => {
+        await withApiTestEnv(databaseUrl, async () => {
+          const user = await createActiveUser(
+            prisma,
+            `storyboard-request-${parseStatus}`,
+          );
+          const session = await insertSessionForUser(prisma, user.id);
+          const project = await prisma.project.create({
+            data: {
+              ownerId: user.id,
+              title: "Storyboard Invalid Script Asset",
+            },
+          });
+          const scriptAsset = await createScriptAsset({
+            prisma,
+            projectId: project.id,
+            originalName: `${parseStatus}.txt`,
+            category: AssetCategory.SCRIPT_SOURCE,
+            metadata: {
+              parseStatus,
+              ...(parseStatus === "failed"
+                ? { parseError: "parser exploded" }
+                : {}),
+            },
+          });
+          const { POST } = await loadRouteModule<{
+            POST: (request: Request) => Promise<Response>;
+          }>("src/app/api/storyboards/route.ts", {
+            sessionToken: session.token,
+          });
+
+          const response = await POST(
+            jsonRequest(
+              "http://localhost/api/storyboards",
+              {
+                projectId: project.id,
+                scriptAssetId: scriptAsset.id,
+              },
+              { method: "POST" },
+            ),
+          );
+
+          expect(response.status).toBe(409);
+          await expect(response.json()).resolves.toEqual(
+            expect.objectContaining({
+              error: expect.any(String),
+            }),
+          );
+          await expect(
+            prisma.task.count({
+              where: {
+                projectId: project.id,
+                type: TaskType.STORYBOARD,
+              },
+            }),
+          ).resolves.toBe(0);
+        });
+      });
+    },
+  );
+
+  it("resolves legacy scriptVersionId requests through the compatibility asset layer", async () => {
+    enqueueTaskMock.mockResolvedValue({
+      jobId: "job-storyboard-compat",
+      queueName: "storyboard-queue",
+    });
+
+    await withTestDatabase(async ({ databaseUrl, prisma }) => {
+      await withApiTestEnv(databaseUrl, async () => {
+        const user = await createActiveUser(prisma, "storyboard-request-legacy");
+        const session = await insertSessionForUser(prisma, user.id);
+        const project = await prisma.project.create({
+          data: {
+            ownerId: user.id,
+            title: "Storyboard Legacy Compatibility",
           },
         });
         const scriptVersion = await prisma.scriptVersion.create({
@@ -223,27 +540,30 @@ describe("storyboards api", () => {
             projectId: project.id,
             creatorId: user.id,
             versionNumber: 1,
-            body: "INT. TRAIN PLATFORM - NIGHT",
+            body: "LEGACY SCRIPT VERSION BODY",
             scriptJson: {
-              body: "INT. TRAIN PLATFORM - NIGHT",
+              body: "LEGACY SCRIPT VERSION BODY",
             },
           },
         });
-        const storyboardRoute = await loadRouteModule<{
+        const generatedAsset = await createScriptAsset({
+          prisma,
+          projectId: project.id,
+          originalName: "generated-script.txt",
+          category: AssetCategory.SCRIPT_GENERATED,
+          metadata: {
+            parseStatus: "ready",
+            scriptVersionId: scriptVersion.id,
+            extractedText: "GENERATED ASSET SCRIPT BODY",
+          },
+        });
+        const { POST } = await loadRouteModule<{
           POST: (request: Request) => Promise<Response>;
         }>("src/app/api/storyboards/route.ts", {
           sessionToken: session.token,
         });
-        const taskRoute = await loadRouteModule<{
-          GET: (
-            request: Request,
-            context: { params: Promise<{ taskId: string }> | { taskId: string } },
-          ) => Promise<Response>;
-        }>("src/app/api/tasks/[taskId]/route.ts", {
-          sessionToken: session.token,
-        });
 
-        const response = await storyboardRoute.POST(
+        const response = await POST(
           jsonRequest(
             "http://localhost/api/storyboards",
             {
@@ -253,58 +573,28 @@ describe("storyboards api", () => {
             { method: "POST" },
           ),
         );
-        const firstTask = await prisma.task.findFirstOrThrow({
+        const payload = (await response.json()) as { taskId: string };
+        const task = await prisma.task.findUniqueOrThrow({
           where: {
-            projectId: project.id,
-            createdById: user.id,
-            type: TaskType.STORYBOARD,
+            id: payload.taskId,
           },
         });
-        const retryResponse = await storyboardRoute.POST(
-          jsonRequest(
-            "http://localhost/api/storyboards",
-            {
-              projectId: project.id,
-              scriptVersionId: scriptVersion.id,
-            },
-            { method: "POST" },
-          ),
-        );
-        const retryPayload = (await retryResponse.json()) as { taskId: string };
 
-        expect(response.status).toBe(500);
-        await expect(response.json()).resolves.toEqual({
-          error: "Internal server error",
-        });
-        expect(retryResponse.status).toBe(202);
-        expect(retryPayload.taskId).not.toBe(firstTask.id);
-        expect(enqueueTaskMock).toHaveBeenCalledTimes(2);
-
-        await expect(
-          prisma.task.findUniqueOrThrow({
-            where: {
-              id: firstTask.id,
-            },
-          }),
-        ).resolves.toEqual(
+        expect(response.status).toBe(202);
+        expect(task.inputJson).toEqual(
           expect.objectContaining({
-            id: firstTask.id,
-            status: "FAILED",
-            errorText: "queue unavailable",
+            projectId: project.id,
+            scriptAssetId: generatedAsset.id,
+            scriptVersionId: scriptVersion.id,
+            userId: user.id,
           }),
         );
-
-        const taskResponse = await taskRoute.GET(
-          new Request(`http://localhost/api/tasks/${firstTask.id}`),
-          { params: { taskId: firstTask.id } },
-        );
-
-        expect(taskResponse.status).toBe(200);
-        await expect(taskResponse.json()).resolves.toEqual(
+        expect(enqueueTaskMock).toHaveBeenCalledWith(
+          payload.taskId,
+          TaskType.STORYBOARD,
           expect.objectContaining({
-            id: firstTask.id,
-            status: "FAILED",
-            errorText: "queue unavailable",
+            scriptAssetId: generatedAsset.id,
+            scriptVersionId: scriptVersion.id,
           }),
         );
       });

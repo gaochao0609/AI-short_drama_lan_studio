@@ -354,27 +354,40 @@ export async function processVideoJob(
     const tempPath = await writeTempFile(parsedOutput.bytes);
     await promoteTempFile(tempPath, destinationPath);
 
-    const asset = await prisma.asset.create({
-      data: {
-        projectId: payload.projectId,
-        taskId: job.data.taskId,
-        kind: "video_generated",
-        storagePath: toStoredPath(storageRoot, destinationPath),
-        originalName: null,
-        mimeType: parsedOutput.mimeType,
-        sizeBytes: parsedOutput.bytes.length,
-        metadata: {
-          prompt: payload.prompt,
-          referenceAssetIds: payload.referenceAssetIds,
-          traceId: job.data.traceId,
-          modelProviderKey: modelSummary.providerKey,
-          modelName: modelSummary.model,
-          rawResponse: modelResult.rawResponse ?? null,
-        } as Prisma.InputJsonValue,
-      },
-      select: {
-        id: true,
-      },
+    const asset = await prisma.$transaction(async (tx) => {
+      const createdAsset = await tx.asset.create({
+        data: {
+          projectId: payload.projectId,
+          taskId: job.data.taskId,
+          kind: "video_generated",
+          storagePath: toStoredPath(storageRoot, destinationPath),
+          originalName: null,
+          mimeType: parsedOutput.mimeType,
+          sizeBytes: parsedOutput.bytes.length,
+          metadata: {
+            prompt: payload.prompt,
+            referenceAssetIds: payload.referenceAssetIds,
+            traceId: job.data.traceId,
+            modelProviderKey: modelSummary.providerKey,
+            modelName: modelSummary.model,
+            rawResponse: modelResult.rawResponse ?? null,
+          } as Prisma.InputJsonValue,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      await tx.assetSourceLink.createMany({
+        data: payload.referenceAssetIds.map((assetId, index) => ({
+          assetId: createdAsset.id,
+          sourceAssetId: assetId,
+          role: "video_reference",
+          orderIndex: index,
+        })),
+      });
+
+      return createdAsset;
     });
 
     return succeedJob(job.data, {

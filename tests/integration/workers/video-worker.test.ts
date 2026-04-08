@@ -346,16 +346,21 @@ describe("video workflow", () => {
                 title: "Video Success Project",
               },
             });
-            const referenceAsset = await createReferenceImage(prisma, {
+            const referenceAssetA = await createReferenceImage(prisma, {
               projectId: project.id,
               storageRoot,
-              name: "seed.png",
+              name: "seed-a.png",
+            });
+            const referenceAssetB = await createReferenceImage(prisma, {
+              projectId: project.id,
+              storageRoot,
+              name: "seed-b.png",
             });
 
             const { taskId } = await enqueueVideoGeneration({
               projectId: project.id,
               prompt: "Animate the frame into a subtle handheld shot.",
-              referenceAssetIds: [referenceAsset.id],
+              referenceAssetIds: [referenceAssetB.id, referenceAssetA.id],
               userId: user.id,
             });
 
@@ -379,6 +384,7 @@ describe("video workflow", () => {
                   ok: true,
                   traceId: expect.any(String),
                   outputAssetId: expect.any(String),
+                  referenceAssetIds: [referenceAssetB.id, referenceAssetA.id],
                 }),
               );
 
@@ -417,6 +423,30 @@ describe("video workflow", () => {
                 }),
               );
 
+              const sourceLinks = await prisma.assetSourceLink.findMany({
+                where: {
+                  assetId: asset.id,
+                },
+                orderBy: {
+                  orderIndex: "asc",
+                },
+              });
+
+              expect(sourceLinks).toEqual([
+                expect.objectContaining({
+                  assetId: asset.id,
+                  sourceAssetId: referenceAssetB.id,
+                  role: "video_reference",
+                  orderIndex: 0,
+                }),
+                expect.objectContaining({
+                  assetId: asset.id,
+                  sourceAssetId: referenceAssetA.id,
+                  role: "video_reference",
+                  orderIndex: 1,
+                }),
+              ]);
+
               await expect(
                 prisma.taskStep.findFirstOrThrow({
                   where: { taskId },
@@ -426,6 +456,18 @@ describe("video workflow", () => {
                 expect.objectContaining({
                   taskId,
                   log: expect.stringMatching(/saved generated video asset/i),
+                }),
+              );
+
+              expect(callProxyModelMock).toHaveBeenCalledWith(
+                expect.objectContaining({
+                  inputFiles: [
+                    toDataUrl("image/png", ONE_BY_ONE_PNG_BYTES),
+                    toDataUrl("image/png", ONE_BY_ONE_PNG_BYTES),
+                  ],
+                  options: expect.objectContaining({
+                    referenceAssetIds: [referenceAssetB.id, referenceAssetA.id],
+                  }),
                 }),
               );
             } finally {

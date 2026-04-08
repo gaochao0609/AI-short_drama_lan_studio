@@ -18,24 +18,31 @@ export async function startWorkerRuntime(): Promise<WorkerRuntime> {
 
   const [
     { createScriptWorker },
+    { createAssetScriptParseWorker },
     { createStoryboardWorker },
     { createImageWorker },
     { createVideoWorker },
   ] = await Promise.all([
     import("@/worker/processors/script"),
+    import("@/worker/processors/asset-script-parse"),
     import("@/worker/processors/storyboard"),
     import("@/worker/processors/image"),
     import("@/worker/processors/video"),
   ]);
 
-  const workers = [createScriptWorker(), createStoryboardWorker(), createImageWorker(), createVideoWorker()];
+  const workers = [
+    createScriptWorker(),
+    createAssetScriptParseWorker(),
+    createStoryboardWorker(),
+    createImageWorker(),
+    createVideoWorker(),
+  ];
 
   await waitForWorkerStartup(workers);
 
-  console.log(`[worker] started ${workers[0].name}`);
-  console.log(`[worker] started ${workers[1].name}`);
-  console.log(`[worker] started ${workers[2].name}`);
-  console.log(`[worker] started ${workers[3].name}`);
+  for (const worker of workers) {
+    console.log(`[worker] started ${worker.name}`);
+  }
 
   return {
     workers,

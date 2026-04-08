@@ -27,9 +27,23 @@ enum TaskStatus {
 
 enum TaskType {
   SCRIPT_FINALIZE
+  ASSET_SCRIPT_PARSE
   STORYBOARD
   IMAGE
   VIDEO
+}
+
+enum AssetCategory {
+  SCRIPT_SOURCE
+  SCRIPT_GENERATED
+  IMAGE_SOURCE
+  IMAGE_GENERATED
+  VIDEO_GENERATED
+}
+
+enum AssetOrigin {
+  UPLOAD
+  SYSTEM
 }
 
 enum ScriptSessionStatus {
@@ -101,6 +115,7 @@ model Project {
   scriptVersions     ScriptVersion[]
   storyboardVersions StoryboardVersion[]
   assets             Asset[]
+  workflowBinding    ProjectWorkflowBinding?
   tasks              Task[]
 
   @@index([ownerId])
@@ -182,6 +197,8 @@ model Asset {
   projectId    String   @map("project_id")
   taskId       String?  @map("task_id")
   kind         String
+  category     AssetCategory?
+  origin       AssetOrigin?
   storagePath  String   @map("storage_path")
   originalName String?  @map("original_name")
   mimeType     String   @map("mime_type")
@@ -190,10 +207,44 @@ model Asset {
   createdAt    DateTime @default(now()) @map("created_at")
   project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   task         Task?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  storyboardBindingsAsScriptAsset ProjectWorkflowBinding[] @relation("ProjectStoryboardScriptAsset")
+  sourceLinksAsResultAsset        AssetSourceLink[]        @relation("AssetSourceLinksResultAsset")
+  sourceLinksAsSourceAsset        AssetSourceLink[]        @relation("AssetSourceLinksSourceAsset")
 
   @@index([projectId])
   @@index([taskId])
   @@map("assets")
+}
+
+model ProjectWorkflowBinding {
+  id                    String   @id @default(cuid())
+  projectId             String   @unique @map("project_id")
+  storyboardScriptAssetId String?  @map("storyboard_script_asset_id")
+  imageReferenceAssetIds String[] @default([]) @map("image_reference_asset_ids")
+  videoReferenceAssetIds String[] @default([]) @map("video_reference_asset_ids")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+  project               Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  storyboardScriptAsset Asset?   @relation("ProjectStoryboardScriptAsset", fields: [storyboardScriptAssetId], references: [id], onDelete: SetNull)
+
+  @@index([storyboardScriptAssetId])
+  @@map("project_workflow_bindings")
+}
+
+model AssetSourceLink {
+  id            String   @id @default(cuid())
+  assetId       String   @map("asset_id")
+  sourceAssetId String   @map("source_asset_id")
+  role          String
+  orderIndex    Int      @default(0) @map("order_index")
+  createdAt     DateTime @default(now()) @map("created_at")
+  asset         Asset    @relation("AssetSourceLinksResultAsset", fields: [assetId], references: [id], onDelete: Cascade)
+  sourceAsset   Asset    @relation("AssetSourceLinksSourceAsset", fields: [sourceAssetId], references: [id], onDelete: Cascade)
+
+  @@index([assetId])
+  @@index([sourceAssetId])
+  @@unique([assetId, sourceAssetId, role, orderIndex])
+  @@map("asset_source_links")
 }
 
 model Task {

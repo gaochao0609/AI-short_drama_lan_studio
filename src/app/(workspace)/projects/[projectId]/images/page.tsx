@@ -12,6 +12,7 @@ import useTaskPolling from "@/hooks/useTaskPolling";
 
 type ImageAssetSummary = {
   id: string;
+  originalName: string | null;
   kind: string;
   mimeType: string;
   sizeBytes: number;
@@ -27,6 +28,11 @@ type ImagesWorkspaceResponse = {
     idea?: string | null;
   };
   maxUploadMb: number;
+  binding: {
+    imageReferenceAssetIds: string[];
+  };
+  defaultReferenceAssets: ImageAssetSummary[];
+  referenceAssets: ImageAssetSummary[];
   assets: ImageAssetSummary[];
 };
 
@@ -40,79 +46,118 @@ type TaskPollResponse = {
   errorText?: string | null;
 };
 
-type Mode = "text" | "image";
-
 const EMPTY_ASSETS: ImageAssetSummary[] = [];
+const MAX_REFERENCE_ASSETS = 8;
 
 const copy = {
   workflowTitle: "项目制作流程",
   stageTitle: "图片",
   stageDescription:
-    "根据分镜提示生成关键画面，或者基于当前项目已有图片继续做图生图调整。",
+    "从项目资产中心带入默认参考图，或者临时改选本次输入。未选择任何参考图时，仍然可以直接发起文生图。",
   projectLabel: "当前项目",
   backToProject: "返回项目制作台",
   activeStage: "当前阶段",
-  noIdea: "项目还没有补充创意说明，先确认分镜方向再继续出图。",
+  noIdea: "项目还没有补充创意说明，先确认分镜方向，再继续生成关键画面。",
   scriptStage: "脚本",
   storyboardStage: "分镜",
   imagesStage: "图片",
   videosStage: "视频",
-  stageDone: "已完成",
   stageActive: "进行中",
-  stageNext: "下一步",
   stageWaiting: "待开始",
-  generateHeading: "生成设置",
-  generateDescription:
-    "文生图和图生图共用同一套任务链路，只是输入的素材来源不同。",
-  resultHeading: "结果列表",
-  resultDescription:
-    "所有图片结果都按项目归档在这里，方便后续进入视频阶段继续使用。",
-  textMode: "文生图",
-  imageMode: "图生图",
-  referenceAssetLabel: "参考图片",
-  promptLabel: "生成提示词",
-  promptPlaceholder: "描述你想生成的画面...",
-  helperPrefix: "单张参考图大小上限：",
-  noAssets: "当前项目还没有图片资产。",
-  noReferenceAssets: "请先生成一张图片，再继续图生图。",
-  selectReference: "选择一张项目内图片作为参考。",
-  referencePlaceholder: "选择图片资产...",
+  stageNext: "下一步",
+  defaultBindingHeading: "当前默认参考图",
+  defaultBindingDescription:
+    "进入图片页时会自动带出项目级默认参考图。你可以临时改选本次输入，也可以把新的组合设为默认输入。",
+  defaultBindingEmpty: "当前未设置默认参考图",
+  openAssetCenter: "前往资产中心设置",
+  inputHeading: "本次生成输入",
+  inputDescription:
+    "可从项目内已存在的图片资产中多选本次输入；未选择参考图时，会直接走文生图。",
+  referenceHeading: "候选参考图",
+  referenceEmpty: "当前项目还没有可用图片，请先在资产中心上传图片或完成上游流程。",
+  selectedCountPrefix: "已选择参考图：",
+  temporaryOverride: "仅本次使用",
+  defaultBindingBadge: "当前默认输入",
+  textOnlyBadge: "纯文本生成",
+  promoteDefault: "设为默认输入",
+  promoteSuccess: "已更新图片默认参考图。",
+  promoteFailed: "更新图片默认参考图失败",
+  promptLabel: "图片提示词",
+  promptPlaceholder: "描述你想生成的画面、风格和主体动作……",
+  promptHelperPrefix: "当前上传上限：",
+  generateImage: "生成图片",
+  resultsHeading: "图片结果",
+  resultsDescription: "生成完成的图片会保留在当前项目中，便于继续进入视频流程。",
+  noResults: "当前项目还没有生成图片。",
   previewUnavailable: "暂无预览",
-  loadingProject: "加载项目中...",
+  loadingProject: "加载项目中…",
   loadWorkspaceFailed: "加载图片工作区失败",
-  fetchTaskFailed: "获取任务状态失败",
-  refreshing: "正在刷新结果...",
-  generating: "正在生成图片...",
-  generated: "图片已生成。",
-  requestQueued: "图片任务已加入队列。",
-  failed: "图片生成失败",
+  fetchTaskFailed: "获取图片任务状态失败",
   refreshFailedPrefix: "图片已生成，但刷新结果失败：",
+  generating: "正在生成图片…",
+  refreshing: "正在刷新结果…",
+  queued: "图片任务已加入队列。",
+  generated: "图片已生成。",
+  failed: "图片生成失败",
   missingProjectId: "缺少项目 ID",
-  enterPrompt: "请先输入提示词，再生成图片。",
-  selectReferenceValidation: "请选择一张参考图片。",
-  uploadTooLargePrefix: "参考图片超过上传限制（",
-  uploadTooLargeSuffix: " MB）",
+  enterPrompt: "请先输入图片提示词。",
   enqueueFailed: "图片任务提交失败",
-  payloadTooLarge: "上传内容过大",
-  scriptDetail: "脚本定稿后继续把镜头拆成画面指令。",
-  storyboardDetail: "分镜完成后可把镜头提示转成关键画面。",
-  imagesDetail: "当前页负责管理文生图和图生图结果。",
-  videosDetail: "选中满意的图片后继续生成视频。",
+  referenceLimit: `单次最多选择 ${MAX_REFERENCE_ASSETS} 张参考图。`,
+  taskPrefix: "任务：",
+  scriptDetail: "脚本确认后继续细化画面提示。",
+  storyboardDetail: "分镜输出后可继续生成关键画面。",
+  imagesDetail: "当前页面负责管理文生图和图生图结果。",
+  videosDetail: "挑选满意的图片后继续进入视频阶段。",
   enterScript: "前往脚本",
   enterStoryboard: "前往分镜",
   enterImages: "继续图片",
   enterVideos: "前往视频",
-  taskPrefix: "任务：",
 } as const;
 
-function getMaxUploadBytes(maxUploadMb: number) {
-  const parsed = Number(maxUploadMb);
-  const effective = Number.isFinite(parsed) && parsed > 0 ? parsed : 25;
-  return Math.floor(effective * 1024 * 1024);
+function areAssetIdListsEqual(left: string[], right: string[]) {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  return left.every((value, index) => value === right[index]);
 }
 
 function formatAssetMeta(asset: ImageAssetSummary) {
-  return `${asset.mimeType} · ${Math.round(asset.sizeBytes / 1024)} KB`;
+  return `${asset.mimeType} · ${Math.max(1, Math.round(asset.sizeBytes / 1024))} KB`;
+}
+
+function normalizeReferenceSelection(assetIds: string[], validAssetIds: Set<string>) {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+
+  for (const assetId of assetIds) {
+    if (!validAssetIds.has(assetId) || seen.has(assetId)) {
+      continue;
+    }
+
+    seen.add(assetId);
+    normalized.push(assetId);
+
+    if (normalized.length >= MAX_REFERENCE_ASSETS) {
+      break;
+    }
+  }
+
+  return normalized;
+}
+
+function mergeSelectedReferenceIds(
+  workspace: ImagesWorkspaceResponse,
+  currentSelection: string[],
+) {
+  const validAssetIds = new Set(workspace.referenceAssets.map((asset) => asset.id));
+  const preservedSelection = normalizeReferenceSelection(currentSelection, validAssetIds);
+
+  if (preservedSelection.length > 0) {
+    return preservedSelection;
+  }
+
+  return normalizeReferenceSelection(workspace.binding.imageReferenceAssetIds, validAssetIds);
 }
 
 export default function ProjectImagesPage() {
@@ -120,66 +165,51 @@ export default function ProjectImagesPage() {
   const routeProjectId = params.projectId ?? "";
   const latestRouteProjectIdRef = useRef(routeProjectId);
   latestRouteProjectIdRef.current = routeProjectId;
+  const workspaceRequestSeq = useRef(0);
+  const submitRequestSeq = useRef(0);
   const [projectId, setProjectId] = useState("");
-  const [workspace, setWorkspace] = useState<ImagesWorkspaceResponse | null>(
-    null,
-  );
-  const [isLoading, setIsLoading] = useState(true);
-  const [mode, setMode] = useState<Mode>("text");
+  const [workspace, setWorkspace] = useState<ImagesWorkspaceResponse | null>(null);
+  const [selectedReferenceIds, setSelectedReferenceIds] = useState<string[]>([]);
   const [prompt, setPrompt] = useState("");
-  const [sourceAssetId, setSourceAssetId] = useState<string>("");
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isPromotingDefault, setIsPromotingDefault] = useState(false);
   const { task, error: pollingError } = useTaskPolling(activeTaskId);
-  const workspaceRequestSeq = useRef(0);
-  const submitRequestSeq = useRef(0);
 
   useEffect(() => {
     setProjectId(params.projectId ?? "");
   }, [params]);
 
-  async function reloadWorkspace(nextProjectId: string): Promise<boolean> {
+  async function reloadWorkspace(nextProjectId: string) {
     const requestId = (workspaceRequestSeq.current += 1);
+    const response = await fetch(`/api/images?projectId=${encodeURIComponent(nextProjectId)}`, {
+      cache: "no-store",
+    });
+    const payload = (await response.json().catch(() => null)) as
+      | ImagesWorkspaceResponse
+      | { error?: string }
+      | null;
 
-    try {
-      const response = await fetch(
-        `/api/images?projectId=${encodeURIComponent(nextProjectId)}`,
-        {
-          cache: "no-store",
-        },
+    if (!response.ok || !payload || !("project" in payload)) {
+      if (requestId !== workspaceRequestSeq.current) {
+        return null;
+      }
+
+      throw new Error(
+        payload && "error" in payload
+          ? payload.error ?? copy.loadWorkspaceFailed
+          : copy.loadWorkspaceFailed,
       );
-      const payload = (await response.json().catch(() => null)) as
-        | ImagesWorkspaceResponse
-        | { error?: string }
-        | null;
-
-      if (!response.ok || !payload || !("project" in payload)) {
-        if (requestId !== workspaceRequestSeq.current) {
-          return false;
-        }
-
-        throw new Error(
-          payload && "error" in payload
-            ? payload.error ?? copy.loadWorkspaceFailed
-            : copy.loadWorkspaceFailed,
-        );
-      }
-
-      if (requestId !== workspaceRequestSeq.current) {
-        return false;
-      }
-
-      setWorkspace(payload);
-      return true;
-    } catch (loadError) {
-      if (requestId !== workspaceRequestSeq.current) {
-        return false;
-      }
-
-      throw loadError;
     }
+
+    if (requestId !== workspaceRequestSeq.current) {
+      return null;
+    }
+
+    return payload;
   }
 
   useEffect(() => {
@@ -192,24 +222,24 @@ export default function ProjectImagesPage() {
     async function load() {
       setIsLoading(true);
       setWorkspace(null);
+      setSelectedReferenceIds([]);
       setActiveTaskId(null);
       setStatusMessage(null);
       setError(null);
       setIsSubmitting(false);
-      setSourceAssetId("");
+      setIsPromotingDefault(false);
 
       try {
-        const applied = await reloadWorkspace(projectId);
+        const payload = await reloadWorkspace(projectId);
 
-        if (!cancelled && applied) {
-          setSourceAssetId("");
+        if (!cancelled && payload) {
+          setWorkspace(payload);
+          setSelectedReferenceIds(mergeSelectedReferenceIds(payload, []));
         }
       } catch (loadError) {
         if (!cancelled) {
           setError(
-            loadError instanceof Error
-              ? loadError.message
-              : copy.loadWorkspaceFailed,
+            loadError instanceof Error ? loadError.message : copy.loadWorkspaceFailed,
           );
         }
       } finally {
@@ -233,9 +263,7 @@ export default function ProjectImagesPage() {
 
     setActiveTaskId(null);
     setStatusMessage(null);
-    setError(
-      pollingError instanceof Error ? pollingError.message : copy.fetchTaskFailed,
-    );
+    setError(pollingError instanceof Error ? pollingError.message : copy.fetchTaskFailed);
   }, [activeTaskId, pollingError]);
 
   useEffect(() => {
@@ -264,10 +292,13 @@ export default function ProjectImagesPage() {
 
       void (async () => {
         try {
-          const applied = await reloadWorkspace(projectId);
-          if (!applied) {
+          const payload = await reloadWorkspace(projectId);
+          if (!payload) {
             return;
           }
+
+          setWorkspace(payload);
+          setSelectedReferenceIds((current) => mergeSelectedReferenceIds(payload, current));
           setStatusMessage(copy.generated);
         } catch (refreshError) {
           setStatusMessage(null);
@@ -288,23 +319,46 @@ export default function ProjectImagesPage() {
     }
   }, [activeTaskId, projectId, task]);
 
-  const maxUploadBytes = getMaxUploadBytes(workspace?.maxUploadMb ?? 25);
-  const assets = workspace?.assets ?? EMPTY_ASSETS;
+  const referenceAssets = workspace?.referenceAssets ?? EMPTY_ASSETS;
+  const resultAssets = workspace?.assets ?? EMPTY_ASSETS;
+  const defaultReferenceIds = workspace?.binding.imageReferenceAssetIds ?? [];
+  const isUsingTemporarySelection = !areAssetIdListsEqual(selectedReferenceIds, defaultReferenceIds);
+  const isBusy = isLoading || isSubmitting || isPromotingDefault || Boolean(activeTaskId);
+  const canSubmit = Boolean(projectId && prompt.trim() && !isBusy);
+  const canPromoteDefault = Boolean(
+    selectedReferenceIds.length > 0 && isUsingTemporarySelection && !isBusy,
+  );
 
-  const selectableAssets = useMemo(() => {
-    return assets.filter((asset) => asset.mimeType.startsWith("image/"));
-  }, [assets]);
+  const activeSelectionBadge =
+    selectedReferenceIds.length === 0
+      ? copy.textOnlyBadge
+      : isUsingTemporarySelection
+        ? copy.temporaryOverride
+        : copy.defaultBindingBadge;
 
-  const selectedAsset = useMemo(() => {
-    if (!sourceAssetId) {
-      return null;
+  const selectedReferenceAssets = useMemo(
+    () => referenceAssets.filter((asset) => selectedReferenceIds.includes(asset.id)),
+    [referenceAssets, selectedReferenceIds],
+  );
+
+  function toggleReferenceAsset(assetId: string) {
+    if (selectedReferenceIds.includes(assetId)) {
+      setSelectedReferenceIds((current) => current.filter((value) => value !== assetId));
+      setError((current) => (current === copy.referenceLimit ? null : current));
+      return;
     }
 
-    return selectableAssets.find((asset) => asset.id === sourceAssetId) ?? null;
-  }, [selectableAssets, sourceAssetId]);
+    if (selectedReferenceIds.length >= MAX_REFERENCE_ASSETS) {
+      setStatusMessage(null);
+      setError(copy.referenceLimit);
+      return;
+    }
 
-  const isBusy = isLoading || isSubmitting || Boolean(activeTaskId);
-  const canSubmit = Boolean(projectId && prompt.trim().length > 0 && !isBusy);
+    setSelectedReferenceIds((current) =>
+      current.includes(assetId) ? current : [...current, assetId],
+    );
+    setError((current) => (current === copy.referenceLimit ? null : current));
+  }
 
   async function submit() {
     if (!projectId) {
@@ -312,28 +366,16 @@ export default function ProjectImagesPage() {
       return;
     }
 
-    const submitRouteProjectId = latestRouteProjectIdRef.current;
-    const submitRequestId = (submitRequestSeq.current += 1);
     const trimmedPrompt = prompt.trim();
+    const validAssetIds = new Set(referenceAssets.map((asset) => asset.id));
+    const effectiveReferenceIds = normalizeReferenceSelection(selectedReferenceIds, validAssetIds);
     if (!trimmedPrompt) {
       setError(copy.enterPrompt);
       return;
     }
 
-    if (mode === "image") {
-      if (!sourceAssetId) {
-        setError(copy.selectReferenceValidation);
-        return;
-      }
-
-      if (selectedAsset && selectedAsset.sizeBytes > maxUploadBytes) {
-        setError(
-          `${copy.uploadTooLargePrefix}${workspace?.maxUploadMb ?? 25}${copy.uploadTooLargeSuffix}`,
-        );
-        return;
-      }
-    }
-
+    const submitRouteProjectId = latestRouteProjectIdRef.current;
+    const submitRequestId = (submitRequestSeq.current += 1);
     setIsSubmitting(true);
     setError(null);
     setStatusMessage(null);
@@ -342,8 +384,8 @@ export default function ProjectImagesPage() {
       const form = new FormData();
       form.set("projectId", projectId);
       form.set("prompt", trimmedPrompt);
-      if (mode === "image") {
-        form.set("sourceAssetId", sourceAssetId);
+      for (const assetId of effectiveReferenceIds) {
+        form.append("referenceAssetIds", assetId);
       }
 
       const response = await fetch("/api/images", {
@@ -354,10 +396,6 @@ export default function ProjectImagesPage() {
         | { taskId?: string; error?: string }
         | null;
 
-      if (response.status === 413) {
-        throw new Error(payload?.error ?? copy.payloadTooLarge);
-      }
-
       if (!response.ok || !payload?.taskId) {
         throw new Error(payload?.error ?? copy.enqueueFailed);
       }
@@ -367,16 +405,14 @@ export default function ProjectImagesPage() {
       }
 
       setActiveTaskId(payload.taskId);
-      setStatusMessage(copy.requestQueued);
+      setStatusMessage(copy.queued);
     } catch (submitError) {
       if (latestRouteProjectIdRef.current !== submitRouteProjectId) {
         return;
       }
 
       setStatusMessage(null);
-      setError(
-        submitError instanceof Error ? submitError.message : copy.enqueueFailed,
-      );
+      setError(submitError instanceof Error ? submitError.message : copy.enqueueFailed);
     } finally {
       if (
         submitRequestId === submitRequestSeq.current &&
@@ -387,12 +423,68 @@ export default function ProjectImagesPage() {
     }
   }
 
+  async function promoteDefault() {
+    const validAssetIds = new Set(referenceAssets.map((asset) => asset.id));
+    const effectiveReferenceIds = normalizeReferenceSelection(selectedReferenceIds, validAssetIds);
+
+    if (!projectId || effectiveReferenceIds.length === 0) {
+      return;
+    }
+
+    setIsPromotingDefault(true);
+    setError(null);
+    setStatusMessage(null);
+
+    try {
+      const response = await fetch(`/api/projects/${projectId}/workflow-binding`, {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          imageReferenceAssetIds: effectiveReferenceIds,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { imageReferenceAssetIds?: string[]; error?: string }
+        | null;
+
+      if (!response.ok || !payload?.imageReferenceAssetIds) {
+        throw new Error(payload?.error ?? copy.promoteFailed);
+      }
+
+      setWorkspace((current) => {
+        if (!current) {
+          return current;
+        }
+
+        const assetsById = new Map(current.referenceAssets.map((asset) => [asset.id, asset]));
+        const nextDefaultReferenceIds = normalizeReferenceSelection(
+          payload.imageReferenceAssetIds ?? [],
+          new Set(current.referenceAssets.map((asset) => asset.id)),
+        );
+        return {
+          ...current,
+          binding: {
+            imageReferenceAssetIds: nextDefaultReferenceIds,
+          },
+          defaultReferenceAssets: nextDefaultReferenceIds
+            .map((assetId) => assetsById.get(assetId))
+            .filter((asset): asset is ImageAssetSummary => Boolean(asset)),
+        };
+      });
+      setStatusMessage(copy.promoteSuccess);
+    } catch (promoteError) {
+      setError(promoteError instanceof Error ? promoteError.message : copy.promoteFailed);
+    } finally {
+      setIsPromotingDefault(false);
+    }
+  }
+
   const projectSummary = workspace?.project.idea?.trim() || copy.noIdea;
   const heroProjectTitle = isLoading
     ? copy.loadingProject
     : workspace?.project.title ?? copy.stageTitle;
-  const scriptRailSummary = "当前页未加载脚本定稿结果，请先在脚本阶段确认。";
-  const storyboardRailSummary = "当前页未加载分镜结果，请先在分镜阶段确认。";
 
   return (
     <div style={pageStyle}>
@@ -424,7 +516,7 @@ export default function ProjectImagesPage() {
           {
             label: copy.scriptStage,
             detail: copy.scriptDetail,
-            summary: scriptRailSummary,
+            summary: "脚本确认后继续细化画面提示。",
             badgeLabel: copy.stageWaiting,
             tone: "neutral",
             href: `/projects/${projectId}/script`,
@@ -433,7 +525,7 @@ export default function ProjectImagesPage() {
           {
             label: copy.storyboardStage,
             detail: copy.storyboardDetail,
-            summary: storyboardRailSummary,
+            summary: "分镜输出完成后可继续生成关键画面。",
             badgeLabel: copy.stageWaiting,
             tone: "neutral",
             href: `/projects/${projectId}/storyboard`,
@@ -441,13 +533,11 @@ export default function ProjectImagesPage() {
           },
           {
             label: copy.imagesStage,
-            detail: assets.length
-              ? `当前已归档 ${assets.length} 张项目图片。`
-              : copy.imagesDetail,
+            detail: copy.imagesDetail,
             summary:
-              mode === "image"
-                ? "图生图会复用项目内已有图片作为输入。"
-                : "文生图和图生图都走同一套任务接口。",
+              selectedReferenceAssets.length > 0
+                ? `当前已选 ${selectedReferenceAssets.length} 张参考图。`
+                : "当前未选择参考图，将直接发起文生图。",
             badgeLabel: copy.stageActive,
             tone: "active",
             href: `/projects/${projectId}/images`,
@@ -456,11 +546,12 @@ export default function ProjectImagesPage() {
           {
             label: copy.videosStage,
             detail: copy.videosDetail,
-            summary: assets.length
-              ? "已经有可选图片，可继续进入视频阶段。"
-              : "等待先生成关键画面。",
-            badgeLabel: assets.length ? copy.stageNext : copy.stageWaiting,
-            tone: assets.length ? "warning" : "neutral",
+            summary:
+              resultAssets.length > 0
+                ? "已有图片结果，可继续进入视频阶段。"
+                : "等待先生成图片结果。",
+            badgeLabel: resultAssets.length > 0 ? copy.stageNext : copy.stageWaiting,
+            tone: resultAssets.length > 0 ? "warning" : "neutral",
             href: `/projects/${projectId}/videos`,
             ctaLabel: copy.enterVideos,
           },
@@ -478,78 +569,118 @@ export default function ProjectImagesPage() {
         </p>
       ) : null}
 
-      <section style={panelStyle}>
-        <div style={sectionHeaderStyle}>
-          <h2 style={sectionTitleStyle}>{copy.generateHeading}</h2>
-          <p style={sectionDescriptionStyle}>{copy.generateDescription}</p>
-        </div>
-
-        <div style={buttonRowStyle}>
-          <button
-            type="button"
-            onClick={() => setMode("text")}
-            disabled={isBusy}
-            style={mode === "text" ? primaryButtonStyle : secondaryButtonStyle}
-          >
-            {copy.textMode}
-          </button>
-          <button
-            type="button"
-            aria-label="Switch to image-to-image"
-            onClick={() => setMode("image")}
-            disabled={isBusy}
-            style={mode === "image" ? primaryButtonStyle : secondaryButtonStyle}
-          >
-            {copy.imageMode}
-          </button>
-        </div>
-
-        {mode === "image" ? (
-          <div style={fieldGridStyle}>
-            <label style={fieldStyle} htmlFor="sourceAssetId">
-              <span style={fieldLabelStyle}>{copy.referenceAssetLabel}</span>
-              <select
-                id="sourceAssetId"
-                aria-label="Reference image asset"
-                value={sourceAssetId}
-                onChange={(event) => setSourceAssetId(event.target.value)}
-                disabled={isBusy}
-                style={selectStyle}
-              >
-                <option value="">{copy.referencePlaceholder}</option>
-                {selectableAssets.map((asset) => (
-                  <option key={asset.id} value={asset.id}>
-                    {asset.id} ({Math.round(asset.sizeBytes / 1024)} KB)
-                  </option>
-                ))}
-              </select>
-            </label>
-            <p style={helperStyle}>
-              {selectableAssets.length === 0
-                ? copy.noReferenceAssets
-                : copy.selectReference}
-            </p>
-            {selectedAsset?.previewDataUrl ? (
-              <figure style={referencePreviewStyle}>
-                <Image
-                  src={selectedAsset.previewDataUrl}
-                  alt="Reference preview"
-                  width={420}
-                  height={220}
-                  unoptimized
-                  style={referencePreviewImageStyle}
-                />
-              </figure>
-            ) : null}
+      <div style={twoColumnGridStyle}>
+        <section style={panelStyle}>
+          <div style={sectionHeaderStyle}>
+            <h2 style={sectionTitleStyle}>{copy.defaultBindingHeading}</h2>
+            <p style={sectionDescriptionStyle}>{copy.defaultBindingDescription}</p>
           </div>
-        ) : null}
 
-        <div style={fieldGridStyle}>
-          <label style={fieldStyle} htmlFor="promptInput">
+          {workspace?.defaultReferenceAssets.length ? (
+            <div style={referenceGridStyle}>
+              {workspace.defaultReferenceAssets.map((asset) => (
+                <article key={asset.id} style={referenceCardStyle}>
+                  {asset.previewDataUrl ? (
+                    <Image
+                      src={asset.previewDataUrl}
+                      alt={asset.originalName ?? asset.id}
+                      width={260}
+                      height={160}
+                      unoptimized
+                      style={referenceImageStyle}
+                    />
+                  ) : (
+                    <div style={referencePlaceholderStyle}>{copy.previewUnavailable}</div>
+                  )}
+                  <div style={cardHeaderStyle}>
+                    <div style={cardHeaderCopyStyle}>
+                      <strong style={assetTitleStyle}>{asset.originalName ?? asset.id}</strong>
+                      <span style={assetMetaStyle}>{formatAssetMeta(asset)}</span>
+                    </div>
+                    <StatusBadge label={copy.defaultBindingBadge} tone="active" />
+                  </div>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div style={emptyStateStackStyle}>
+              <p style={emptyStateStyle}>{copy.defaultBindingEmpty}</p>
+              <Link href={`/projects/${projectId}/assets`} style={secondaryActionStyle}>
+                {copy.openAssetCenter}
+              </Link>
+            </div>
+          )}
+        </section>
+
+        <section style={panelStyle}>
+          <div style={sectionHeaderStyle}>
+            <h2 style={sectionTitleStyle}>{copy.inputHeading}</h2>
+            <p style={sectionDescriptionStyle}>{copy.inputDescription}</p>
+          </div>
+
+          <div style={cardHeaderStyle}>
+            <div style={cardHeaderCopyStyle}>
+              <strong style={sectionTitleStyle}>{copy.referenceHeading}</strong>
+              <span style={sectionDescriptionStyle}>
+                {selectedReferenceIds.length > 0
+                  ? `${copy.selectedCountPrefix}${selectedReferenceIds.length}`
+                  : "不选参考图时会走文生图。"}
+              </span>
+            </div>
+            <StatusBadge
+              label={activeSelectionBadge}
+              tone={
+                selectedReferenceIds.length === 0
+                  ? "neutral"
+                  : isUsingTemporarySelection
+                    ? "warning"
+                    : "active"
+              }
+            />
+          </div>
+
+          {referenceAssets.length === 0 ? (
+            <p style={emptyStateStyle}>{copy.referenceEmpty}</p>
+          ) : (
+            <div style={referenceGridStyle}>
+              {referenceAssets.map((asset) => {
+                const selected = selectedReferenceIds.includes(asset.id);
+
+                return (
+                  <button
+                    key={asset.id}
+                    type="button"
+                    onClick={() => toggleReferenceAsset(asset.id)}
+                    disabled={isBusy}
+                    style={selected ? selectedReferenceCardStyle : referenceCardStyle}
+                  >
+                    {asset.previewDataUrl ? (
+                      <Image
+                        src={asset.previewDataUrl}
+                        alt={asset.originalName ?? asset.id}
+                        width={260}
+                        height={160}
+                        unoptimized
+                        style={referenceImageStyle}
+                      />
+                    ) : (
+                      <div style={referencePlaceholderStyle}>{copy.previewUnavailable}</div>
+                    )}
+                    <div style={cardHeaderCopyStyle}>
+                      <strong style={assetTitleStyle}>{asset.originalName ?? asset.id}</strong>
+                      <span style={assetMetaStyle}>{formatAssetMeta(asset)}</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          <label style={fieldStyle} htmlFor="imagePromptInput">
             <span style={fieldLabelStyle}>{copy.promptLabel}</span>
             <textarea
-              id="promptInput"
-              aria-label="Image prompt input"
+              id="imagePromptInput"
+              aria-label="图片提示词输入框"
               value={prompt}
               onChange={(event) => setPrompt(event.target.value)}
               disabled={isBusy}
@@ -559,45 +690,55 @@ export default function ProjectImagesPage() {
             />
           </label>
           <p style={helperStyle}>
-            {copy.helperPrefix}
+            {copy.promptHelperPrefix}
             {workspace?.maxUploadMb ?? 25} MB
           </p>
-        </div>
 
-        <div style={buttonRowStyle}>
-          <button
-            type="button"
-            aria-label="Generate image"
-            onClick={() => void submit()}
-            disabled={!canSubmit}
-            style={primaryButtonStyle}
-          >
-            生成图片
-          </button>
-          {activeTaskId ? (
-            <span style={metaTextStyle}>
-              {copy.taskPrefix}
-              {activeTaskId}
-            </span>
-          ) : null}
-        </div>
-      </section>
+          <div style={buttonRowStyle}>
+            {canPromoteDefault ? (
+              <button
+                type="button"
+                onClick={() => void promoteDefault()}
+                disabled={!canPromoteDefault}
+                style={secondaryButtonStyle}
+              >
+                {copy.promoteDefault}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => void submit()}
+              disabled={!canSubmit}
+              style={primaryButtonStyle}
+            >
+              {copy.generateImage}
+            </button>
+            {activeTaskId ? (
+              <span style={metaTextStyle}>
+                {copy.taskPrefix}
+                {activeTaskId}
+              </span>
+            ) : null}
+          </div>
+        </section>
+      </div>
 
       <section style={panelStyle}>
         <div style={sectionHeaderStyle}>
-          <h2 style={sectionTitleStyle}>{copy.resultHeading}</h2>
-          <p style={sectionDescriptionStyle}>{copy.resultDescription}</p>
+          <h2 style={sectionTitleStyle}>{copy.resultsHeading}</h2>
+          <p style={sectionDescriptionStyle}>{copy.resultsDescription}</p>
         </div>
-        {assets.length === 0 ? (
-          <p style={emptyStateStyle}>{copy.noAssets}</p>
+
+        {resultAssets.length === 0 ? (
+          <p style={emptyStateStyle}>{copy.noResults}</p>
         ) : (
           <div style={assetGridStyle}>
-            {assets.map((asset) => (
+            {resultAssets.map((asset) => (
               <article key={asset.id} style={assetCardStyle}>
                 {asset.previewDataUrl ? (
                   <Image
                     src={asset.previewDataUrl}
-                    alt={`Asset ${asset.id}`}
+                    alt={asset.originalName ?? asset.id}
                     width={320}
                     height={180}
                     unoptimized
@@ -606,8 +747,8 @@ export default function ProjectImagesPage() {
                 ) : (
                   <div style={assetPlaceholderStyle}>{copy.previewUnavailable}</div>
                 )}
-                <div style={assetCopyStyle}>
-                  <strong style={assetTitleStyle}>{asset.id}</strong>
+                <div style={cardHeaderCopyStyle}>
+                  <strong style={assetTitleStyle}>{asset.originalName ?? asset.id}</strong>
                   <span style={assetMetaStyle}>{formatAssetMeta(asset)}</span>
                 </div>
               </article>
@@ -716,6 +857,12 @@ const errorNoticeStyle = {
   lineHeight: 1.6,
 } satisfies CSSProperties;
 
+const twoColumnGridStyle = {
+  display: "grid",
+  gap: "20px",
+  gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+} satisfies CSSProperties;
+
 const buttonRowStyle = {
   display: "flex",
   gap: "12px",
@@ -745,11 +892,6 @@ const secondaryButtonStyle = {
   color: "var(--text)",
 } satisfies CSSProperties;
 
-const fieldGridStyle = {
-  display: "grid",
-  gap: "12px",
-} satisfies CSSProperties;
-
 const fieldStyle = {
   display: "grid",
   gap: "8px",
@@ -758,16 +900,6 @@ const fieldStyle = {
 const fieldLabelStyle = {
   fontWeight: 700,
   color: "var(--text)",
-} satisfies CSSProperties;
-
-const selectStyle = {
-  width: "100%",
-  minHeight: "48px",
-  borderRadius: "18px",
-  border: "1px solid rgba(129, 140, 248, 0.2)",
-  padding: "0 14px",
-  color: "var(--text)",
-  background: "rgba(8, 10, 26, 0.4)",
 } satisfies CSSProperties;
 
 const textareaStyle = {
@@ -799,17 +931,65 @@ const emptyStateStyle = {
   lineHeight: 1.7,
 } satisfies CSSProperties;
 
-const referencePreviewStyle = {
-  margin: 0,
+const emptyStateStackStyle = {
+  display: "grid",
+  gap: "12px",
+  justifyItems: "start",
 } satisfies CSSProperties;
 
-const referencePreviewImageStyle = {
-  width: "100%",
-  maxWidth: "420px",
-  height: "220px",
-  objectFit: "cover",
+const cardHeaderStyle = {
+  display: "flex",
+  alignItems: "start",
+  justifyContent: "space-between",
+  gap: "12px",
+  flexWrap: "wrap",
+} satisfies CSSProperties;
+
+const cardHeaderCopyStyle = {
+  display: "grid",
+  gap: "6px",
+} satisfies CSSProperties;
+
+const referenceGridStyle = {
+  display: "grid",
+  gap: "12px",
+  gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+} satisfies CSSProperties;
+
+const referenceCardStyle = {
+  display: "grid",
+  gap: "10px",
+  padding: "12px",
   borderRadius: "18px",
   border: "1px solid rgba(129, 140, 248, 0.16)",
+  background: "rgba(8, 10, 26, 0.26)",
+  color: "var(--text)",
+  textAlign: "left",
+} satisfies CSSProperties;
+
+const selectedReferenceCardStyle = {
+  ...referenceCardStyle,
+  border: "1px solid rgba(202, 138, 4, 0.55)",
+  boxShadow: "0 0 0 2px rgba(202, 138, 4, 0.12)",
+} satisfies CSSProperties;
+
+const referenceImageStyle = {
+  width: "100%",
+  height: "160px",
+  objectFit: "cover",
+  borderRadius: "14px",
+  border: "1px solid rgba(129, 140, 248, 0.16)",
+} satisfies CSSProperties;
+
+const referencePlaceholderStyle = {
+  width: "100%",
+  height: "160px",
+  display: "grid",
+  placeItems: "center",
+  borderRadius: "14px",
+  border: "1px dashed rgba(129, 140, 248, 0.26)",
+  background: "rgba(15, 23, 42, 0.52)",
+  color: "var(--text-muted)",
 } satisfies CSSProperties;
 
 const assetGridStyle = {
@@ -844,11 +1024,6 @@ const assetPlaceholderStyle = {
   border: "1px dashed rgba(129, 140, 248, 0.26)",
   color: "var(--text-muted)",
   background: "rgba(15, 23, 42, 0.52)",
-} satisfies CSSProperties;
-
-const assetCopyStyle = {
-  display: "grid",
-  gap: "6px",
 } satisfies CSSProperties;
 
 const assetTitleStyle = {

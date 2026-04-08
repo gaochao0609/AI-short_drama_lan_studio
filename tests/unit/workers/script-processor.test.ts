@@ -1,4 +1,4 @@
-import { TaskStatus, type Prisma } from "@prisma/client";
+import { AssetCategory, AssetOrigin, TaskStatus, TaskType, type Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
@@ -11,6 +11,11 @@ const mocks = vi.hoisted(() => {
   const taskUpdate = vi.fn();
   const taskFindUnique = vi.fn();
   const taskStepUpdate = vi.fn();
+  const projectWorkflowBindingUpdateMany = vi.fn();
+  const assetFindMany = vi.fn();
+  const assetCreate = vi.fn();
+  const assetUpdate = vi.fn();
+  const assetDeleteMany = vi.fn();
   const prisma = {
     scriptSession: {
       findUniqueOrThrow,
@@ -29,6 +34,15 @@ const mocks = vi.hoisted(() => {
     taskStep: {
       update: taskStepUpdate,
     },
+    projectWorkflowBinding: {
+      updateMany: projectWorkflowBindingUpdateMany,
+    },
+    asset: {
+      findMany: assetFindMany,
+      create: assetCreate,
+      update: assetUpdate,
+      deleteMany: assetDeleteMany,
+    },
   };
   const transaction = vi.fn(async (operations: Array<unknown> | ((tx: typeof prisma) => unknown)) =>
     typeof operations === "function" ? operations(prisma) : operations,
@@ -37,6 +51,7 @@ const mocks = vi.hoisted(() => {
   return {
     callProxyModel: vi.fn(),
     getDefaultModelSummary: vi.fn(),
+    persistGeneratedScriptAssetFile: vi.fn(),
     prisma: {
       $transaction: transaction,
       ...prisma,
@@ -56,6 +71,30 @@ vi.mock("@/lib/models/provider-registry", () => ({
   getDefaultModelSummary: mocks.getDefaultModelSummary,
 }));
 
+vi.mock("@/lib/services/asset-backfill", () => ({
+  buildGeneratedScriptAssetMetadata: (input: {
+    scriptSessionId: string;
+    scriptVersionId: string;
+    extractedText: string;
+    sourceTask?: {
+      taskId?: string | null;
+      taskType?: TaskType;
+      traceId?: string | null;
+    };
+  }) => ({
+    parseStatus: "ready",
+    scriptSessionId: input.scriptSessionId,
+    scriptVersionId: input.scriptVersionId,
+    extractedText: input.extractedText,
+    sourceTask: {
+      taskId: input.sourceTask?.taskId ?? null,
+      taskType: input.sourceTask?.taskType ?? TaskType.SCRIPT_FINALIZE,
+      traceId: input.sourceTask?.traceId ?? null,
+    },
+  }),
+  persistGeneratedScriptAssetFile: mocks.persistGeneratedScriptAssetFile,
+}));
+
 import { processScriptFinalizeJob } from "@/worker/processors/script";
 
 describe("processScriptFinalizeJob", () => {
@@ -72,6 +111,16 @@ describe("processScriptFinalizeJob", () => {
     mocks.prisma.task.update.mockReset();
     mocks.prisma.task.findUnique.mockReset();
     mocks.prisma.taskStep.update.mockReset();
+    mocks.prisma.projectWorkflowBinding.updateMany.mockReset();
+    mocks.prisma.asset.findMany.mockReset();
+    mocks.prisma.asset.create.mockReset();
+    mocks.prisma.asset.update.mockReset();
+    mocks.prisma.asset.deleteMany.mockReset();
+    mocks.persistGeneratedScriptAssetFile.mockReset();
+    mocks.persistGeneratedScriptAssetFile.mockResolvedValue({
+      storagePath: "backfill/scripts/version-1.txt",
+      sizeBytes: 49,
+    });
   });
 
   it("writes a script version when a finalize job succeeds", async () => {
@@ -106,9 +155,14 @@ describe("processScriptFinalizeJob", () => {
     });
     mocks.prisma.scriptVersion.create.mockResolvedValue({
       id: "version-1",
+      versionNumber: 1,
     });
     mocks.prisma.scriptSession.updateMany.mockResolvedValue({
       count: 1,
+    });
+    mocks.prisma.asset.findMany.mockResolvedValue([]);
+    mocks.prisma.asset.create.mockResolvedValue({
+      id: "asset-1",
     });
     mocks.prisma.$transaction.mockImplementation(async (operations) =>
       typeof operations === "function" ? operations(mocks.prisma) : operations,
@@ -195,9 +249,34 @@ describe("processScriptFinalizeJob", () => {
         }),
       }),
     );
+    expect(mocks.prisma.asset.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          projectId: "project-1",
+          taskId: "task-1",
+          category: AssetCategory.SCRIPT_GENERATED,
+          origin: AssetOrigin.SYSTEM,
+          metadata: expect.objectContaining({
+            parseStatus: "ready",
+            scriptSessionId: "session-1",
+            scriptVersionId: "version-1",
+            extractedText: "INT. ARCHIVE - NIGHT\nThe courier opens the vault.",
+            sourceTask: {
+              taskId: "task-1",
+              taskType: TaskType.SCRIPT_FINALIZE,
+              traceId: "trace-1",
+            },
+          }),
+        }),
+      }),
+    );
+    expect(mocks.persistGeneratedScriptAssetFile).toHaveBeenCalledWith({
+      scriptVersionId: "version-1",
+      extractedText: "INT. ARCHIVE - NIGHT\nThe courier opens the vault.",
+    });
   });
 
-  it("reuses an existing final script version instead of creating a duplicate on retry", async () => {
+  it("updates the existing generated-script asset and removes duplicates on retry", async () => {
     mocks.prisma.scriptSession.findUniqueOrThrow.mockResolvedValue({
       id: "session-1",
       projectId: "project-1",
@@ -208,10 +287,28 @@ describe("processScriptFinalizeJob", () => {
       finalScriptVersionId: "version-1",
       finalScriptVersion: {
         id: "version-1",
+        versionNumber: 1,
         body: "INT. ARCHIVE - NIGHT\nThe courier opens the vault.",
       },
     });
     mocks.prisma.scriptSession.updateMany.mockResolvedValue({
+      count: 1,
+    });
+    mocks.prisma.asset.findMany.mockResolvedValue([
+      {
+        id: "asset-1",
+      },
+      {
+        id: "asset-2",
+      },
+    ]);
+    mocks.prisma.asset.update.mockResolvedValue({
+      id: "asset-1",
+    });
+    mocks.prisma.asset.deleteMany.mockResolvedValue({
+      count: 1,
+    });
+    mocks.prisma.projectWorkflowBinding.updateMany.mockResolvedValue({
       count: 1,
     });
     mocks.prisma.$transaction.mockImplementation(async (operations) =>
@@ -243,18 +340,49 @@ describe("processScriptFinalizeJob", () => {
 
     expect(mocks.callProxyModel).not.toHaveBeenCalled();
     expect(mocks.prisma.scriptVersion.create).not.toHaveBeenCalled();
-    expect(mocks.prisma.scriptSession.updateMany).toHaveBeenCalledWith(
+    expect(mocks.prisma.asset.create).not.toHaveBeenCalled();
+    expect(mocks.prisma.asset.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
-          id: "session-1",
-          status: "FINALIZING",
+          id: "asset-1",
         },
         data: expect.objectContaining({
-          finalScriptVersionId: "version-1",
-          status: "COMPLETED",
+          category: AssetCategory.SCRIPT_GENERATED,
+          origin: AssetOrigin.SYSTEM,
+          metadata: expect.objectContaining({
+            parseStatus: "ready",
+            scriptSessionId: "session-1",
+            scriptVersionId: "version-1",
+            extractedText: "INT. ARCHIVE - NIGHT\nThe courier opens the vault.",
+            sourceTask: {
+              taskId: "task-1",
+              taskType: TaskType.SCRIPT_FINALIZE,
+              traceId: "trace-1",
+            },
+          }),
         }),
       }),
     );
+    expect(mocks.prisma.asset.deleteMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          id: {
+            in: ["asset-2"],
+          },
+        },
+      }),
+    );
+    expect(mocks.prisma.projectWorkflowBinding.updateMany).toHaveBeenCalledWith({
+      where: {
+        projectId: "project-1",
+        storyboardScriptAssetId: {
+          in: ["asset-2"],
+        },
+      },
+      data: {
+        storyboardScriptAssetId: "asset-1",
+      },
+    });
   });
 
   it("treats replay after a successful finalize as an idempotent success", async () => {
@@ -269,8 +397,13 @@ describe("processScriptFinalizeJob", () => {
       finalScriptVersionId: "version-1",
       finalScriptVersion: {
         id: "version-1",
+        versionNumber: 1,
         body: "INT. ARCHIVE - NIGHT\nThe courier opens the vault.",
       },
+    });
+    mocks.prisma.asset.findMany.mockResolvedValue([]);
+    mocks.prisma.asset.create.mockResolvedValue({
+      id: "asset-1",
     });
     mocks.prisma.$transaction.mockImplementation(async (operations) =>
       typeof operations === "function" ? operations(mocks.prisma) : operations,
@@ -302,6 +435,7 @@ describe("processScriptFinalizeJob", () => {
     expect(mocks.callProxyModel).not.toHaveBeenCalled();
     expect(mocks.prisma.scriptVersion.create).not.toHaveBeenCalled();
     expect(mocks.prisma.scriptSession.updateMany).not.toHaveBeenCalled();
+    expect(mocks.prisma.asset.create).toHaveBeenCalledTimes(1);
     expect(mocks.prisma.task.update).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
@@ -332,10 +466,15 @@ describe("processScriptFinalizeJob", () => {
     });
     mocks.prisma.scriptVersion.findFirst.mockResolvedValue({
       id: "version-2",
+      versionNumber: 2,
       body: "INT. HARBOR - DUSK\nThe courier burns the ledger.",
     });
     mocks.prisma.scriptSession.updateMany.mockResolvedValue({
       count: 1,
+    });
+    mocks.prisma.asset.findMany.mockResolvedValue([]);
+    mocks.prisma.asset.create.mockResolvedValue({
+      id: "asset-2",
     });
     mocks.prisma.$transaction.mockImplementation(async (operations) =>
       typeof operations === "function" ? operations(mocks.prisma) : operations,
@@ -366,18 +505,7 @@ describe("processScriptFinalizeJob", () => {
 
     expect(mocks.callProxyModel).not.toHaveBeenCalled();
     expect(mocks.prisma.scriptVersion.create).not.toHaveBeenCalled();
-    expect(mocks.prisma.scriptSession.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: {
-          id: "session-1",
-          status: "FINALIZING",
-        },
-        data: expect.objectContaining({
-          finalScriptVersionId: "version-2",
-          status: "COMPLETED",
-        }),
-      }),
-    );
+    expect(mocks.prisma.asset.create).toHaveBeenCalledTimes(1);
   });
 
   it("restores the session to ACTIVE when a finalize job fails terminally", async () => {
